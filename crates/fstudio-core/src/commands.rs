@@ -632,16 +632,16 @@ impl Engine {
     /// subfolder, a move into the folder it is already in, or a destination
     /// that is not a folder). Does `lstat` on each source.
     pub fn drop_action(&self, sources: &[PathBuf], dest_dir: &Path, mods: Mods) -> DropAction {
-        decide_drop(
-            sources,
-            dest_dir,
-            mods,
-            &|p| {
-                use std::os::unix::fs::MetadataExt;
-                std::fs::symlink_metadata(p).ok().map(|m| m.dev())
-            },
-            &|p| p.is_dir(),
-        )
+        // One rule for the whole app: `drop.rs` (also used by the list view).
+        let sources: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        match self.drop_effect(&sources, &dest_dir.to_string_lossy(), mods) {
+            crate::drop::DropEffect::Copy => DropAction::Copy,
+            crate::drop::DropEffect::Move => DropAction::Move,
+            crate::drop::DropEffect::None => DropAction::None,
+        }
     }
 
     /// Drops `sources` onto `dest_dir` by [`Engine::drop_action`]'s rule and
@@ -1467,99 +1467,4 @@ pub enum DropAction {
     Copy,
     /// Move the items into the folder.
     Move,
-}
-
-/// The drop rule, without I/O: `dev` gives a path's device id, `is_dir`
-/// says whether the destination is a folder.
-pub(crate) fn decide_drop(
-    sources: &[PathBuf],
-    dest: &Path,
-    mods: Mods,
-    dev: &dyn Fn(&Path) -> Option<u64>,
-    is_dir: &dyn Fn(&Path) -> bool,
-) -> DropAction {
-    if sources.is_empty() || !is_dir(dest) {
-        return DropAction::None;
-    }
-    // Onto itself, or into one of its own subfolders.
-    if sources.iter().any(|s| dest.starts_with(s)) {
-        return DropAction::None;
-    }
-    let dest_dev = dev(dest);
-    let same_volume = dest_dev.is_some() && sources.iter().all(|s| dev(s) == dest_dev);
-    let action = if mods.alt {
-        DropAction::Copy
-    } else if mods.cmd || same_volume {
-        DropAction::Move
-    } else {
-        DropAction::Copy
-    };
-    // Moving items into the folder they are already in does nothing.
-    if action == DropAction::Move && sources.iter().all(|s| s.parent() == Some(dest)) {
-        return DropAction::None;
-    }
-    action
-}
-
-#[cfg(test)]
-mod drop_tests {
-    use super::*;
-
-    fn mods(alt: bool, cmd: bool) -> Mods {
-        Mods {
-            alt,
-            cmd,
-            ..Mods::default()
-        }
-    }
-
-    fn run(src: &[&str], dest: &str, m: Mods) -> DropAction {
-        let src: Vec<PathBuf> = src.iter().map(PathBuf::from).collect();
-        // Everything under /Volumes/Card is device 2, the rest device 1.
-        let dev = |p: &Path| Some(if p.starts_with("/Volumes/Card") { 2 } else { 1 });
-        decide_drop(&src, Path::new(dest), m, &dev, &|p| {
-            !p.to_string_lossy().ends_with(".txt")
-        })
-    }
-
-    #[test]
-    fn same_volume_moves_other_volume_copies() {
-        let none = Mods::default();
-        assert_eq!(run(&["/a/x.txt"], "/b", none), DropAction::Move);
-        assert_eq!(run(&["/Volumes/Card/x.txt"], "/b", none), DropAction::Copy);
-        // Mixed sources: not all on the destination's volume, so copy.
-        assert_eq!(
-            run(&["/a/x.txt", "/Volumes/Card/y.txt"], "/b", none),
-            DropAction::Copy
-        );
-    }
-
-    #[test]
-    fn modifiers_force_copy_or_move() {
-        assert_eq!(
-            run(&["/a/x.txt"], "/b", mods(true, false)),
-            DropAction::Copy
-        );
-        assert_eq!(
-            run(&["/Volumes/Card/x.txt"], "/b", mods(false, true)),
-            DropAction::Move
-        );
-        // ⌥ wins over ⌘.
-        assert_eq!(run(&["/a/x.txt"], "/b", mods(true, true)), DropAction::Copy);
-    }
-
-    #[test]
-    fn refuses_nonsense_drops() {
-        let none = Mods::default();
-        assert_eq!(run(&[], "/b", none), DropAction::None);
-        assert_eq!(run(&["/a"], "/a", none), DropAction::None);
-        assert_eq!(run(&["/a"], "/a/b/c", none), DropAction::None);
-        assert_eq!(run(&["/a/x.txt"], "/a", none), DropAction::None);
-        assert_eq!(run(&["/a/x.txt"], "/b/file.txt", none), DropAction::None);
-        // Copying into its own folder is allowed (it makes a copy).
-        assert_eq!(
-            run(&["/a/x.txt"], "/a", mods(true, false)),
-            DropAction::Copy
-        );
-    }
 }
