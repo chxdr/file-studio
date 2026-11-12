@@ -309,3 +309,64 @@ fn s3_redo_of_an_unchanged_item_still_works() {
     ok(&h, &out);
     assert!(!h.p("a.txt").exists());
 }
+
+// ───────────────────────── S4 ─────────────────────────
+
+/// p5: ⌘V a big file, click your own file right away. When the copy lands
+/// the selection is still just your file, so ⌘⌫ trashes only that.
+#[test]
+fn s4_p5_a_click_cancels_the_pending_paste_selection() {
+    let h = harness();
+    mkdirs(&h.p("work"));
+    mkdirs(&h.p("other"));
+    touch(&h.p("work/mine.txt"));
+    std::fs::write(h.p("other/pasted.bin"), vec![7u8; 4 << 20]).unwrap();
+    let t = h.window_at("work");
+    h.engine.set_clipboard(vec![h.s("other/pasted.bin")], false);
+    let out = run(&h, &t, "edit.paste", None).unwrap();
+    t.set_selection(SelectionChange::Names(vec!["mine.txt".into()]));
+    ok(&h, &out);
+    eventually("pasted item listed", || {
+        names(&t).contains(&"pasted.bin".to_string())
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(t.selection().names, vec!["mine.txt".to_string()]);
+    ok(&h, &run(&h, &t, "file.trash", None).unwrap());
+    assert_eq!(dir_names(&h.trash), vec!["mine.txt"]);
+    assert!(h.p("work/pasted.bin").exists());
+}
+
+/// Without a click, the pasted items are selected when they land, and the
+/// pending selection replaces the selection (it never merges).
+#[test]
+fn s4_pending_selection_replaces_when_untouched() {
+    let h = harness();
+    mkdirs(&h.p("work"));
+    mkdirs(&h.p("other"));
+    touch(&h.p("work/mine.txt"));
+    touch(&h.p("other/a.txt"));
+    touch(&h.p("other/b.txt"));
+    let t = h.window_at("work");
+    h.engine
+        .set_clipboard(vec![h.s("other/a.txt"), h.s("other/b.txt")], false);
+    t.set_selection(SelectionChange::Names(vec!["mine.txt".into()]));
+    let out = run(&h, &t, "edit.paste", None).unwrap();
+    ok(&h, &out);
+    eventually("both pasted items selected", || {
+        let mut n = t.selection().names;
+        n.sort();
+        n == ["a.txt", "b.txt"]
+    });
+    // A right-click on an already-selected row also counts as the user's
+    // choice: a later pending selection is cancelled by it.
+    touch(&h.p("other/c.txt"));
+    h.engine.set_clipboard(vec![h.s("other/c.txt")], false);
+    let out = run(&h, &t, "edit.paste", None).unwrap();
+    let row = t.listing().index_of("mine.txt").unwrap();
+    t.set_selection(SelectionChange::Only(row));
+    h.engine.menu_target_at(t.id(), Some(row)).unwrap();
+    ok(&h, &out);
+    eventually("c listed", || names(&t).contains(&"c.txt".to_string()));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(t.selection().names, vec!["mine.txt".to_string()]);
+}

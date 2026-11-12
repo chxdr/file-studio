@@ -60,6 +60,20 @@ s1() {
   finish s1
 }
 
+# S4: ⌘V 3,000 files, then click mine.txt at once. When the paste has landed
+# the selection is still just mine.txt (the pending selection was cancelled).
+s4() {
+  home
+  mkdir -p "$H/work" "$H/other"
+  echo mine > "$H/work/mine.txt"
+  for i in $(seq 1 3000); do echo "$i" > "$H/other/f$i.txt"; done
+  run s4 "wait:1;go:$H/other;wait:1;focus:list;key:cmd+a;key:cmd+c;go:$H/work;wait:1;key:cmd+v;select:mine.txt;wait:5;sel;quit"
+  expect "the selection is still mine.txt alone" "^SEL 1: mine.txt$"
+  local n; n=$(ls "$H/work" | wc -l | tr -d ' ')
+  if [ "$n" = 3001 ]; then echo "  ok   the paste landed (3,001 items)"; else echo "  FAIL the paste has $n items"; BAD=1; fi
+  finish s4
+}
+
 for p in "${WANT[@]}"; do
   if declare -F "$p" >/dev/null; then echo "── $p"; "$p"; else echo "no proof named $p"; fi
 done

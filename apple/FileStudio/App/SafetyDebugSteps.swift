@@ -5,6 +5,7 @@
 //   confirm:<yes|no>          answers the open Trash / Delete Immediately
 //                             question as if its button were pressed (S1)
 //   ls:<path>                 prints the folder's names on disk (LS line)
+//   sel                       prints the focused tab's selection (SEL line)
 
 #if DEBUG
 import AppKit
@@ -18,6 +19,10 @@ enum SafetyDebugSteps {
         installed = true
         DebugAutomation.register("confirm") { arg, _ in
             ConfirmSheets.answer(yes: arg == "yes")
+        }
+        DebugAutomation.register("sel") { _, m in
+            let names = m.focusedTab?.api.selection().names ?? []
+            print("SEL \(names.count): \(names.sorted().prefix(8).joined(separator: ", "))")
         }
         DebugAutomation.register("ls") { arg, _ in
             let path = (arg as NSString).expandingTildeInPath

@@ -173,6 +173,16 @@ struct Inner {
     /// A pending selection from an operation (paste, new folder) waits for
     /// its items across several watcher patches, until this time.
     pending_until: Option<Instant>,
+    /// Names of the pending selection already applied (it is applied in
+    /// steps as the items appear; each step replaces the selection with all
+    /// of them, never merging with anything else).
+    pending_found: Vec<String>,
+    /// For a pending selection from an operation: the user-selection
+    /// generation when it was made. Applied only while that is unchanged (S4).
+    pending_gen: Option<u64>,
+    /// Counts the user's selection changes (clicks, keys, type-select,
+    /// patterns, right-click). Any change cancels a pending selection.
+    sel_gen: u64,
     generation: u64,
     view_generation: u64,
     version: u64,
@@ -238,6 +248,9 @@ impl Tab {
                 selection: Selection::new(),
                 pending: None,
                 pending_until: None,
+                pending_found: Vec::new(),
+                pending_gen: None,
+                sel_gen: 0,
                 generation: 0,
                 view_generation: 0,
                 version: 0,
@@ -501,6 +514,8 @@ impl Tab {
             if select.is_some() {
                 st.pending = select;
                 st.pending_until = None;
+                st.pending_found.clear();
+                st.pending_gen = None;
             }
             let opts = st.view.options(&st.filter);
             if !keep_rows {
@@ -517,6 +532,8 @@ impl Tab {
                         .and_then(|c| st.listing.inner.entry(c).map(|e| e.name.clone()));
                     if st.pending.is_none() && (!names.is_empty() || cursor.is_some()) {
                         st.pending = Some((names, cursor));
+                        st.pending_found.clear();
+                        st.pending_gen = None;
                     }
                     st.selection = Selection::new();
                 }
@@ -657,18 +674,35 @@ impl Tab {
         let old_sel = st.selection.clone();
         let mut sel = st.selection.remap(&st.listing.inner, &l);
         let final_ = state != ListingState::Loading;
+        // An operation's pending selection is dropped if the user changed the
+        // selection since it was made (S4).
+        if st.pending_gen.is_some_and(|g| g != st.sel_gen) {
+            st.pending = None;
+            st.pending_until = None;
+            st.pending_found.clear();
+            st.pending_gen = None;
+        }
         if let Some((names, cursor)) = st.pending.take() {
             let mut left = Vec::new();
             for n in &names {
                 match l.index_of(n) {
-                    Some(i) if !sel.is_selected(i) => sel.toggle(i),
-                    Some(_) => {}
+                    Some(_) => st.pending_found.push(n.clone()),
                     None => left.push(n.clone()),
                 }
             }
-            if let Some(c) = cursor.as_ref().and_then(|c| l.index_of(c)) {
-                let rows: Vec<usize> = sel.selected().collect();
-                sel = make_selection(&rows, Some(c));
+            // Replace the selection with what the pending selection found so
+            // far; never merge it into something else.
+            let rows: Vec<usize> = st
+                .pending_found
+                .iter()
+                .filter_map(|n| l.index_of(n))
+                .collect();
+            let c = cursor
+                .as_ref()
+                .and_then(|c| l.index_of(c))
+                .or_else(|| rows.first().copied());
+            if !rows.is_empty() || c.is_some() {
+                sel = make_selection(&rows, c);
             }
             let cursor_left = cursor.filter(|c| l.index_of(c).is_none());
             let waiting = st.pending_until.is_some_and(|u| Instant::now() < u);
@@ -676,6 +710,8 @@ impl Tab {
                 st.pending = Some((left, cursor_left));
             } else {
                 st.pending_until = None;
+                st.pending_found.clear();
+                st.pending_gen = None;
             }
         }
         st.version += 1;
@@ -934,9 +970,27 @@ impl Tab {
         rows.into_iter().filter_map(|i| l.path_of(i)).collect()
     }
 
-    /// Changes the selection and emits `SelectionChanged`.
+    /// The user chose a selection: a pending one (from a paste, a new
+    /// folder, a navigation) no longer applies (S4).
+    fn user_selected(st: &mut Inner) {
+        st.sel_gen += 1;
+        st.pending = None;
+        st.pending_until = None;
+        st.pending_found.clear();
+        st.pending_gen = None;
+    }
+
+    /// Records a selection gesture that may leave the selection as it is (a
+    /// right-click on a selected row): a pending selection is cancelled.
+    pub(crate) fn note_user_selection(&self) {
+        Self::user_selected(&mut self.st.lock());
+    }
+
+    /// Changes the selection and emits `SelectionChanged`. This is the
+    /// user's choice: it cancels any pending selection from an operation.
     pub fn set_selection(&self, change: SelectionChange) {
         let mut st = self.st.lock();
+        Self::user_selected(&mut st);
         let before = st.selection.clone();
         let len = st.listing.inner.len();
         let page = st.visible.1.max(1) as usize;
@@ -992,6 +1046,7 @@ impl Tab {
     /// Selects (or deselects) rows whose names match a glob (`*.png`).
     pub fn select_pattern(&self, pattern: &str, select: bool) {
         let mut st = self.st.lock();
+        Self::user_selected(&mut st);
         let l = st.listing.clone();
         let before = st.selection.clone();
         if select {
@@ -1030,6 +1085,7 @@ impl Tab {
         });
         let l = st.listing.clone();
         let row = fstudio_view::type_select(&l.inner, text, from)?;
+        Self::user_selected(&mut st);
         st.selection.select_only(row);
         drop(st);
         self.shared.emit(CoreEvent::SelectionChanged {
@@ -1059,6 +1115,7 @@ impl Tab {
     /// behaviour after Trash): returns their paths.
     pub(crate) fn select_after_removing(&self, removed: &[PathBuf]) {
         let mut st = self.st.lock();
+        Self::user_selected(&mut st);
         let l = st.listing.clone();
         let rows: Vec<usize> = removed
             .iter()
@@ -1112,6 +1169,8 @@ impl Tab {
             let cursor = names.first().cloned();
             st.pending = Some((names, cursor));
             st.pending_until = Some(Instant::now() + Duration::from_secs(5));
+            st.pending_found.clear();
+            st.pending_gen = Some(st.sel_gen);
             // Applied by the watcher patches that bring the items in.
             st.selection = Selection::new();
         }

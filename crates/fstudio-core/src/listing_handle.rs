@@ -82,6 +82,7 @@ impl ListingHandle {
     /// shows this listing; the target's paths are this listing's.
     pub fn menu_target_at(&self, owner: TabId, row: Option<u32>) -> MenuTarget {
         let empty = MenuTarget::EmptySpace { tab: owner };
+        self.tab.note_user_selection();
         let l = self.listing();
         let Some(row) = row.filter(|&r| r < l.len()) else {
             self.set_selection(SelectionChange::None);
