@@ -29,32 +29,63 @@ pub struct ConflictId(pub i64);
 pub enum OpRequest {
     /// Copy each source into `dest_dir`, keeping its name.
     Copy {
+        /// The items to copy.
         sources: Vec<PathBuf>,
+        /// The folder to copy them into.
         dest_dir: PathBuf,
     },
     /// Move each source into `dest_dir`. A same-volume move is a rename; a
     /// cross-volume move copies, verifies (if on), syncs, then removes the source.
     Move {
+        /// The items to move.
         sources: Vec<PathBuf>,
+        /// The folder to move them into.
         dest_dir: PathBuf,
     },
     /// Move each path to the Trash (Finder's Put Back keeps working).
-    Trash { paths: Vec<PathBuf> },
+    Trash {
+        /// The items to trash.
+        paths: Vec<PathBuf>,
+    },
     /// Permanently delete each path. Refused unless
     /// [`OpsConfig::allow_delete_immediately`] is set.
-    DeleteImmediately { paths: Vec<PathBuf> },
+    DeleteImmediately {
+        /// The items to delete.
+        paths: Vec<PathBuf>,
+    },
     /// Create an empty folder `parent/name`.
-    NewFolder { parent: PathBuf, name: String },
+    NewFolder {
+        /// The folder to create it in.
+        parent: PathBuf,
+        /// Its name.
+        name: String,
+    },
     /// Create an empty file `parent/name`.
-    NewFile { parent: PathBuf, name: String },
+    NewFile {
+        /// The folder to create it in.
+        parent: PathBuf,
+        /// Its name.
+        name: String,
+    },
     /// Rename `path` to `new_name` in the same folder.
-    Rename { path: PathBuf, new_name: String },
+    Rename {
+        /// The item to rename.
+        path: PathBuf,
+        /// Its new name (no `/`).
+        new_name: String,
+    },
     /// Copy each path next to itself as "name copy", "name copy 2"… (as Finder does).
-    Duplicate { paths: Vec<PathBuf> },
+    Duplicate {
+        /// The items to duplicate.
+        paths: Vec<PathBuf>,
+    },
     /// Move each `(from, to)` to the exact destination path `to`, creating
     /// missing parent folders. Undo uses this to move items back, put them
     /// back from the Trash and rename them back.
-    MoveTo { pairs: Vec<(PathBuf, PathBuf)> },
+    MoveTo {
+        /// `(from, to)`, where `to` is the full destination path.
+        pairs: Vec<(PathBuf, PathBuf)>,
+    },
 }
 
 impl OpRequest {
@@ -77,14 +108,23 @@ impl OpRequest {
 /// The kind of an operation, without its arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpKind {
+    /// An [`OpRequest::Copy`].
     Copy,
+    /// An [`OpRequest::Move`].
     Move,
+    /// An [`OpRequest::Trash`].
     Trash,
+    /// An [`OpRequest::DeleteImmediately`].
     DeleteImmediately,
+    /// An [`OpRequest::NewFolder`].
     NewFolder,
+    /// An [`OpRequest::NewFile`].
     NewFile,
+    /// An [`OpRequest::Rename`].
     Rename,
+    /// An [`OpRequest::Duplicate`].
     Duplicate,
+    /// An [`OpRequest::MoveTo`].
     MoveTo,
 }
 
@@ -183,6 +223,7 @@ pub enum FaultStep {
 /// Test hook: return an error to make the engine fail at `step` for `path`
 /// (the source). Never set in production.
 pub trait FaultHook: Send + Sync {
+    /// Returns an error to fail the item at `step`.
     fn check(&self, step: FaultStep, path: &Path) -> std::io::Result<()>;
 }
 
@@ -197,8 +238,9 @@ pub struct OpsConfig {
     pub ops_per_volume: usize,
     /// Parallel file workers within one copy or move. Default 4.
     pub file_workers: usize,
-    /// `F_FULLFSYNC` every copied file even for plain copies (moves and
-    /// verified copies always sync). Default off.
+    /// `F_FULLFSYNC` every copied file for plain copies too (moves always
+    /// sync before removing a source). Default off: a copy's source is intact,
+    /// so a power cut can't lose data, only the copy.
     pub fsync_copies: bool,
     /// Minimum time between progress events for one op. Default 16 ms.
     pub progress_interval: Duration,
@@ -241,14 +283,17 @@ impl fmt::Debug for OpsConfig {
 /// One top-level item of a plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanRoot {
+    /// The item as requested.
     pub source: PathBuf,
     /// Where it would land (`None` for Trash and Delete).
     pub dest: Option<PathBuf>,
+    /// What the item is (`Other` if it couldn't be read).
     pub kind: EntryKind,
     /// Files (and symlinks) inside, counting the item itself if it's a file.
     pub files: u64,
     /// Folders inside, counting the item itself if it's a folder.
     pub dirs: u64,
+    /// Bytes of file content inside (logical sizes).
     pub bytes: u64,
     /// Source and destination are on different volumes.
     pub cross_volume: bool,
@@ -257,9 +302,13 @@ pub struct PlanRoot {
 /// A name that is already taken at the destination.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanConflict {
+    /// The incoming item.
     pub source: PathBuf,
+    /// The item already there.
     pub dest: PathBuf,
+    /// What the incoming item is.
     pub source_kind: EntryKind,
+    /// What the existing item is.
     pub dest_kind: EntryKind,
 }
 
@@ -276,13 +325,17 @@ pub struct CaseCollision {
 /// A dry run of a request: what it would touch, found up front.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpPlan {
+    /// The top-level items.
     pub roots: Vec<PlanRoot>,
     /// Regular files and symlinks.
     pub files: u64,
+    /// Folders, counting top-level folders.
     pub dirs: u64,
+    /// Bytes of file content (logical sizes).
     pub bytes: u64,
     /// Top-level names already taken at the destination.
     pub conflicts: Vec<PlanConflict>,
+    /// Names that would collide on the destination volume (F-017).
     pub case_collisions: Vec<CaseCollision>,
     /// iCloud/File Provider placeholders whose content is not on this Mac.
     /// They are not read unless the request opts in.
@@ -300,14 +353,19 @@ pub struct OpPlan {
 /// The lifecycle of an op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OpState {
+    /// Waiting for a free slot on its volume.
     Queued,
+    /// Working.
     Running,
+    /// Paused by the user.
     Paused,
     /// Everything else is done; waiting for the user to resolve conflicts.
     WaitingForDecision,
+    /// Finished without errors.
     Completed,
     /// Finished, but some items failed.
     CompletedWithErrors,
+    /// Cancelled by the user; finished items stay.
     Cancelled,
     /// Could not run at all (see the errors).
     Failed,
@@ -357,8 +415,11 @@ impl OpState {
 /// A per-file error. Errors never end a batch silently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemError {
+    /// The source (or the item itself, for Trash and Delete).
     pub path: PathBuf,
+    /// Where it was going, if anywhere.
     pub dest: Option<PathBuf>,
+    /// What went wrong, in plain words.
     pub message: String,
     /// The OS error number, when there is one.
     pub errno: Option<i32>,
@@ -367,15 +428,25 @@ pub struct ItemError {
 /// A conflict waiting for a decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictInfo {
+    /// The op it belongs to.
     pub op: OpId,
+    /// Pass this to [`crate::OpQueue::resolve_conflict`].
     pub id: ConflictId,
+    /// The incoming item.
     pub source: PathBuf,
+    /// The item already there.
     pub dest: PathBuf,
+    /// What the incoming item is.
     pub source_kind: EntryKind,
+    /// What the existing item is.
     pub dest_kind: EntryKind,
+    /// The incoming item's size in bytes.
     pub source_size: u64,
+    /// The existing item's size in bytes.
     pub dest_size: u64,
+    /// The incoming item's modification time (ns since the epoch).
     pub source_mtime_ns: i64,
+    /// The existing item's modification time (ns since the epoch).
     pub dest_mtime_ns: i64,
     /// Both are folders, so `Merge` is allowed.
     pub can_merge: bool,
@@ -384,14 +455,21 @@ pub struct ConflictInfo {
 /// A live snapshot of one op, for the progress UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpStatus {
+    /// The op.
     pub id: OpId,
+    /// What it does.
     pub kind: OpKind,
     /// "Copying 12 items to “Backup”".
     pub title: String,
+    /// Where it is in its life.
     pub state: OpState,
+    /// Items finished (done, failed or skipped).
     pub files_done: u64,
+    /// Items in all, from the plan.
     pub files_total: u64,
+    /// Bytes copied so far.
     pub bytes_done: u64,
+    /// Bytes to copy, from the plan.
     pub bytes_total: u64,
     /// The file being worked on.
     pub current: Option<PathBuf>,
@@ -399,6 +477,7 @@ pub struct OpStatus {
     pub speed_bps: f64,
     /// Estimated seconds left, once the speed is known.
     pub eta_secs: Option<f64>,
+    /// Per-file errors so far.
     pub errors: Vec<ItemError>,
     /// Conflicts waiting for a decision.
     pub conflicts: Vec<ConflictInfo>,
@@ -407,14 +486,23 @@ pub struct OpStatus {
 /// The summary sent when an op finishes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpReport {
+    /// The op.
     pub id: OpId,
+    /// What it did.
     pub kind: OpKind,
+    /// How it ended.
     pub state: OpState,
+    /// Items done.
     pub files_done: u64,
+    /// Items that failed.
     pub files_failed: u64,
+    /// Items skipped (by a decision, or not downloaded).
     pub files_skipped: u64,
+    /// Bytes copied.
     pub bytes_done: u64,
+    /// Every per-file error.
     pub errors: Vec<ItemError>,
+    /// Wall-clock run time.
     pub elapsed_ms: u64,
 }
 
@@ -423,6 +511,7 @@ pub struct OpReport {
 pub struct UndoState {
     /// "Undo Move of 12 Items", or `None` when there is nothing to undo.
     pub undo: Option<String>,
+    /// "Redo Move of 12 Items", or `None`.
     pub redo: Option<String>,
 }
 
@@ -430,15 +519,36 @@ pub struct UndoState {
 /// per [`OpsConfig::progress_interval`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OpEvent {
+    /// Coalesced progress for one op.
     OpProgress(OpStatus),
-    OpConflict { op: OpId, conflict: ConflictInfo },
-    OpItemFailed { op: OpId, error: ItemError },
-    OpFinished { op: OpId, report: OpReport },
+    /// An item is waiting for a conflict decision.
+    OpConflict {
+        /// The op.
+        op: OpId,
+        /// The conflict to show.
+        conflict: ConflictInfo,
+    },
+    /// An item failed (the op goes on).
+    OpItemFailed {
+        /// The op.
+        op: OpId,
+        /// What failed.
+        error: ItemError,
+    },
+    /// An op finished.
+    OpFinished {
+        /// The op.
+        op: OpId,
+        /// Its summary.
+        report: OpReport,
+    },
+    /// The undo or redo labels changed.
     UndoChanged(UndoState),
 }
 
 /// Receives queue events. Called from worker threads; keep it quick.
 pub trait EventSink: Send + Sync {
+    /// Handles one event.
     fn on_event(&self, e: OpEvent);
 }
 
@@ -459,24 +569,34 @@ impl EventSink for NullSink {
 #[derive(Debug, thiserror::Error)]
 pub enum OpsError {
     #[error("journal: {0}")]
+    /// The database failed.
     Db(#[from] fstudio_db::DbError),
     #[error("journal: {0}")]
+    /// An SQL statement failed.
     Sql(#[from] fstudio_db::rusqlite::Error),
     #[error("{0}")]
+    /// An I/O error outside any one item.
     Io(#[from] std::io::Error),
     #[error("no such operation: {0}")]
+    /// No op with that id.
     NoSuchOp(OpId),
     #[error("no such conflict")]
+    /// No pending conflict with that id.
     NoSuchConflict,
     #[error("invalid request: {0}")]
+    /// The request is malformed (relative path, bad name, nothing to do).
     InvalidRequest(String),
     #[error("Delete Immediately is turned off in Settings")]
+    /// Delete Immediately was requested while it is turned off.
     DeleteImmediatelyDisabled,
     #[error("{0:?} is not allowed for this conflict")]
+    /// The decision doesn't fit the conflict (Merge for a file).
     InvalidDecision(ConflictDecision),
     #[error("can't undo: {0}")]
+    /// Undo would overwrite or lose something, so it was refused.
     UndoRefused(String),
     #[error("journal data: {0}")]
+    /// A journal row couldn't be decoded.
     Json(#[from] serde_json::Error),
 }
 

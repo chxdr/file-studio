@@ -120,7 +120,7 @@ fn replace_trashes_the_old_item_first() {
             }
             // Undo puts the replaced item back.
             e.undo().unwrap();
-            assert_eq!(exists(&e.p("src/item")), true, "{k:?}");
+            assert!(exists(&e.p("src/item")), "{k:?}");
             match k {
                 K::File => assert_eq!(read(&e.p("dst/item")), b"old"),
                 K::Dir => assert_eq!(read(&e.p("dst/item/shared.txt")), b"old"),

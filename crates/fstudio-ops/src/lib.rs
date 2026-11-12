@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! File operation queue: copy, move, trash, delete, create, rename and
 //! duplicate, with a SQLite journal, crash recovery, conflicts and undo.
 //! See DECISIONS F-007, F-008, F-015, F-016 and F-017.

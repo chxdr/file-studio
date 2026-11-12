@@ -597,7 +597,10 @@ impl Env<'_> {
         sys::clear_acl(partial)?;
 
         let is_file = item.kind == EntryKind::File;
-        let must_sync = self.is_move() || self.cfg.verify || self.cfg.fsync_copies;
+        // Durable before a move removes its source; for copies only on request.
+        // Verify doesn't need it: the loop writes with F_NOCACHE, so the re-read
+        // hits the device. A clone wrote nothing, so there is nothing to sync.
+        let must_sync = self.is_move() || (self.cfg.fsync_copies && !cloned);
         if is_file && must_sync {
             sys::full_sync(&File::open(partial)?)?;
         }
