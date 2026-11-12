@@ -781,6 +781,10 @@ impl FfiEngine {
     pub fn drop_effect(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> FfiDropEffect {
         self.inner.drop_effect(&sources, &dest, mods.into()).into()
     }
+    /// A click on a list-view column header (sorts, or flips the direction).
+    pub fn sort_by_column(&self, tab: u64, column: FfiColumnId) -> R<FfiOutcome> {
+        Ok(self.inner.sort_by_column(TabId(tab), column.into())?.into())
+    }
     /// Decides the drop and queues the copy or move.
     pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<i64> {
         Ok(self.inner.drop_items(&sources, &dest, mods.into())?.0)

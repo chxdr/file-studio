@@ -149,3 +149,79 @@ mod tests {
         assert_eq!(sanitize_columns(&d), d);
     }
 }
+
+impl ColumnId {
+    /// What clicking this column's header sorts by.
+    pub fn sort_by(self) -> crate::view::SortBy {
+        use crate::view::SortBy;
+        match self {
+            ColumnId::Name => SortBy::Name,
+            ColumnId::Size => SortBy::Size,
+            ColumnId::Modified => SortBy::Modified,
+            ColumnId::Created => SortBy::Created,
+            ColumnId::Kind => SortBy::Kind,
+            ColumnId::Extension => SortBy::Extension,
+        }
+    }
+
+    /// The direction a first click sorts in: largest and newest first for
+    /// sizes and dates, A to Z otherwise (Finder).
+    pub fn first_click_ascending(self) -> bool {
+        !matches!(
+            self,
+            ColumnId::Size | ColumnId::Modified | ColumnId::Created
+        )
+    }
+}
+
+/// The view after a click on a column header: the same column flips the
+/// direction, another one sorts by it in its natural first direction.
+pub(crate) fn header_click(v: &crate::view::ViewState, column: ColumnId) -> crate::view::ViewState {
+    let mut v = v.clone();
+    if v.sort == column.sort_by() {
+        v.ascending = !v.ascending;
+    } else {
+        v.sort = column.sort_by();
+        v.ascending = column.first_click_ascending();
+    }
+    v
+}
+
+impl crate::engine::Engine {
+    /// A click on a list-view column header: sorts by it, or flips the
+    /// direction when it is already the sort column. Re-sorts off the calling
+    /// thread (`Resorted`) and is remembered per folder.
+    pub fn sort_by_column(
+        &self,
+        tab: crate::ids::TabId,
+        column: ColumnId,
+    ) -> crate::error::Result<crate::outcome::Outcome> {
+        let t = self.target(Some(tab))?;
+        t.set_view(header_click(&t.view(), column));
+        Ok(crate::outcome::Outcome::none().with_tab(tab))
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+    use crate::view::{SortBy, ViewState};
+
+    #[test]
+    fn same_column_flips_other_column_starts_in_its_direction() {
+        let v = ViewState::default();
+        assert_eq!(v.sort, SortBy::Name);
+        let a = header_click(&v, ColumnId::Name);
+        assert_eq!((a.sort, a.ascending), (SortBy::Name, false));
+        let b = header_click(&a, ColumnId::Modified);
+        assert_eq!(
+            (b.sort, b.ascending),
+            (SortBy::Modified, false),
+            "newest first"
+        );
+        let c = header_click(&b, ColumnId::Modified);
+        assert!(c.ascending);
+        let d = header_click(&c, ColumnId::Extension);
+        assert_eq!((d.sort, d.ascending), (SortBy::Extension, true));
+    }
+}
