@@ -15,8 +15,14 @@ navigation, real NSMenus, drag and drop) in the split view's sidebar item
     the sheet);
   - a favourite whose folder has gone (`Favourite.missing`) is dimmed with a
     question-mark folder; clicking it offers Remove.
-  Favourite drags carry only our own pasteboard type, so dropping one on
-  Finder or a list never copies or aliases the folder.
+  **F-023:** every sidebar drag is a reference. Rows carry only private
+  pasteboard types (`app.filestudio.sidebar-favourite`, `…sidebar-item`),
+  never a file URL, and the list and crumb drop targets also refuse any drag
+  whose source is the sidebar (`SidebarViewController.isSidebarDrag`). No
+  gesture inside the sidebar can queue a file operation; reorder and pin
+  touch only the favourites store. `SidebarDragProbe.swift` (`simdrag:`)
+  replays sidebar drags onto list rows, crumbs and sidebar rows through the
+  real handlers.
 - Recent Folders from `engine.frecent("", …)` (favourites and home left out).
 - Locations from `AppModel.volumes` with free space; removable and network
   volumes get an eject button → `drive.eject` → `ShellRequest.eject`, carried

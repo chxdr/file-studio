@@ -133,14 +133,25 @@ impl Engine {
 
     /// Decides the drop as [`Engine::drop_effect`] does and queues the copy or
     /// move. Returns the queued operation, or `NotAvailable` when the drop is
-    /// refused.
+    /// refused. A move of a protected folder (F-023) is refused too: use
+    /// [`Engine::drop_files`], which asks for confirmation instead.
     pub fn drop_items(&self, sources: &[String], dest: &str, mods: Mods) -> Result<OpId> {
         let effect = self.drop_effect(sources, dest, mods);
         let sources: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
         let dest_dir = PathBuf::from(dest);
         let req = match effect {
             DropEffect::Copy => OpRequest::Copy { sources, dest_dir },
-            DropEffect::Move => OpRequest::Move { sources, dest_dir },
+            DropEffect::Move => {
+                if let Some(why) = sources
+                    .iter()
+                    .find_map(|s| self.move_protection(&s.to_string_lossy()))
+                {
+                    return Err(CoreError::NotAvailable(format!(
+                        "Moving this needs confirmation. {why}"
+                    )));
+                }
+                OpRequest::Move { sources, dest_dir }
+            }
             DropEffect::None => {
                 return Err(CoreError::NotAvailable(
                     "These items can't be dropped here".into(),

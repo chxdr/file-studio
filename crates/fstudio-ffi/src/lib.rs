@@ -845,6 +845,21 @@ impl FfiEngine {
         Ok(self.inner.move_favourite(&path, index)?)
     }
 
+    // ── protected moves (F-023) ──
+
+    /// The user said Move to `ShellRequest::ConfirmMove`.
+    pub fn confirm_move(&self, token: u64) -> R<FfiOutcome> {
+        Ok(self.inner.confirm_move(token)?.into())
+    }
+    /// The user cancelled `ShellRequest::ConfirmMove`.
+    pub fn cancel_move(&self, token: u64) {
+        self.inner.cancel_move(token)
+    }
+    /// Why moving `path` needs confirmation, or `None`.
+    pub fn move_protection(&self, path: String) -> Option<String> {
+        self.inner.move_protection(&path)
+    }
+
     // ── OS hooks ──
 
     /// A volume was mounted or unmounted.

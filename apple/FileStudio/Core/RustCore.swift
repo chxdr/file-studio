@@ -154,6 +154,8 @@ extension ShellRequest {
         case .showPalette: self = .showPalette
         case .showQuickOpen: self = .showQuickOpen
         case .showSettings(let s): self = .showSettings(section: s)
+        case .confirmMove(let t, let title, let d, let p): self = .confirmMove(token: t, title: title, detail: d, paths: p)
+        case .moved(let t): self = .moved(text: t)
         case .showPowerTour: self = .showPowerTour
         case .toggleSidebar: self = .toggleSidebar
         case .toggleInspector: self = .toggleInspector
@@ -985,6 +987,8 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     func addFavourite(_ path: String, index: UInt32?) throws { try wrap { try ffi.addFavourite(path: path, index: index) } }
     func removeFavourite(_ path: String) throws { try wrap { try ffi.removeFavourite(path: path) } }
     func renameFavourite(_ path: String, name: String) throws { try wrap { try ffi.renameFavourite(path: path, name: name) } }
+    func confirmMove(_ token: UInt64) throws -> Outcome { try wrap { Outcome(try ffi.confirmMove(token: token)) } }
+    func cancelMove(_ token: UInt64) { ffi.cancelMove(token: token) }
     func moveFavourite(_ path: String, to index: UInt32) throws { try wrap { try ffi.moveFavourite(path: path, index: index) } }
 
     // OS hooks

@@ -564,6 +564,15 @@ pub enum FfiShellRequest {
     ShowSettings {
         section: String,
     },
+    ConfirmMove {
+        token: u64,
+        title: String,
+        detail: String,
+        paths: Vec<String>,
+    },
+    Moved {
+        text: String,
+    },
     ShowPowerTour,
     ToggleSidebar,
     ToggleInspector,
@@ -622,6 +631,18 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::ShowPalette => Self::ShowPalette,
             S::ShowQuickOpen => Self::ShowQuickOpen,
             S::ShowSettings { section } => Self::ShowSettings { section },
+            S::ConfirmMove {
+                token,
+                title,
+                detail,
+                paths,
+            } => Self::ConfirmMove {
+                token,
+                title,
+                detail,
+                paths,
+            },
+            S::Moved { text } => Self::Moved { text },
             S::ShowPowerTour => Self::ShowPowerTour,
             S::ToggleSidebar => Self::ToggleSidebar,
             S::ToggleInspector => Self::ToggleInspector,

@@ -122,6 +122,25 @@ pub enum ShellRequest {
         /// The section, or empty.
         section: String,
     },
+    /// Moving these items needs the user's yes (F-023: a protected folder is
+    /// among them). Ask with Cancel as the default button, then call
+    /// `Engine::confirm_move(token)` or `Engine::cancel_move(token)`.
+    ConfirmMove {
+        /// The pending move.
+        token: u64,
+        /// "Move “Downloads” into “Import Studio”?"
+        title: String,
+        /// Why it is protected.
+        detail: String,
+        /// The items to move.
+        paths: Vec<String>,
+    },
+    /// A move was queued: show `text` ("Moved “X” to “Y”") for about six
+    /// seconds with an Undo button that performs `edit.undo` (F-023).
+    Moved {
+        /// What moved where.
+        text: String,
+    },
     /// Show the power tour (`app.power_tour`, Help › File Studio Power
     /// Tour): a short, skippable sequence of cards about the power-user
     /// tools, with keys read from the current bindings.

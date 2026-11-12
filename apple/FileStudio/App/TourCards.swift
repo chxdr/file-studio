@@ -130,7 +130,9 @@ enum TourKeys {
     /// The key-cap strings a key row shows; empty when a command has no binding.
     static func caps(_ key: TourCard.Key, keysFor: (String) -> [String]) -> [String] {
         switch key {
-        case .command(let id, _): Array(keysFor(id).prefix(3))
+        case .command(let id, _):
+            // The same keys can be bound in two contexts (⎋ in the list and in the filter).
+            Array(keysFor(id).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.prefix(3))
         case .typed(let t, _), .literal(let t, _): [t]
         }
     }

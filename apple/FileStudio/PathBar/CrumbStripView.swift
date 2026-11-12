@@ -107,6 +107,9 @@ final class CrumbStripView: NSView {
     private var hovered: Part?
     private var pressed: Part?
     private var dropTarget: Part?
+    /// The folder the highlighted crumb stood for (F-023: the drop goes
+    /// exactly there, or nowhere).
+    private var dropTargetPath: String?
     /// The chevron whose menu is open (drawn pressed).
     var openChevron: Part? { didSet { needsDisplay = true } }
     private var tracking: NSTrackingArea?
@@ -336,11 +339,14 @@ final class CrumbStripView: NSView {
     }
 
     private func dragOperation(_ info: NSDraggingInfo) -> NSDragOperation {
+        // F-023: sidebar rows are references; dropping one here never moves or copies it.
+        if SidebarViewController.isSidebarDrag(info) { setDropTarget(nil); return [] }
         let p = convert(info.draggingLocation, from: nil)
         let target = part(at: p)
         guard let i = crumbIndex(target) else { setDropTarget(nil); return [] }
         let action = delegate?.crumbStrip(dropAction: sources(info), onto: crumbs[i].path) ?? .none
         setDropTarget(action == .none ? nil : target)
+        dropTargetPath = action == .none ? nil : crumbs[i].path
         switch action {
         case .none: return []
         case .copy: return .copy
@@ -382,7 +388,8 @@ final class CrumbStripView: NSView {
     override func draggingEnded(_ sender: NSDraggingInfo) { setDropTarget(nil); dragSources = nil }
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { dropTarget != nil }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let i = crumbIndex(dropTarget) else { return false }
+        guard !SidebarViewController.isSidebarDrag(sender), let i = crumbIndex(dropTarget),
+              crumbs[i].path == dropTargetPath else { setDropTarget(nil); return false }
         let ok = delegate?.crumbStrip(drop: sources(sender), onto: crumbs[i].path) ?? false
         setDropTarget(nil)
         return ok

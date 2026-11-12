@@ -77,6 +77,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var lastLocation: String?
     /// The drag type of a favourite being reordered or dragged out.
     static let favouriteType = NSPasteboard.PasteboardType("app.filestudio.sidebar-favourite")
+    /// The drag type of any other sidebar row (a recent folder, a volume): it
+    /// can only be pinned by dropping it in Favourites.
+    static let itemType = NSPasteboard.PasteboardType("app.filestudio.sidebar-item")
+    /// Every type a sidebar drag carries. Drop targets elsewhere refuse these.
+    static let privateTypes: [NSPasteboard.PasteboardType] = [favouriteType, itemType]
+
+    /// Is this drag from the sidebar (F-023)? Drop targets that move or copy
+    /// files call this and refuse such drags, whatever else the pasteboard
+    /// holds.
+    static func isSidebarDrag(_ info: NSDraggingInfo) -> Bool {
+        info.draggingSource is SidebarOutlineView
+            || info.draggingPasteboard.availableType(from: privateTypes) != nil
+    }
 
     init(model: AppModel, window: WindowModel) {
         self.model = model
@@ -85,6 +98,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         SidebarServices.install(model)
         #if DEBUG
         SidebarDebugSteps.install()
+        SidebarDragProbe.install()
         #endif
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -106,9 +120,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.delegate = self
         outline.target = self
         outline.action = #selector(clicked)
-        outline.registerForDraggedTypes([Self.favouriteType, .fileURL])
-        outline.setDraggingSourceOperationMask([.move, .copy, .link], forLocal: true)
-        outline.setDraggingSourceOperationMask([.copy, .link], forLocal: false)
+        // F-023: sidebar drags are references, never file operations. They
+        // carry only our private types (no file URL), so no drop target that
+        // moves or copies files (the list, crumbs, Finder) ever accepts them.
+        outline.registerForDraggedTypes([Self.favouriteType, Self.itemType, .fileURL])
+        outline.setDraggingSourceOperationMask([.move, .link], forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
         outline.setAccessibilityLabel("Sidebar")
         outline.menuProvider = { [weak self] row in self?.menu(row: row) }
         outline.onMiddleClick = { [weak self] row in self?.openInNewTab(row: row) }
@@ -357,14 +374,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ ov: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let n = item as? SidebarNode, let path = n.path else { return nil }
+        // Only our own types, never a file URL (F-023): dropping a sidebar row
+        // on a folder, a crumb, a pane or Finder must not move or copy it.
+        // A favourite reorders (or, dragged out, unpins with a poof); any
+        // other row can only be pinned.
         let pb = NSPasteboardItem()
         if case .favourite = n.kind {
-            // Only our own type: dropping a favourite on Finder or a list must
-            // not copy or alias the folder. Dragging it out unpins it (poof).
             pb.setString(path, forType: Self.favouriteType)
-            return pb
+        } else {
+            pb.setString(path, forType: Self.itemType)
         }
-        pb.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
         return pb
     }
 
@@ -391,6 +410,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private var favSection: SidebarNode? { roots.first { $0.id == "sec:fav" } }
+    /// The gap the last validated drop was retargeted to.
+    private var lastDropIndex = 0
+
+    #if DEBUG
+    /// Accepts a probe drop where `validateDrop` retargeted it, as NSOutlineView would.
+    func debugAcceptRetargetedDrop(_ info: NSDraggingInfo) -> Bool { acceptDrop(info.draggingPasteboard, at: lastDropIndex) }
+    #endif
 
     func outlineView(_ ov: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
@@ -406,7 +432,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if at < 0 { at = fav.children.count }
         ov.setDropItem(fav, dropChildIndex: at)
+        lastDropIndex = at
         if pb.string(forType: Self.favouriteType) != nil { return .move }
+        if pb.string(forType: Self.itemType) != nil { return .link }
         return folderURLs(pb).isEmpty ? [] : .link
     }
 
@@ -418,6 +446,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// moves there, folders are pinned there. Debug automation calls this with
     /// a pasteboard of its own.
     func acceptDrop(_ pb: NSPasteboard, at index: Int) -> Bool {
+        // Every branch only touches the favourites store; nothing here may
+        // ever queue a file operation (F-023).
+        if let path = pb.string(forType: Self.itemType) {
+            do { try model.engine.addFavourite(path, index: UInt32(max(index, 0))) } catch {
+                model.statusMessage = error.localizedDescription
+                return false
+            }
+            return true
+        }
         do {
             if let path = pb.string(forType: Self.favouriteType) {
                 guard let from = model.favourites.firstIndex(where: { $0.path == path }) else { return false }

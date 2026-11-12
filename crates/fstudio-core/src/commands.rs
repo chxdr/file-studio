@@ -714,9 +714,63 @@ impl Engine {
                 ));
             }
             DropAction::Copy => OpRequest::Copy { sources, dest_dir },
-            DropAction::Move => OpRequest::Move { sources, dest_dir },
+            DropAction::Move => {
+                let req = OpRequest::Move {
+                    sources: sources.clone(),
+                    dest_dir: dest_dir.clone(),
+                };
+                if let Some(ask) = self.guard_move(&sources, &dest_dir, || {
+                    crate::protect::PendingMove::Request(req.clone())
+                }) {
+                    return Ok(ask);
+                }
+                let mut out = Outcome::op(self.enqueue(req)?);
+                out.shell = Some(ShellRequest::Moved {
+                    text: crate::protect::moved_text(&sources, &dest_dir),
+                });
+                return Ok(out);
+            }
         };
         Ok(Outcome::op(self.enqueue(req)?))
+    }
+
+    /// F-023 for commands that move (F6, paste, Paste as Move, New Folder
+    /// with Selection): unless the user already confirmed, a protected item
+    /// stops the command and asks; on yes the command runs again with
+    /// `Confirmed`.
+    fn guard_command(
+        &self,
+        inv: &CommandInvocation,
+        sources: &[PathBuf],
+        dest: &Path,
+    ) -> Option<Outcome> {
+        if matches!(inv.arg, Some(CommandArg::Confirmed)) {
+            return None;
+        }
+        self.guard_move(sources, dest, || {
+            let mut again = inv.clone();
+            again.arg = Some(CommandArg::Confirmed);
+            crate::protect::PendingMove::Command(again)
+        })
+    }
+
+    /// The paste guard: only a cut (or Paste as Move) moves.
+    fn guard_paste(
+        &self,
+        inv: &CommandInvocation,
+        t: &Tab,
+        as_move: Option<bool>,
+    ) -> Option<Outcome> {
+        let cb = self.shared.clipboard.lock().clone()?;
+        if !as_move.unwrap_or(cb.cut) {
+            return None;
+        }
+        let dest = t.location_path();
+        if cb.items.iter().all(|p| p.parent() == Some(dest.as_path())) {
+            return None;
+        }
+        self.guard_command(inv, &cb.items, &dest)
+            .map(|o| o.with_tab(t.id()))
     }
 
     fn paste_into(&self, t: &Tab, as_move: Option<bool>) -> Result<Outcome> {
@@ -752,6 +806,7 @@ impl Engine {
                 dest_dir: dest,
             }
         };
+        let moved = mv.then(|| crate::protect::moved_text(&cb.items, &t.location_path()));
         let id = self.enqueue(req)?;
         if mv {
             // A cut is used up by its paste; nothing was deleted before now.
@@ -764,7 +819,9 @@ impl Engine {
             self.redraw_dirs(&dirs);
         }
         t.select_when_present(names);
-        Ok(Outcome::op(id).with_tab(t.id()))
+        let mut out = Outcome::op(id).with_tab(t.id());
+        out.shell = moved.map(|text| ShellRequest::Moved { text });
+        Ok(out)
     }
 
     fn copy_paths(
@@ -1159,6 +1216,9 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let name = Self::free_name(&t, NEW_FOLDER_WITH_ITEMS);
                 let parent = t.location_path();
+                if let Some(ask) = self.guard_command(inv, &sel, &parent.join(&name)) {
+                    return Ok(ask.with_tab(tid));
+                }
                 let ops = self.ops();
                 let first = ops.enqueue(OpRequest::NewFolder {
                     parent: parent.clone(),
@@ -1224,6 +1284,13 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let o = self.other(&t)?;
                 let dest_dir = o.location_path();
+                if id == "file.move_to_other_pane"
+                    && let Some(ask) = self.guard_command(inv, &sel, &dest_dir)
+                {
+                    return Ok(ask.with_tab(tid));
+                }
+                let moved = (id == "file.move_to_other_pane")
+                    .then(|| crate::protect::moved_text(&sel, &dest_dir));
                 let names: Vec<String> = sel
                     .iter()
                     .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -1242,9 +1309,16 @@ impl Engine {
                 };
                 let op = self.enqueue(req)?;
                 o.select_when_present(names);
-                Outcome::op(op).with_tab(tid)
+                let mut out = Outcome::op(op).with_tab(tid);
+                out.shell = moved.map(|text| ShellRequest::Moved { text });
+                out
             }
-            "file.move_here" => self.paste_into(&t, Some(true))?,
+            "file.move_here" => {
+                if let Some(ask) = self.guard_paste(inv, &t, Some(true)) {
+                    return Ok(ask);
+                }
+                self.paste_into(&t, Some(true))?
+            }
             "file.open_with" => Outcome::shell(ShellRequest::OpenWith {
                 paths: strings(&Self::need_selection(&t)?),
             })
@@ -1287,7 +1361,12 @@ impl Engine {
                 ))
                 .with_tab(tid)
             }
-            "edit.paste" => self.paste_into(&t, None)?,
+            "edit.paste" => {
+                if let Some(ask) = self.guard_paste(inv, &t, None) {
+                    return Ok(ask);
+                }
+                self.paste_into(&t, None)?
+            }
 
             // ── view ──
             "view.set_mode" => {

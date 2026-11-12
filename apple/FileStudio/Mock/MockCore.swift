@@ -592,9 +592,36 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome {
         let a = dropAction(sources: sources, destDir: destDir, mods: mods)
         guard a != .none else { throw CoreError(.notAvailable, "the items can't be dropped there") }
-        return Outcome(ops: [startOp(a == .copy ? .copy : .move, a == .copy ? "Copy" : "Move",
-                                     files: UInt64(sources.count), bytes: 9_000_000)])
+        let name = { (p: String) in (p as NSString).lastPathComponent }
+        // F-023, roughly: the mock's standard folders ask first.
+        if a == .move, let hit = sources.first(where: { Self.protectedMock.contains($0) }) {
+            pendingMoves += 1
+            pendingMove[pendingMoves] = (sources, destDir)
+            return Outcome(shell: .confirmMove(token: pendingMoves, title: "Move “\(name(hit))” into “\(name(destDir))”?",
+                                               detail: "It’s one of your standard folders.", paths: sources))
+        }
+        var out = Outcome(ops: [startOp(a == .copy ? .copy : .move, a == .copy ? "Copy" : "Move",
+                                        files: UInt64(sources.count), bytes: 9_000_000)])
+        if a == .move {
+            out.shell = .moved(text: sources.count == 1 ? "Moved “\(name(sources[0]))” to “\(name(destDir))”"
+                               : "Moved \(sources.count) items to “\(name(destDir))”")
+        }
+        return out
     }
+
+    private static let protectedMock: Set<String> = ["/Mock", "/Mock/Applications", "/Mock/Desktop", "/Mock/Documents",
+                                                     "/Mock/Downloads", "/Mock/Pictures"]
+    private var pendingMoves: UInt64 = 0
+    private var pendingMove: [UInt64: ([String], String)] = [:]
+
+    func confirmMove(_ token: UInt64) throws -> Outcome {
+        guard let (sources, dest) = pendingMove.removeValue(forKey: token) else {
+            throw CoreError(.notFound, "pending move \(token)")
+        }
+        return Outcome(shell: .moved(text: "Moved “\((sources[0] as NSString).lastPathComponent)” to “\((dest as NSString).lastPathComponent)”"),
+                       ops: [startOp(.move, "Move", files: UInt64(sources.count), bytes: 9_000_000)])
+    }
+    func cancelMove(_ token: UInt64) { pendingMove[token] = nil }
     func clipboardPaths() -> [String] { clipboard }
 
     // MARK: Menus

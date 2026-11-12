@@ -689,6 +689,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     
     func breadcrumbs(path: String)  -> [FfiCrumb]
     
+    /**
+     * The user cancelled `ShellRequest::ConfirmMove`.
+     */
+    func cancelMove(token: UInt64) 
+    
     func clearFinishedOps() 
     
     /**
@@ -716,6 +721,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func commands()  -> [FfiCommandInfo]
     
     func complete(input: String, cursor: UInt32, cwd: String)  -> FfiCompletions
+    
+    /**
+     * The user said Move to `ShellRequest::ConfirmMove`.
+     */
+    func confirmMove(token: UInt64) throws  -> FfiOutcome
     
     /**
      * The context menu for a target. Reads Finder tags (an xattr) of the
@@ -829,6 +839,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func menuTargetAt(tab: UInt64, row: UInt32?) throws  -> FfiMenuTarget
     
     func moveFavourite(path: String, index: UInt32) throws 
+    
+    /**
+     * Why moving `path` needs confirmation, or `None`.
+     */
+    func moveProtection(path: String)  -> String?
     
     func moveTab(id: UInt64, pane: UInt64, index: UInt32) throws 
     
@@ -1105,6 +1120,18 @@ open func breadcrumbs(path: String) -> [FfiCrumb]  {
 })
 }
     
+    /**
+     * The user cancelled `ShellRequest::ConfirmMove`.
+     */
+open func cancelMove(token: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_cancel_move(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
+    )
+}
+}
+    
 open func clearFinishedOps()  {try! rustCall() {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_clear_finished_ops(
@@ -1198,6 +1225,19 @@ open func complete(input: String, cursor: UInt32, cwd: String) -> FfiCompletions
         FfiConverterString.lower(input),
         FfiConverterUInt32.lower(cursor),
         FfiConverterString.lower(cwd),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The user said Move to `ShellRequest::ConfirmMove`.
+     */
+open func confirmMove(token: UInt64)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_confirm_move(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
     )
 })
 }
@@ -1576,6 +1616,19 @@ open func moveFavourite(path: String, index: UInt32)throws   {try rustCallWithEr
         FfiConverterUInt32.lower(index),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Why moving `path` needs confirmation, or `None`.
+     */
+open func moveProtection(path: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_move_protection(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
 }
     
 open func moveTab(id: UInt64, pane: UInt64, index: UInt32)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -10144,6 +10197,10 @@ public enum FfiShellRequest: Equatable, Hashable {
     case showQuickOpen
     case showSettings(section: String
     )
+    case confirmMove(token: UInt64, title: String, detail: String, paths: [String]
+    )
+    case moved(text: String
+    )
     case showPowerTour
     case toggleSidebar
     case toggleInspector
@@ -10246,28 +10303,34 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 24: return .showSettings(section: try FfiConverterString.read(from: &buf)
         )
         
-        case 25: return .showPowerTour
-        
-        case 26: return .toggleSidebar
-        
-        case 27: return .toggleInspector
-        
-        case 28: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 25: return .confirmMove(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 29: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 26: return .moved(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 30: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 27: return .showPowerTour
+        
+        case 28: return .toggleSidebar
+        
+        case 29: return .toggleInspector
+        
+        case 30: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 31: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 31: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 32: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 32: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 33: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 33: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        )
+        
+        case 34: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 35: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10396,46 +10459,59 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(section, into: &buf)
             
         
-        case .showPowerTour:
+        case let .confirmMove(token,title,detail,paths):
             writeInt(&buf, Int32(25))
+            FfiConverterUInt64.write(token, into: &buf)
+            FfiConverterString.write(title, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+            FfiConverterSequenceString.write(paths, into: &buf)
+            
         
-        
-        case .toggleSidebar:
+        case let .moved(text):
             writeInt(&buf, Int32(26))
+            FfiConverterString.write(text, into: &buf)
+            
         
-        
-        case .toggleInspector:
+        case .showPowerTour:
             writeInt(&buf, Int32(27))
         
         
-        case let .eject(path):
+        case .toggleSidebar:
             writeInt(&buf, Int32(28))
+        
+        
+        case .toggleInspector:
+            writeInt(&buf, Int32(29))
+        
+        
+        case let .eject(path):
+            writeInt(&buf, Int32(30))
             FfiConverterString.write(path, into: &buf)
             
         
         case let .showDriveInfo(path):
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(31))
             FfiConverterString.write(path, into: &buf)
             
         
         case let .askFavouriteName(path,name):
-            writeInt(&buf, Int32(30))
+            writeInt(&buf, Int32(32))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(31))
+            writeInt(&buf, Int32(33))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(32))
+            writeInt(&buf, Int32(34))
             FfiConverterUInt64.write(window, into: &buf)
             
         
         case let .closeWindow(window):
-            writeInt(&buf, Int32(33))
+            writeInt(&buf, Int32(35))
             FfiConverterUInt64.write(window, into: &buf)
             
         }
@@ -12141,6 +12217,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_breadcrumbs() != 32063) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_move() != 45113) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_clear_finished_ops() != 34789) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12166,6 +12245,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_complete() != 1014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_confirm_move() != 20767) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_context_menu() != 10415) {
@@ -12262,6 +12344,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_move_favourite() != 80) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_move_protection() != 36082) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_move_tab() != 12332) {

@@ -5,6 +5,8 @@
 //                     their key frame so snapshots are stable (tour:<n>,<phase> picks the phase)
 //   tour:menu         opens it as Help › File Studio Power Tour does (performs app.power_tour)
 //   tour:close        closes it
+//   tourkey:<command>,<keys>   rebinds a command's primary key in the core (empty keys: reset),
+//                     to show the tour following the change
 //   tourlog           TOUR lines: the card, its keys as read from the core, and the demo text
 
 #if DEBUG
@@ -28,6 +30,17 @@ enum TourDebugSteps {
                 guard let s = TourController.state else { return }
                 s.frozenPhase = parts.count > 1 ? Double(parts[1]) : TourDemoStage.keyFrame(s.cards[min(max(i, 0), s.cards.count - 1)].demo)
             }
+        }
+        DebugAutomation.register("tourkey") { arg, m in
+            let parts = arg.split(separator: ",", maxSplits: 1).map(String.init)
+            do {
+                if parts.count < 2 || parts[1].isEmpty { try m.engine.resetCommandKeys(parts[0]) } else {
+                    try m.engine.setCommandKey(parts[0], primary: true, keys: parts[1])
+                }
+                print("TOURKEY \(parts[0]) now \(m.engine.commandKeys(parts[0]))")
+            } catch { print("TOURKEY error \(error)") }
+            // Redraw the open card with the new keys.
+            if let s = TourController.state { s.frozenPhase = (s.frozenPhase ?? 0.5) + 0.0001 }
         }
         DebugAutomation.register("tourlog") { _, m in
             guard let s = TourController.state else { print("TOUR closed"); return }
