@@ -154,6 +154,7 @@ extension ShellRequest {
         case .showPalette: self = .showPalette
         case .showQuickOpen: self = .showQuickOpen
         case .showSettings(let s): self = .showSettings(section: s)
+        case .showPowerTour: self = .showPowerTour
         case .toggleSidebar: self = .toggleSidebar
         case .toggleInspector: self = .toggleInspector
         case .eject(let p): self = .eject(path: p)
@@ -980,7 +981,7 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
 
     // Sidebar
     func volumes() -> [Volume] { ffi.volumes().map(Volume.init) }
-    func favourites() -> [Favourite] { ffi.favourites().map { Favourite(path: $0.path, name: $0.name, renamed: $0.renamed) } }
+    func favourites() -> [Favourite] { ffi.favourites().map { Favourite(path: $0.path, name: $0.name, renamed: $0.renamed, missing: $0.missing) } }
     func addFavourite(_ path: String, index: UInt32?) throws { try wrap { try ffi.addFavourite(path: path, index: index) } }
     func removeFavourite(_ path: String) throws { try wrap { try ffi.removeFavourite(path: path) } }
     func renameFavourite(_ path: String, name: String) throws { try wrap { try ffi.renameFavourite(path: path, name: name) } }

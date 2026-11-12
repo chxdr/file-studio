@@ -209,6 +209,8 @@ public enum ShellRequest: Equatable, Sendable {
     case showPalette
     case showQuickOpen
     case showSettings(section: String)
+    /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
+    case showPowerTour
     case toggleSidebar
     case toggleInspector
     case eject(path: String)
@@ -246,6 +248,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .showPalette: "showPalette"
         case .showQuickOpen: "showQuickOpen"
         case .showSettings: "showSettings"
+        case .showPowerTour: "showPowerTour"
         case .toggleSidebar: "toggleSidebar"
         case .toggleInspector: "toggleInspector"
         case .eject: "eject"
@@ -725,8 +728,12 @@ public struct Favourite: Equatable, Sendable, Identifiable {
     public var name: String
     /// The user gave it its own name.
     public var renamed: Bool
+    /// The folder has gone: show the row dimmed and offer Remove.
+    public var missing: Bool
     public var id: String { path }
-    public init(path: String, name: String, renamed: Bool = false) { self.path = path; self.name = name; self.renamed = renamed }
+    public init(path: String, name: String, renamed: Bool = false, missing: Bool = false) {
+        self.path = path; self.name = name; self.renamed = renamed; self.missing = missing
+    }
 }
 
 // MARK: - Context menus (F-022)
