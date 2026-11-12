@@ -75,6 +75,8 @@ pub trait CopyProgress {
 struct CbCtx<'a> {
     progress: &'a dyn CopyProgress,
     cancelled: bool,
+    /// The errno copyfile reported through a `COPYFILE_ERR` callback.
+    error: Option<i32>,
 }
 
 extern "C" fn status_cb(
@@ -85,7 +87,21 @@ extern "C" fn status_cb(
     _dst: *const c_char,
     ctx: *mut c_void,
 ) -> c_int {
-    if what != libc::COPYFILE_COPY_DATA || stage != libc::COPYFILE_PROGRESS || ctx.is_null() {
+    if ctx.is_null() {
+        return libc::COPYFILE_CONTINUE;
+    }
+    if stage == libc::COPYFILE_ERR {
+        // Returning CONTINUE here means "retry", which loops forever on a
+        // full disk. Stop, and keep the errno for the caller.
+        let errno = io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EIO);
+        // SAFETY: see below; same context pointer, same thread.
+        let ctx = unsafe { &mut *(ctx as *mut CbCtx<'_>) };
+        ctx.error = Some(errno);
+        return libc::COPYFILE_QUIT;
+    }
+    if what != libc::COPYFILE_COPY_DATA || stage != libc::COPYFILE_PROGRESS {
         return libc::COPYFILE_CONTINUE;
     }
     let mut copied: libc::off_t = 0;
@@ -134,6 +150,7 @@ pub fn copyfile_with_progress(
     let mut ctx = CbCtx {
         progress,
         cancelled: false,
+        error: None,
     };
     let cb: libc::copyfile_callback_t = Some(status_cb);
     // SAFETY: the state is allocated, used and freed in this block. The callback
@@ -168,6 +185,8 @@ pub fn copyfile_with_progress(
             Ok(CopyfileOutcome {
                 cloned: cloned != 0,
             })
+        } else if let Some(errno) = ctx.error {
+            Err(io::Error::from_raw_os_error(errno))
         } else if ctx.cancelled {
             Err(io::Error::from_raw_os_error(libc::ECANCELED))
         } else {
