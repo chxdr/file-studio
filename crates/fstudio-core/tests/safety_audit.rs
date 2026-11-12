@@ -189,8 +189,8 @@ fn s2_p6_drops_of_protected_folders_ask_and_moves_show_a_toast() {
         .unwrap();
     ok(&h, &out);
     assert!(matches!(
-        out.shell,
-        Some(ShellRequest::Moved { ref text }) if text == "Moved “plain” to “Import Studio”"
+        h.expect_toast(),
+        ShellRequest::Moved { ref text } if text == "Moved “plain” to “Import Studio”"
     ));
     // A refused drop is an error with a sentence for the shell to show.
     let e = h
@@ -565,7 +565,7 @@ fn s7_a_cut_expires_when_the_pasteboard_changes() {
     wait_complete(&t);
     let out = run(&h, &t, "edit.paste", None).unwrap();
     ok(&h, &out);
-    assert!(matches!(out.shell, Some(ShellRequest::Moved { .. })));
+    assert!(matches!(h.expect_toast(), ShellRequest::Moved { .. }));
     assert!(h.p("b/y.txt").exists() && !h.p("a/y.txt").exists());
 }
 
@@ -590,8 +590,8 @@ fn s7_move_here_of_a_protected_folder_asks_and_toasts() {
     let out = h.engine.confirm(token).unwrap();
     ok(&h, &out);
     assert!(matches!(
-        out.shell,
-        Some(ShellRequest::Moved { ref text }) if text == "Moved “Documents” to “Projects”"
+        h.expect_toast(),
+        ShellRequest::Moved { ref text } if text == "Moved “Documents” to “Projects”"
     ));
     assert!(h.p("Projects/Documents").is_dir());
 }
@@ -709,9 +709,11 @@ fn s10_undo_of_trash_puts_back_the_same_item() {
 
 // ───────────────────────── S11 ─────────────────────────
 
-fn toast(out: &Outcome) -> String {
-    match &out.shell {
-        Some(ShellRequest::Toast { text, .. }) | Some(ShellRequest::Moved { text }) => text.clone(),
+/// The text of the toast sent once `out`'s ops have finished.
+fn toast(h: &H, out: &Outcome) -> String {
+    ok(h, out);
+    match h.expect_toast() {
+        ShellRequest::Toast { text, .. } | ShellRequest::Moved { text } => text,
         other => panic!("expected a toast, got {other:?}"),
     }
 }
@@ -729,32 +731,28 @@ fn s11_trash_undo_and_redo_show_toasts_naming_where() {
     let a = h.window_at("work");
     t_select_all(&a);
     let out = run(&h, &a, "file.trash", None).unwrap();
-    assert!(matches!(out.shell, Some(ShellRequest::Moved { .. })));
-    assert_eq!(toast(&out), "Moved 3 items to the Trash");
-    ok(&h, &out);
+    assert_eq!(out.shell, None, "nothing is claimed before it has happened");
+    assert_eq!(toast(&h, &out), "Moved 3 items to the Trash");
     // Undo from the same window: no folder named.
     let out = run(&h, &a, "edit.undo", None).unwrap();
-    assert_eq!(toast(&out), "Put back 3 items");
-    assert!(matches!(
-        out.shell,
-        Some(ShellRequest::Toast { button: Some(ref b), command: Some(ref c), .. })
-            if b == "Redo" && c == "edit.redo"
-    ));
     ok(&h, &out);
+    assert!(matches!(
+        h.expect_toast(),
+        ShellRequest::Toast { ref text, button: Some(ref b), command: Some(ref c), .. }
+            if text == "Put back 3 items" && b == "Redo" && c == "edit.redo"
+    ));
     // Redo from a second window showing another folder.
     let b = h.window_at("elsewhere");
     let out = run(&h, &b, "edit.redo", None).unwrap();
     assert_eq!(
-        toast(&out),
+        toast(&h, &out),
         "Redid: Move to Trash of 3 Items in “work” (another window)"
     );
-    ok(&h, &out);
     // Undo with the folder shown nowhere.
     a.go(&h.s("elsewhere")).unwrap();
     wait_complete(&a);
     let out = run(&h, &b, "edit.undo", None).unwrap();
-    assert_eq!(toast(&out), "Put back 3 items in “work”");
-    ok(&h, &out);
+    assert_eq!(toast(&h, &out), "Put back 3 items in “work”");
     // A refused undo is a toast too.
     let out = run(&h, &b, "edit.undo", None).unwrap();
     assert!(out.ops.is_empty());

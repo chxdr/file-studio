@@ -166,11 +166,10 @@ private struct FinishedRow: View {
         default: .orange
         }
     }
+    /// The core's line ("Failed · 0 of 1 done · 1 failed"), plus the size.
     private func summary(_ failed: Int) -> String {
-        var parts = [OpsFormat.stateText(op.state)]
-        if op.filesTotal > 0 { parts.append("\(op.filesDone.formatted()) of \(op.filesTotal.formatted()) items") }
+        var parts = [op.summary.isEmpty ? OpsFormat.stateText(op.state) : op.summary]
         if op.bytesTotal > 0 { parts.append(OpsFormat.bytes(op.bytesTotal)) }
-        if failed > 0 { parts.append("\(failed) failed") }
         return parts.joined(separator: " · ")
     }
 }

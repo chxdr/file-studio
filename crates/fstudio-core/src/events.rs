@@ -151,6 +151,16 @@ pub enum CoreEvent {
     SettingsChanged,
     /// The sidebar favourites changed; re-read [`crate::Engine::favourites`].
     FavouritesChanged,
+    /// Something for the shell to do that wasn't the direct answer to a
+    /// command: the toast for a finished operation, built from what really
+    /// happened (all done, some failed, none done). Handle it as an
+    /// [`crate::Outcome`]'s `shell` request from the window holding `tab`.
+    Shell {
+        /// The tab the operation was started from, if any.
+        tab: Option<TabId>,
+        /// What to do.
+        request: crate::outcome::ShellRequest,
+    },
 }
 
 /// Receives core events. Implemented by the shell. Called on one pump
@@ -370,10 +380,21 @@ fn pump(rx: Receiver<Msg>, sink: Arc<dyn EventSink>) {
 /// Forwards queue events into the hub as core events.
 pub(crate) struct OpsBridge {
     pub(crate) hub: EventHub,
+    /// Turns finished ops into toasts.
+    pub(crate) toaster: Arc<crate::feedback::Toaster>,
 }
 
 impl fstudio_ops::EventSink for OpsBridge {
     fn on_event(&self, e: OpEvent) {
+        if let OpEvent::OpFinished { report, .. } = &e {
+            // The queue's own event first, then the toast built from it.
+            self.hub.emit(CoreEvent::OpFinished {
+                op: report.id,
+                report: report.clone(),
+            });
+            self.toaster.finished(report);
+            return;
+        }
         self.hub.emit(match e {
             OpEvent::OpProgress(s) => CoreEvent::OpProgress { ops: vec![s] },
             OpEvent::OpConflict { op, conflict } => CoreEvent::OpConflict { op, conflict },

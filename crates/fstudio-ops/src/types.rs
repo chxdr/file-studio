@@ -505,6 +505,46 @@ pub struct OpStatus {
     pub conflicts: Vec<ConflictInfo>,
 }
 
+impl OpStatus {
+    /// One line for a finished op in the queue, never contradicting itself:
+    /// "Done · 4 items", "Done, with errors · 3 of 4 done · 1 failed",
+    /// "Failed · 0 of 1 done · 1 failed", "Cancelled · 2 of 5 done".
+    /// (`files_done` counts failed items as finished; this counts only the
+    /// ones that worked as done.)
+    pub fn summary(&self) -> String {
+        let failed = self.errors.len() as u64;
+        let ok = self.files_done.saturating_sub(failed);
+        let total = self.files_total.max(self.files_done);
+        let head = match self.state {
+            _ if failed > 0 && ok == 0 => "Failed",
+            OpState::Completed => "Done",
+            OpState::CompletedWithErrors => "Done, with errors",
+            OpState::Cancelled => "Cancelled",
+            OpState::Failed => "Failed",
+            OpState::Queued => "Waiting",
+            OpState::Running => "Running",
+            OpState::Paused => "Paused",
+            OpState::WaitingForDecision => "Needs your decision",
+            OpState::Interrupted => "Interrupted",
+        };
+        let mut parts = vec![head.to_string()];
+        if total > 0 {
+            if failed == 0 && self.state == OpState::Completed {
+                parts.push(match total {
+                    1 => "1 item".into(),
+                    n => format!("{n} items"),
+                });
+            } else {
+                parts.push(format!("{ok} of {total} done"));
+            }
+        }
+        if failed > 0 {
+            parts.push(format!("{failed} failed"));
+        }
+        parts.join(" · ")
+    }
+}
+
 /// The summary sent when an op finishes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpReport {
@@ -632,3 +672,59 @@ pub enum OpsError {
 
 /// Result alias for queue calls.
 pub type Result<T> = std::result::Result<T, OpsError>;
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    fn status(state: OpState, done: u64, total: u64, failed: usize) -> OpStatus {
+        OpStatus {
+            id: OpId(1),
+            kind: OpKind::Trash,
+            title: String::new(),
+            state,
+            files_done: done,
+            files_total: total,
+            bytes_done: 0,
+            bytes_total: 0,
+            current: None,
+            speed_bps: 0.0,
+            eta_secs: None,
+            errors: (0..failed)
+                .map(|i| ItemError {
+                    path: PathBuf::from(format!("/x/{i}")),
+                    dest: None,
+                    message: "permission denied".into(),
+                    errno: None,
+                })
+                .collect(),
+            conflicts: Vec::new(),
+        }
+    }
+
+    /// The edge-case test saw "Done, with errors · 1 of 1 items · 1 failed"
+    /// for a Trash that moved nothing.
+    #[test]
+    fn a_summary_never_counts_failures_as_done() {
+        assert_eq!(
+            status(OpState::CompletedWithErrors, 1, 1, 1).summary(),
+            "Failed · 0 of 1 done · 1 failed"
+        );
+        assert_eq!(
+            status(OpState::CompletedWithErrors, 4, 4, 1).summary(),
+            "Done, with errors · 3 of 4 done · 1 failed"
+        );
+        assert_eq!(
+            status(OpState::Completed, 4, 4, 0).summary(),
+            "Done · 4 items"
+        );
+        assert_eq!(
+            status(OpState::Completed, 1, 1, 0).summary(),
+            "Done · 1 item"
+        );
+        assert_eq!(
+            status(OpState::Cancelled, 2, 5, 0).summary(),
+            "Cancelled · 2 of 5 done"
+        );
+    }
+}

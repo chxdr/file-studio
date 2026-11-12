@@ -161,7 +161,10 @@ impl Engine {
             Some(d) => Arc::new(DirTrasher::new(d)?),
             None => Arc::new(SystemTrasher),
         };
-        let ops_bridge = Arc::new(OpsBridge { hub: hub.clone() });
+        let ops_bridge = Arc::new(OpsBridge {
+            hub: hub.clone(),
+            toaster: Arc::new(crate::feedback::Toaster::new(hub.clone())),
+        });
         let ops = OpQueue::open(
             db.clone(),
             settings.ops_config(),
@@ -205,6 +208,7 @@ impl Engine {
             last_saved: Mutex::new(String::new()),
         });
         let weak = Arc::downgrade(&engine);
+        engine.ops_bridge.toaster.attach(weak.clone());
         std::thread::Builder::new()
             .name("fstudio-session-saver".into())
             .spawn(move || session_saver(weak, dirty_rx))?;
@@ -323,13 +327,41 @@ impl Engine {
     }
 
     /// Queues a file operation.
+    ///
+    /// If any item fails, a warning toast says so once the op has finished
+    /// ([`CoreEvent::Shell`]).
     pub fn enqueue(&self, req: OpRequest) -> Result<OpId> {
-        Ok(self.ops().enqueue(req)?)
+        self.enqueue_with(req, EnqueueOptions::default())
     }
 
     /// Queues a file operation with conflict rules.
     pub fn enqueue_with(&self, req: OpRequest, opts: EnqueueOptions) -> Result<OpId> {
-        Ok(self.ops().enqueue_with(req, opts)?)
+        let plan = crate::feedback::ToastPlan::failures_only(&req);
+        let id = self.ops().enqueue_with(req, opts)?;
+        self.toast_when_done(&[id], plan, None);
+        Ok(id)
+    }
+
+    /// Queues `req` and toasts from its outcome (`plan`) once it finishes.
+    pub(crate) fn enqueue_toasting(
+        &self,
+        req: OpRequest,
+        plan: crate::feedback::ToastPlan,
+        tab: Option<TabId>,
+    ) -> Result<OpId> {
+        let id = self.ops().enqueue(req)?;
+        self.toast_when_done(&[id], plan, tab);
+        Ok(id)
+    }
+
+    /// Sends the toast for `plan` once every op in `ids` has finished.
+    pub(crate) fn toast_when_done(
+        &self,
+        ids: &[OpId],
+        plan: crate::feedback::ToastPlan,
+        tab: Option<TabId>,
+    ) {
+        self.ops_bridge.toaster.watch(ids, plan, tab);
     }
 
     /// Undoes the last file operation by queuing its inverse.
@@ -393,19 +425,24 @@ impl Engine {
         if ids.is_empty() {
             return Ok(Outcome::message("Nothing to undo"));
         }
-        let mut out = Outcome {
-            ops: ids,
-            ..Outcome::none()
-        };
         if let Some((_, label, req)) = top {
-            out.shell = Some(self.history_toast(
+            let success = self.history_toast(
                 crate::feedback::undo_text(&req, &label),
                 tab,
                 "Redo",
                 "edit.redo",
-            ));
+            );
+            let plan = crate::feedback::ToastPlan {
+                subject: crate::feedback::Subject::Undo(label),
+                success: Some(success),
+                reselect: None,
+            };
+            self.toast_when_done(&ids, plan, tab);
         }
-        Ok(out)
+        Ok(Outcome {
+            ops: ids,
+            ..Outcome::none()
+        })
     }
 
     /// A refused undo or redo: the reason as the message and as a toast.
@@ -415,6 +452,7 @@ impl Engine {
                 text: text.clone(),
                 button: None,
                 command: None,
+                style: crate::outcome::ToastStyle::Warning,
             }),
             ..Outcome::message(text)
         }
@@ -446,16 +484,21 @@ impl Engine {
         let top = self.ops().redo_top()?;
         Ok(match self.ops().redo_op(expect) {
             Ok(Some(id)) => {
-                let mut out = Outcome::op(id);
                 if let Some((_, label, req)) = top {
-                    out.shell = Some(self.history_toast(
+                    let success = self.history_toast(
                         crate::feedback::redo_text(&req, &label),
                         tab,
                         "Undo",
                         "edit.undo",
-                    ));
+                    );
+                    let plan = crate::feedback::ToastPlan {
+                        subject: crate::feedback::Subject::Redo(label),
+                        success: Some(success),
+                        reselect: None,
+                    };
+                    self.toast_when_done(&[id], plan, tab);
                 }
-                out
+                Outcome::op(id)
             }
             Ok(None) => Outcome::message("Nothing to redo"),
             Err(fstudio_ops::OpsError::RedoRefused(why)) => {

@@ -1191,6 +1191,37 @@ impl Tab {
     }
 
     /// Selects `names` as soon as they appear (after a create, paste or rename).
+    /// Counts the user's selection changes (and the core's own after a
+    /// removal), so a later change can check nobody has moved on.
+    pub(crate) fn selection_generation(&self) -> u64 {
+        self.st.lock().sel_gen
+    }
+
+    /// Selects `names` again if the selection hasn't changed since `generation`:
+    /// items that were to go to the Trash but didn't are selected again,
+    /// so a second ⌘⌫ retries them instead of trashing the neighbour the
+    /// cursor moved to.
+    pub(crate) fn reselect_if_untouched(&self, generation: u64, names: &[String]) {
+        let mut st = self.st.lock();
+        if st.sel_gen != generation || names.is_empty() {
+            return;
+        }
+        let l = st.listing.clone();
+        let found: Vec<usize> = names.iter().filter_map(|n| l.inner.index_of(n)).collect();
+        if found.is_empty() {
+            return;
+        }
+        Self::user_selected(&mut st);
+        st.selection = make_selection(&found, Some(found[0]));
+        let (count, cursor) = (st.selection.count() as u32, st.selection.cursor());
+        drop(st);
+        self.shared.emit(CoreEvent::SelectionChanged {
+            tab: self.id,
+            count,
+            cursor: cursor.map(|c| c as u32),
+        });
+    }
+
     pub(crate) fn select_when_present(&self, names: Vec<String>) {
         let mut st = self.st.lock();
         let l = st.listing.clone();

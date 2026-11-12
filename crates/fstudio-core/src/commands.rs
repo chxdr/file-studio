@@ -377,6 +377,7 @@ impl Engine {
             | "select.deselect_pattern"
             | "view.toggle_sidebar"
             | "view.toggle_inspector"
+            | "view.show_operations"
             | "window.new"
             | "window.close"
             | "workspace.save"
@@ -801,7 +802,7 @@ impl Engine {
             }
         };
         let ops = self.ops();
-        let id = ops.enqueue(req)?;
+        let id = self.enqueue(req)?;
         let me = self.me.clone();
         std::thread::Builder::new()
             .name("fstudio-create-folder".into())
@@ -1093,6 +1094,7 @@ impl Engine {
             "nav.quick_open" => return Ok(Outcome::shell(ShellRequest::ShowQuickOpen)),
             "view.toggle_sidebar" => return Ok(Outcome::shell(ShellRequest::ToggleSidebar)),
             "view.toggle_inspector" => return Ok(Outcome::shell(ShellRequest::ToggleInspector)),
+            "view.show_operations" => return Ok(Outcome::shell(ShellRequest::ShowOperations)),
             "workspace.save" => return Ok(Outcome::shell(ShellRequest::AskWorkspaceName)),
             "workspace.manage" => return Ok(Outcome::shell(ShellRequest::ManageWorkspaces)),
             "workspace.switch" => {
@@ -1442,6 +1444,7 @@ impl Engine {
                         text: crate::feedback::deleted_text(&sel),
                         button: None,
                         command: None,
+                        style: crate::outcome::ToastStyle::Success,
                     }),
                 })));
                 Outcome::shell(ShellRequest::ConfirmDeleteImmediately {

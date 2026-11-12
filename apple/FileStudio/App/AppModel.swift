@@ -271,6 +271,8 @@ public final class AppModel {
         case .hint(let h): hint = h
         case .settingsChanged: settings = engine.settings()
         case .favouritesChanged: favourites = engine.favourites()
+        case .shell(let tab, let req):
+            dispatch(req, ShellContext(window: tab.flatMap { window(of: $0)?.id } ?? keyWindowID, tab: tab))
         }
         for o in observers { o.fn(e) }
     }

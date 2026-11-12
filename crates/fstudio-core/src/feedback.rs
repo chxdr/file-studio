@@ -2,15 +2,23 @@
 //! every trash, undo and redo answers with a toast, so nothing changes on
 //! disk unseen. Undo and redo are app-global (one journal stack), so their
 //! toasts name the folder they touched when this window doesn't show it.
+//!
+//! A toast is built from what the operation really did, never from what was
+//! asked for: the [`Toaster`] holds each operation's words until the queue
+//! reports it finished, then sends the success toast only if every item
+//! succeeded, a warning naming what didn't happen otherwise.
 
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use fstudio_ops::OpRequest;
+use fstudio_ops::{ItemError, OpId, OpReport, OpRequest, OpState};
+use parking_lot::Mutex;
 
 use crate::confirm::display_name;
 use crate::engine::Engine;
+use crate::events::{CoreEvent, EventHub};
 use crate::ids::TabId;
-use crate::outcome::ShellRequest;
+use crate::outcome::{ShellRequest, ToastStyle};
 
 fn quoted(p: &Path) -> String {
     format!("“{}”", display_name(p))
@@ -142,12 +150,13 @@ impl Engine {
         seen
     }
 
-    /// A toast with a button that runs `command`.
+    /// A success toast with a button that runs `command`.
     pub(crate) fn toast(text: String, button: &str, command: &str) -> ShellRequest {
         ShellRequest::Toast {
             text,
             button: Some(button.to_string()),
             command: Some(command.to_string()),
+            style: ToastStyle::Success,
         }
     }
 
@@ -164,6 +173,356 @@ impl Engine {
             .map(|f| where_suffix(&f, self.seen(&f, tab)))
             .unwrap_or_default();
         Self::toast(format!("{text}{suffix}"), button, command)
+    }
+}
+
+// ───────────────────────── toasts from outcomes ─────────────────────────
+
+/// What an operation is, for the words of its toast.
+#[derive(Debug, Clone)]
+pub(crate) enum Subject {
+    /// A request the user made.
+    Op(OpRequest),
+    /// An undo of the op labelled this ("Move to Trash of 3 Items").
+    Undo(String),
+    /// A redo of the op labelled this.
+    Redo(String),
+}
+
+/// What to say once an operation has finished.
+#[derive(Debug, Clone)]
+pub(crate) struct ToastPlan {
+    /// What it was.
+    pub subject: Subject,
+    /// The toast when every item succeeded, if it has one (copies don't).
+    pub success: Option<ShellRequest>,
+    /// The tab whose selection moved off the items, and its selection
+    /// generation then: items that failed are selected again there.
+    pub reselect: Option<(TabId, u64)>,
+}
+
+impl ToastPlan {
+    /// The words for a request, toasting only if something fails.
+    pub(crate) fn failures_only(req: &OpRequest) -> Self {
+        Self {
+            subject: Subject::Op(req.clone()),
+            success: None,
+            reselect: None,
+        }
+    }
+}
+
+/// How a request is described: its top-level items and verb forms.
+struct Words {
+    roots: Vec<PathBuf>,
+    /// "Moved"
+    past: &'static str,
+    /// "move"
+    verb: &'static str,
+    /// "moved"
+    participle: &'static str,
+    /// " to “Backup”", " to the Trash"
+    tail: String,
+}
+
+fn words(req: &OpRequest) -> Option<Words> {
+    let w = |roots: Vec<PathBuf>, past, verb, participle, tail: String| Words {
+        roots,
+        past,
+        verb,
+        participle,
+        tail,
+    };
+    let to = |d: &Path| format!(" to {}", quoted(d));
+    Some(match req {
+        OpRequest::Trash { paths } => w(
+            paths.clone(),
+            "Moved",
+            "move",
+            "moved",
+            " to the Trash".into(),
+        ),
+        OpRequest::DeleteImmediately { paths } => {
+            w(paths.clone(), "Deleted", "delete", "deleted", String::new())
+        }
+        OpRequest::Move { sources, dest_dir } => {
+            w(sources.clone(), "Moved", "move", "moved", to(dest_dir))
+        }
+        OpRequest::Copy { sources, dest_dir } => {
+            w(sources.clone(), "Copied", "copy", "copied", to(dest_dir))
+        }
+        OpRequest::Duplicate { paths } => w(
+            paths.clone(),
+            "Duplicated",
+            "duplicate",
+            "duplicated",
+            String::new(),
+        ),
+        OpRequest::MoveTo { pairs } => w(
+            pairs.iter().map(|(f, _)| f.clone()).collect(),
+            "Moved",
+            "move",
+            "moved",
+            String::new(),
+        ),
+        OpRequest::Rename { path, new_name } => w(
+            vec![path.clone()],
+            "Renamed",
+            "rename",
+            "renamed",
+            format!(" to “{new_name}”"),
+        ),
+        OpRequest::NewFolder { parent, name } | OpRequest::NewFile { parent, name } => w(
+            vec![parent.join(name)],
+            "Created",
+            "create",
+            "created",
+            String::new(),
+        ),
+        OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => return None,
+    })
+}
+
+/// "1 item" / "3 items".
+fn items(n: usize) -> String {
+    if n == 1 {
+        "1 item".into()
+    } else {
+        format!("{n} items")
+    }
+}
+
+/// The first reason, in plain words ("permission denied").
+fn reason(errors: &[&ItemError]) -> String {
+    errors
+        .iter()
+        .map(|e| e.message.trim())
+        .find(|m| !m.is_empty())
+        .unwrap_or("something went wrong")
+        .to_string()
+}
+
+fn warning(text: String) -> ShellRequest {
+    ShellRequest::Toast {
+        text,
+        button: Some("Details".into()),
+        command: Some("view.show_operations".into()),
+        style: ToastStyle::Warning,
+    }
+}
+
+/// The toast for a finished operation (or the ops of one undo), from what
+/// really happened:
+/// - every item done: the plan's success toast (with Undo), as before;
+/// - some failed: a warning, "Moved 3 items to the Trash · 1 couldn't be
+///   moved", whose Details button opens the queue with each reason;
+/// - none done: "Couldn't move “locked” to the Trash: permission denied",
+///   with no Undo (there is nothing to undo).
+///
+/// A cancelled op with nothing done says nothing (the user stopped it).
+pub(crate) fn outcome_toast(plan: &ToastPlan, reports: &[OpReport]) -> Option<ShellRequest> {
+    let errors: Vec<&ItemError> = reports.iter().flat_map(|r| r.errors.iter()).collect();
+    let done: u64 = reports.iter().map(|r| r.files_done).sum();
+    let whole_failed = reports.iter().any(|r| r.state == OpState::Failed);
+    let cancelled = reports.iter().any(|r| r.state == OpState::Cancelled);
+    let failed = (reports.iter().map(|r| r.files_failed).sum::<u64>() as usize)
+        .max(errors.len())
+        .max(usize::from(whole_failed));
+    if failed == 0 {
+        if cancelled {
+            return (done > 0).then(|| ShellRequest::Toast {
+                text: format!("Stopped · {} already done", items(done as usize)),
+                button: Some("Undo".into()),
+                command: Some("edit.undo".into()),
+                style: ToastStyle::Info,
+            });
+        }
+        return plan.success.clone();
+    }
+    let none_done = done == 0;
+    let text = match &plan.subject {
+        Subject::Undo(label) if none_done => {
+            format!("Couldn’t undo {label}: {}", reason(&errors))
+        }
+        Subject::Undo(label) => format!(
+            "Undid part of {label} · {} couldn’t be undone",
+            items(failed)
+        ),
+        Subject::Redo(label) if none_done => {
+            format!("Couldn’t redo {label}: {}", reason(&errors))
+        }
+        Subject::Redo(label) => format!(
+            "Redid part of {label} · {} couldn’t be redone",
+            items(failed)
+        ),
+        Subject::Op(req) => match words(req) {
+            None if none_done => format!("Couldn’t finish the operation: {}", reason(&errors)),
+            None => format!(
+                "The operation finished with problems · {} failed",
+                items(failed)
+            ),
+            Some(w) => {
+                // Top-level items with no error in or under them.
+                let ok: Vec<PathBuf> = w
+                    .roots
+                    .iter()
+                    .filter(|r| {
+                        !whole_failed
+                            && !errors.iter().any(|e| {
+                                e.path.as_os_str().is_empty() || e.path.starts_with(r.as_path())
+                            })
+                    })
+                    .cloned()
+                    .collect();
+                if none_done {
+                    format!(
+                        "Couldn’t {} {}{}: {}",
+                        w.verb,
+                        what(&w.roots),
+                        w.tail,
+                        reason(&errors)
+                    )
+                } else {
+                    let head = if ok.is_empty() {
+                        format!("{} part of {}{}", w.past, what(&w.roots), w.tail)
+                    } else {
+                        format!("{} {}{}", w.past, what(&ok), w.tail)
+                    };
+                    format!("{head} · {failed} couldn’t be {}", w.participle)
+                }
+            }
+        },
+    };
+    Some(warning(text))
+}
+
+/// Ops waiting to be toasted, grouped (one undo can queue several ops).
+struct Group {
+    plan: ToastPlan,
+    tab: Option<TabId>,
+    waiting: HashSet<OpId>,
+    reports: Vec<OpReport>,
+}
+
+#[derive(Default)]
+struct ToastState {
+    groups: Vec<Group>,
+    /// Reports of ops that finished before anyone asked about them (an op
+    /// can finish before `enqueue` returns its id), newest last.
+    unclaimed: VecDeque<OpReport>,
+}
+
+/// How many unclaimed reports are kept (parts of compound ops, resumed ops).
+const UNCLAIMED: usize = 256;
+
+/// Turns finished operations into toasts (see the module docs).
+pub(crate) struct Toaster {
+    hub: EventHub,
+    state: Mutex<ToastState>,
+    /// For selecting failed items again.
+    engine: std::sync::OnceLock<std::sync::Weak<Engine>>,
+}
+
+/// The top-level items of `req` that an error is in or under.
+fn failed_roots(req: &OpRequest, reports: &[OpReport]) -> Vec<PathBuf> {
+    let Some(w) = words(req) else {
+        return Vec::new();
+    };
+    w.roots
+        .into_iter()
+        .filter(|r| {
+            reports
+                .iter()
+                .flat_map(|x| x.errors.iter())
+                .any(|e| !e.path.as_os_str().is_empty() && e.path.starts_with(r))
+        })
+        .collect()
+}
+
+impl Toaster {
+    pub(crate) fn new(hub: EventHub) -> Self {
+        Self {
+            hub,
+            state: Mutex::new(ToastState::default()),
+            engine: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Connects the engine (once it exists).
+    pub(crate) fn attach(&self, engine: std::sync::Weak<Engine>) {
+        let _ = self.engine.set(engine);
+    }
+
+    /// Toasts `plan` once every op in `ids` has finished.
+    pub(crate) fn watch(&self, ids: &[OpId], plan: ToastPlan, tab: Option<TabId>) {
+        if ids.is_empty() {
+            return;
+        }
+        let mut st = self.state.lock();
+        let mut g = Group {
+            plan,
+            tab,
+            waiting: ids.iter().copied().collect(),
+            reports: Vec::new(),
+        };
+        st.unclaimed.retain(|r| {
+            if g.waiting.remove(&r.id) {
+                g.reports.push(r.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if g.waiting.is_empty() {
+            drop(st);
+            self.send(g);
+        } else {
+            st.groups.push(g);
+        }
+    }
+
+    /// The queue says `report.id` finished.
+    pub(crate) fn finished(&self, report: &OpReport) {
+        let mut st = self.state.lock();
+        let Some(i) = st
+            .groups
+            .iter()
+            .position(|g| g.waiting.contains(&report.id))
+        else {
+            st.unclaimed.push_back(report.clone());
+            if st.unclaimed.len() > UNCLAIMED {
+                st.unclaimed.pop_front();
+            }
+            return;
+        };
+        let g = &mut st.groups[i];
+        g.waiting.remove(&report.id);
+        g.reports.push(report.clone());
+        if g.waiting.is_empty() {
+            let g = st.groups.remove(i);
+            drop(st);
+            self.send(g);
+        }
+    }
+
+    fn send(&self, g: Group) {
+        if let (Some((tab, generation)), Subject::Op(req)) = (g.plan.reselect, &g.plan.subject)
+            && let Some(engine) = self.engine.get().and_then(std::sync::Weak::upgrade)
+            && let Some(t) = engine.tab(tab)
+        {
+            let names: Vec<String> = failed_roots(req, &g.reports)
+                .iter()
+                .filter_map(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .collect();
+            t.reselect_if_untouched(generation, &names);
+        }
+        if let Some(request) = outcome_toast(&g.plan, &g.reports) {
+            self.hub.emit(CoreEvent::Shell {
+                tab: g.tab,
+                request,
+            });
+        }
     }
 }
 

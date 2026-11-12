@@ -39,19 +39,32 @@ enum MoveSafety {
         }
         // S11: Trash, Delete Immediately, Undo and Redo always say what they did.
         model.registerShellHandler(for: "toast") { req, ctx in
-            guard case .toast(let text, let button, let command) = req else { return false }
+            guard case .toast(let text, let button, let command, let style) = req else { return false }
             #if DEBUG
             lastToast = text
-            print("TOAST \(text)\(button.map { " [\($0)]" } ?? "")")
+            print("TOAST \(text)\(button.map { " [\($0)]" } ?? "")\(style == .warning ? " (warning)" : "")")
             #endif
-            let refused = text.hasPrefix("Can’t")
+            let look: Toast.Style = switch style {
+            case .success: .success
+            case .warning: .warning
+            case .info: .info
+            }
             if let button, let command {
-                ToastCenter.of(model).show(text, style: .success, seconds: 6, actionTitle: button) {
+                ToastCenter.of(model).show(text, style: look, seconds: style == .warning ? 8 : 6, actionTitle: button) {
                     model.perform(Invocation(id: command), via: .mouse, window: ctx.window)
                 }
             } else {
-                ToastCenter.of(model).show(text, style: refused ? .warning : .info, seconds: refused ? 6 : 4)
+                ToastCenter.of(model).show(text, style: look, seconds: style == .warning ? 6 : 4)
             }
+            return true
+        }
+        // A failure toast's Details: the queue, where each failed item has its reason.
+        model.registerShellHandler(for: "showOperations") { req, _ in
+            guard case .showOperations = req else { return false }
+            #if DEBUG
+            print("SHOWOPS")
+            #endif
+            OpsModel.of(model).popoverShown = true
             return true
         }
     }

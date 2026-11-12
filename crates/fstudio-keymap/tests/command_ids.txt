@@ -69,6 +69,7 @@ view.show_hidden
 view.refresh
 view.toggle_sidebar
 view.toggle_inspector
+view.show_operations
 sort.name
 sort.kind
 sort.size

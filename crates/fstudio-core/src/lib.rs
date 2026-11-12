@@ -76,7 +76,7 @@ pub use menus::{
     MenuCommand, MenuContext, MenuEntryInfo, MenuItem, MenuKind, MenuOverride, MenuPlacement,
     MenuSettings, MenuTarget, SidebarItemKind, SystemMenu,
 };
-pub use outcome::{Outcome, ShellRequest};
+pub use outcome::{Outcome, ShellRequest, ToastStyle};
 pub use probe::{FsCoreProbe, FsDirSource};
 pub use protect::default_protected_folders;
 pub use settings::{

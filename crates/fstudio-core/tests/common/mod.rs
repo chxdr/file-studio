@@ -92,6 +92,27 @@ impl H {
         }
     }
 
+    /// The next toast of a finished operation (sent once the op is done,
+    /// built from its outcome).
+    pub fn expect_toast(&self) -> ShellRequest {
+        match self.expect_event("an op toast", |e| matches!(e, CoreEvent::Shell { .. })) {
+            CoreEvent::Shell { request, .. } => request,
+            _ => unreachable!(),
+        }
+    }
+
+    /// No op toast arrives within half a second.
+    pub fn expect_no_toast(&self) {
+        self.engine.flush_events();
+        let end = Instant::now() + Duration::from_millis(500);
+        while let Ok(e) = self.rx.recv_deadline(end) {
+            assert!(
+                !matches!(e, CoreEvent::Shell { .. }),
+                "unexpected toast: {e:?}"
+            );
+        }
+    }
+
     pub fn drain(&self) {
         self.engine.flush_events();
         while self.rx.try_recv().is_ok() {}
