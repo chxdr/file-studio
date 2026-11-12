@@ -324,12 +324,14 @@ impl Tab {
     /// Blocks briefly on `lstat`/`realpath` of the typed path's components.
     pub fn go(&self, raw: &str) -> Result<Outcome> {
         let cwd = self.location_path();
-        let parsed = parse_location(raw, &self.parse_context(cwd));
+        let parsed = parse_location(raw, &self.parse_context(cwd.clone()));
         let out = Outcome::none().with_tab(self.id);
         let chip = parsed.chip_text();
         match parsed.location {
             Location::Dir(p) => {
-                self.navigate(p, None);
+                // Going up (a crumb, `..`): select the child we came from.
+                let select = child_on_way(&p, &cwd);
+                self.navigate(p, select);
                 Ok(Outcome {
                     message: chip,
                     ..out
@@ -1170,6 +1172,15 @@ impl Tab {
 
 /// The name of `from` inside `to`, if `from` is a direct child (for selecting
 /// the folder we came back from).
+/// When `to` is an ancestor of `from`, the child of `to` on the way to
+/// `from` (`/a` from `/a/b/c` is `b`), as a selection.
+fn child_on_way(to: &Path, from: &Path) -> Option<(Vec<String>, Option<String>)> {
+    let rest = from.strip_prefix(to).ok()?;
+    let n = rest.components().next()?;
+    let n = n.as_os_str().to_string_lossy().into_owned();
+    Some((vec![n.clone()], Some(n)))
+}
+
 fn child_name(to: &Path, from: &Path) -> Option<(Vec<String>, Option<String>)> {
     if from.parent() == Some(to) {
         let n = from.file_name()?.to_string_lossy().into_owned();
