@@ -162,3 +162,48 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
     }
     Ok(out)
 }
+
+/// The items a request acts on in place (moves, renames, trash) or reads
+/// (copies). New folders and files have none.
+pub fn sources(req: &OpRequest) -> Vec<PathBuf> {
+    match req {
+        OpRequest::NewFolder { .. } | OpRequest::NewFile { .. } => Vec::new(),
+        _ => crate::plan::targets(req)
+            .into_iter()
+            .map(|(src, _, _)| src)
+            .collect(),
+    }
+}
+
+/// Whether redoing `op` would act on the same objects it acted on before
+/// (S3 of the safety audit). Each source must still be the object the undo
+/// put back there (`undo_items`: the items of the ops that undid it, with
+/// their identity once placed), or, for a source the undo didn't touch (a
+/// copy's original), the object the op first read. `Err` says what changed.
+pub fn redo_check(op: &OpRow, items: &[ItemRow], undo_items: &[ItemRow]) -> Result<(), String> {
+    for src in sources(&op.request) {
+        let put_back = undo_items
+            .iter()
+            .filter(|i| i.state == ItemState::Done && i.dest.as_deref() == Some(src.as_path()))
+            .find_map(|i| i.dest_ident);
+        let first_read = || {
+            items
+                .iter()
+                .filter(|i| i.parent.is_none() && i.source == src)
+                .find_map(|i| i.src_ident)
+        };
+        let Some(want) = put_back.or_else(first_read) else {
+            return Err(format!(
+                "File Studio can’t tell whether {} changed",
+                q(&src)
+            ));
+        };
+        let Ok(md) = meta::lstat(&src) else {
+            return Err(format!("{} is no longer where it was put back", q(&src)));
+        };
+        if !meta::ident(&md).same_object(&want) {
+            return Err(format!("{} changed since it was put back", q(&src)));
+        }
+    }
+    Ok(())
+}

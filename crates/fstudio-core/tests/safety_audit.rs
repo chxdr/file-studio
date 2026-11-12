@@ -199,3 +199,113 @@ fn s2_p6_drops_of_protected_folders_ask_and_moves_show_a_toast() {
         .unwrap_err();
     assert!(e.to_string().contains("dropped"), "{e}");
 }
+
+// ───────────────────────── S3 ─────────────────────────
+
+/// p1: undo the incident's move, relaunch: there is nothing to redo.
+#[test]
+fn s3_p1_redo_does_not_survive_a_relaunch() {
+    let mut h = harness();
+    mkdirs(&h.p("Downloads/keep"));
+    mkdirs(&h.p("Projects"));
+    let id = h
+        .engine
+        .enqueue(OpRequest::Move {
+            sources: vec![h.p("Downloads")],
+            dest_dir: h.p("Projects"),
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    let out = h.engine.undo().unwrap();
+    ok(&h, &out);
+    assert!(h.p("Downloads/keep").exists());
+    assert!(h.engine.undo_state().redo.is_some());
+    h.relaunch();
+    assert_eq!(h.engine.undo_state().redo, None, "the redo stack is gone");
+    let out = h.engine.redo().unwrap();
+    assert!(out.ops.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(h.p("Downloads/keep").exists() && !h.p("Projects/Downloads").exists());
+}
+
+/// p1 without the relaunch: redoing the move of a protected folder asks
+/// first (F-023); No leaves it, Yes redoes it.
+#[test]
+fn s3_redo_of_a_protected_move_asks_first() {
+    let h = harness();
+    mkdirs(&h.p("Downloads/keep"));
+    mkdirs(&h.p("Projects"));
+    let id = h
+        .engine
+        .enqueue(OpRequest::Move {
+            sources: vec![h.p("Downloads")],
+            dest_dir: h.p("Projects"),
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    ok(&h, &h.engine.undo().unwrap());
+    let out = h.engine.redo().unwrap();
+    let Some(ShellRequest::ConfirmMove { token, title, .. }) = out.shell else {
+        panic!("expected a question, got {:?}", out.shell);
+    };
+    assert_eq!(title, "Move “Downloads” into “Projects”?");
+    assert!(out.ops.is_empty());
+    h.engine.cancel_confirmation(token);
+    assert!(h.p("Downloads/keep").exists());
+    // Asked again; yes redoes it.
+    let Some(ShellRequest::ConfirmMove { token, .. }) = h.engine.redo().unwrap().shell else {
+        panic!("expected a question");
+    };
+    let out = h.engine.confirm(token).unwrap();
+    ok(&h, &out);
+    assert!(h.p("Projects/Downloads/keep").exists());
+}
+
+/// p2: trash, undo, then the user renames the file and saves new work
+/// under the old name. Redo refuses instead of trashing the new work.
+#[test]
+fn s3_p2_redo_refuses_a_different_file_at_the_same_path() {
+    let mut h = harness();
+    std::fs::write(h.p("Report.txt"), b"OLD").unwrap();
+    let id = h
+        .engine
+        .enqueue(OpRequest::Trash {
+            paths: vec![h.p("Report.txt")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    ok(&h, &h.engine.undo().unwrap());
+    std::fs::rename(h.p("Report.txt"), h.p("Report-old.txt")).unwrap();
+    std::fs::write(h.p("Report.txt"), b"NEW WORK").unwrap();
+    let out = h.engine.redo().unwrap();
+    assert!(out.ops.is_empty(), "nothing queued");
+    assert_eq!(
+        out.message.as_deref(),
+        Some("Can’t redo: “Report.txt” changed since it was put back")
+    );
+    assert_eq!(std::fs::read(h.p("Report.txt")).unwrap(), b"NEW WORK");
+    // The audit's version, across a relaunch: nothing to redo at all.
+    h.relaunch();
+    ok(&h, &h.engine.redo().unwrap());
+    assert_eq!(std::fs::read(h.p("Report.txt")).unwrap(), b"NEW WORK");
+}
+
+/// An unchanged item is redone as before.
+#[test]
+fn s3_redo_of_an_unchanged_item_still_works() {
+    let h = harness();
+    touch(&h.p("a.txt"));
+    let id = h
+        .engine
+        .enqueue(OpRequest::Trash {
+            paths: vec![h.p("a.txt")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    ok(&h, &h.engine.undo().unwrap());
+    assert!(h.p("a.txt").exists());
+    let out = h.engine.redo().unwrap();
+    assert_eq!(out.ops.len(), 1);
+    ok(&h, &out);
+    assert!(!h.p("a.txt").exists());
+}

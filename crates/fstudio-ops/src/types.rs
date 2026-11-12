@@ -595,6 +595,10 @@ pub enum OpsError {
     #[error("can't undo: {0}")]
     /// Undo would overwrite or lose something, so it was refused.
     UndoRefused(String),
+    /// Redo would act on something that changed since the undo put it back
+    /// (the reason is a sentence).
+    #[error("can't redo: {0}")]
+    RedoRefused(String),
     #[error("journal data: {0}")]
     /// A journal row couldn't be decoded.
     Json(#[from] serde_json::Error),

@@ -354,10 +354,30 @@ impl Engine {
     }
 
     /// Redoes the last undone operation.
+    ///
+    /// Redo acts only on the objects the undo put back (S3): if one changed,
+    /// it is refused with a message. Redoing a move of a protected folder
+    /// asks first (F-023), like any other move.
     pub fn redo(&self) -> Result<Outcome> {
-        Ok(match self.ops().redo()? {
-            Some(id) => Outcome::op(id),
-            None => Outcome::none(),
+        if let Some((op, OpRequest::Move { sources, dest_dir })) = self.ops().redo_peek()?
+            && let Some(ask) = self.guard_move(&sources, &dest_dir, || {
+                crate::confirm::PendingAction::Redo(op)
+            })
+        {
+            return Ok(ask);
+        }
+        self.redo_op(None)
+    }
+
+    /// Redoes the top of the redo stack, if it is still `expect`.
+    pub(crate) fn redo_op(&self, expect: Option<OpId>) -> Result<Outcome> {
+        Ok(match self.ops().redo_op(expect) {
+            Ok(Some(id)) => Outcome::op(id),
+            Ok(None) => Outcome::message("Nothing to redo"),
+            Err(fstudio_ops::OpsError::RedoRefused(why)) => {
+                Outcome::message(format!("Can’t redo: {why}"))
+            }
+            Err(e) => return Err(e.into()),
         })
     }
 

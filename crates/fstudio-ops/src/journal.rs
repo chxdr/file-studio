@@ -444,6 +444,19 @@ impl Journal {
         raws.into_iter().map(Self::build_op).collect()
     }
 
+    /// The ops queued to undo `op` (origin "undo"), oldest first.
+    pub fn undo_ops_of(&self, op: OpId) -> Result<Vec<OpRow>> {
+        let raws = self.db.with(|c| {
+            let mut st = c.prepare(&format!(
+                "SELECT {} FROM ops_ops WHERE undo_of = ?1 AND origin = 'undo' ORDER BY id",
+                Self::OP_COLS
+            ))?;
+            st.query_map([op.0], Self::op_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        raws.into_iter().map(Self::build_op).collect()
+    }
+
     /// All items of an op, in insertion order (parents before children).
     pub fn load_items(&self, op: OpId) -> Result<Vec<ItemRow>> {
         Ok(self.db.with(|c| {

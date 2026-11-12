@@ -210,6 +210,10 @@ impl OpQueue {
                 journal.set_op_state(op.id, OpState::Interrupted)?;
             }
         }
+        // Redo never crosses a launch (S3): the world may have changed in
+        // between, and a forgotten "Redo Move of “Downloads”" is one key
+        // away from repeating an accident.
+        journal.clear_stack(Stack::Redo)?;
         Ok(Self {
             inner: Arc::new(Inner {
                 journal,
@@ -694,8 +698,8 @@ impl OpQueue {
         Ok(ids)
     }
 
-    /// Redoes the most recently undone op by queuing its original request again.
-    pub fn redo(&self) -> Result<Option<OpId>> {
+    /// The op Redo would redo and its request, if any.
+    pub fn redo_peek(&self) -> Result<Option<(OpId, OpRequest)>> {
         let Some((op, _)) = self.inner.journal.peek_stack(Stack::Redo)? else {
             return Ok(None);
         };
@@ -704,6 +708,46 @@ impl OpQueue {
             .journal
             .load_op(op)?
             .ok_or(OpsError::NoSuchOp(op))?;
+        Ok(Some((op, row.request)))
+    }
+
+    /// Redoes the most recently undone op by queuing its original request
+    /// again, but only if every item it acts on is still the object the undo
+    /// put back (S3); otherwise [`OpsError::RedoRefused`] says what changed.
+    /// The redo stack is emptied at every launch. Blocks on `lstat`.
+    pub fn redo(&self) -> Result<Option<OpId>> {
+        self.redo_op(None)
+    }
+
+    /// [`OpQueue::redo`], but only if the op on top of the redo stack is
+    /// still `expect` (for a redo the user confirmed).
+    pub fn redo_op(&self, expect: Option<OpId>) -> Result<Option<OpId>> {
+        let Some((op, _)) = self.inner.journal.peek_stack(Stack::Redo)? else {
+            return Ok(None);
+        };
+        if expect.is_some_and(|e| e != op) {
+            return Err(OpsError::RedoRefused(
+                "something else was undone or redone meanwhile".into(),
+            ));
+        }
+        let row = self
+            .inner
+            .journal
+            .load_op(op)?
+            .ok_or(OpsError::NoSuchOp(op))?;
+        let items = self.inner.journal.load_items(op)?;
+        let mut undo_items = Vec::new();
+        for u in self.inner.journal.undo_ops_of(op)? {
+            let finished = match self.inner.find(u.id) {
+                Some(o) => *o.phase.lock() == Phase::Finished,
+                None => u.state.is_finished(),
+            };
+            if !finished {
+                return Err(OpsError::RedoRefused("the undo is still running".into()));
+            }
+            undo_items.extend(self.inner.journal.load_items(u.id)?);
+        }
+        undo::redo_check(&row, &items, &undo_items).map_err(OpsError::RedoRefused)?;
         self.inner.journal.pop_stack(Stack::Redo)?;
         let id =
             self.enqueue_origin(row.request.clone(), row.options.clone(), Origin::Redo, None)?;
