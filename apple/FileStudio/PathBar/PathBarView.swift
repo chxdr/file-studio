@@ -328,10 +328,12 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
     func beginEdit(initial: String?) {
         guard tab != nil, let w = window else { return }
         if mode == .edit {
-            // ⌘L while editing re-selects all.
+            // ⌘L while editing re-selects all. (Never makeFirstResponder on a field
+            // whose editor is already active: AppKit re-enters and recurses.)
             if initial == nil {
-                w.makeFirstResponder(field)
+                if !isFieldFocused { w.makeFirstResponder(field) }
                 field.currentEditor()?.selectAll(nil)
+                ghost.isHidden = true
             } else {
                 setText(initial!, recomplete: true)
             }
@@ -693,9 +695,15 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             let (text, cur) = model.engine.deletePathComponent(field.stringValue, cursor: cursorUTF8)
             setText(text, recomplete: true, cursorUTF8: cur)
         case "addressbar.clear_line":
+            // Deletes back to the start; with a selection, deletes the selection (text-field rules).
             let s = field.stringValue as NSString
-            let loc = min(field.currentEditor()?.selectedRange.location ?? s.length, s.length)
-            setText(s.substring(from: loc), recomplete: true, cursorUTF8: 0)
+            let r = field.currentEditor()?.selectedRange ?? NSRange(location: s.length, length: 0)
+            if r.length > 0, NSMaxRange(r) <= s.length {
+                let text = s.replacingCharacters(in: r, with: "")
+                setText(text, recomplete: true, cursorUTF8: (text as NSString).substring(to: r.location).utf8.count)
+            } else {
+                setText(s.substring(from: min(r.location, s.length)), recomplete: true, cursorUTF8: 0)
+            }
         case "addressbar.add_favourite":
             let path = highlightedCompletion?.fullPath ?? tab?.location ?? ""
             model.perform(Invocation(id: cmd, arg: .path(path), tab: tab?.id), via: .keyboard, window: windowID)
@@ -727,7 +735,11 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
                 loc = (text as NSString).length
             }
             ed.selectedRange = NSRange(location: loc, length: 0)
-            (ed as? NSTextView)?.scrollRangeToVisible(ed.selectedRange)
+            // Keep the insertion point in view (lay out the new text first).
+            if let tv = ed as? NSTextView {
+                tv.layoutManager?.ensureLayout(for: tv.textContainer!)
+                tv.scrollRangeToVisible(tv.selectedRange())
+            }
         }
         updateCapsule()
         if recomplete { refreshCompletions() }
