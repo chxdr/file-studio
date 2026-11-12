@@ -1,0 +1,14 @@
+/target
+/build
+/apple/build
+/apple/DerivedData
+/apple/*.xcodeproj
+/apple/Frameworks/
+xcuserdata/
+*.xcuserstate
+.DS_Store
+/.claude/
+/fixtures/*
+!/fixtures/README.md
+/bench/out/
+*.fstudio-partial
