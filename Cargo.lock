@@ -381,7 +381,13 @@ dependencies = [
 name = "fstudio-bench"
 version = "0.0.1"
 dependencies = [
- "fstudio-model",
+ "anyhow",
+ "clap",
+ "crossbeam-channel",
+ "fstudio-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
