@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD=1
 if [ "${1:-}" = "--no-build" ]; then BUILD=0; shift; fi
 WANT=("$@")
-[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11)
+[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu)
 if [ "$BUILD" = 1 ]; then
   (cd "$ROOT/apple" && xcodegen -q && xcodebuild -project FileStudio.xcodeproj -scheme "File Studio" \
     -configuration Debug -derivedDataPath build/DerivedData build -quiet 2>&1 | grep -E "error:|BUILD FAILED") && exit 1
@@ -25,7 +25,7 @@ FAILS=0
 # run <name> <script>: runs the app with HOME=$H; output in $OUT.
 run() {
   OUT="$(HOME="$H" "$ROOT/scripts/run-debug.sh" --no-build --shots "$H/.shots" --trash "$H/.Trash" "$2" 2>&1)"
-  echo "$OUT" | grep -E "^(STEP|CONFIRM|LS|TOAST|MOVED|KEY|PASTE|LIST row|STATUS)" > "$H/.log" || true
+  echo "$OUT" | grep -E "^(STEP|CONFIRM|LS|TOAST|MOVED|KEY|PASTE|LIST row|STATUS|MAINMENU)" > "$H/.log" || true
 }
 # expect <description> <grep pattern>: the output has a matching line.
 expect() {
@@ -147,6 +147,44 @@ s11() {
   expect "Redo names the folder off screen" "^TOAST Redid: Move to Trash of 3 Items in “work” \\[Undo\\]$"
   expect "Undo names it too" "^TOAST Put back 3 items in “work” \\[Redo\\]$"
   finish s11
+}
+
+# M2 gap 4: ⌘X in one folder, ⌘V in another moves the file, says so with Undo,
+# and ⌘Z puts it back.
+m2cut() {
+  home
+  mkdir -p "$H/src" "$H/dst"
+  echo hi > "$H/src/a.txt"
+  run m2cut "wait:1;go:$H/src;wait:1;select:a.txt;key:cmd+x;wait:0.5;go:$H/dst;wait:1;key:cmd+v;wait:1.5;ls:$H/src;ls:$H/dst;key:cmd+z;wait:1.5;ls:$H/src;ls:$H/dst;quit"
+  expect "paste says it moved the file, with Undo" "^MOVED Moved “a.txt” to “dst”$"
+  expect "the file left src" "^LS .*/src: $"
+  expect "the file is in dst" "^LS .*/dst: a.txt$"
+  expect "Undo says so" "^TOAST Moved “a.txt” back in “src” \\[Redo\\]$"
+  expect "…and the file is back in src" "^LS .*/src: a.txt$"
+  expect "…and gone from dst" "^LS .*/dst: $"
+  finish m2cut
+}
+
+# M2 gap 5: a status message ("1 item marked to move") is gone after the next
+# selection change, and a fresh one is gone after its 6 s.
+m2status() {
+  home
+  mkdir -p "$H/w"
+  echo a > "$H/w/a.txt"; echo b > "$H/w/b.txt"
+  run m2status "wait:1;go:$H/w;wait:1;select:a.txt;key:cmd+x;wait:0.8;log;select:b.txt;wait:0.8;log;quit"
+  local n; n=$(echo "$OUT" | grep '"type":"app"' | grep -c 'marked to move')
+  if [ "$n" = 1 ]; then echo "  ok   the message showed once, then went with the selection change"; else echo "  FAIL status shown in $n of 2 snapshots"; BAD=1; fi
+  finish m2status
+}
+
+# M2 gap 6: F5, F6 and ⇧F6 are real key equivalents in the File menu.
+m2menu() {
+  home
+  run m2menu "wait:1;menus;quit"
+  local f5 f6; f5=$(printf '\357\234\210'); f6=$(printf '\357\234\211')   # U+F708, U+F709
+  expect "Copy to Other Pane is F5" "File › Copy to Other Pane key=\"$f5\" mods=0"
+  expect "Move to Other Pane is F6" "File › Move to Other Pane key=\"$f6\" mods=0"
+  finish m2menu
 }
 
 for p in "${WANT[@]}"; do
