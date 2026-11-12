@@ -167,9 +167,23 @@ impl Bulk {
         let mut out = Vec::with_capacity(n as usize);
         let mut p = 0usize;
         for _ in 0..n {
-            // SAFETY: the kernel packed `n` records into `buf`; each begins with its u32
-            // length, and `parse_record` stays within that length.
-            let (rec, len) = unsafe { parse_record(base.add(p)) };
+            // Defence in depth: never trust a record length that would leave the
+            // buffer the kernel was given (or that could loop forever).
+            if p + 4 > use_size {
+                break;
+            }
+            // SAFETY: `p + 4 <= use_size`, so the length word is inside the buffer.
+            let len = unsafe { (base.add(p) as *const u32).read_unaligned() } as usize;
+            if len < 24 || p + len > use_size {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("getattrlistbulk: bad record length {len} at offset {p}"),
+                ));
+            }
+            // SAFETY: the kernel packed `n` records into `buf`; this one starts at `p`
+            // and its `len` bytes lie inside the `use_size` bytes the kernel filled
+            // (checked above). `parse_record` stays within that length.
+            let (rec, _) = unsafe { parse_record(base.add(p)) };
             p += len;
             out.push(rec);
         }
