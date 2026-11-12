@@ -13,6 +13,7 @@ fn arg_for(h: &H, kind: Option<ArgKind>) -> Option<CommandArg> {
         ArgKind::Index => CommandArg::Index(0),
         ArgKind::ViewMode => CommandArg::ViewMode(ViewMode::List),
         ArgKind::Char => CommandArg::Char('a'),
+        ArgKind::Text => CommandArg::Text("Red".into()),
     })
 }
 
@@ -64,7 +65,7 @@ fn every_command_is_handled_or_returns_a_shell_request() {
         }
         eventually("file listed", || t.listing().index_of("file.txt").is_some());
         // Opening commands want a folder selected; the rest a file.
-        let pick = if id.starts_with("nav.open") {
+        let pick = if id.starts_with("nav.open") || id == "nav.show_package_contents" {
             "sub"
         } else {
             "file.txt"
@@ -160,4 +161,31 @@ fn delete_immediately_only_when_enabled_and_confirmed() {
     let out = run(Some(CommandArg::Confirm)).unwrap();
     h.engine.wait_op(out.ops[0], T).unwrap();
     assert!(!h.p("doomed").exists());
+}
+
+#[test]
+fn keys_can_be_rebound_and_reset() {
+    let h = harness();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌘D".to_string()]
+    );
+    h.engine
+        .set_command_key("file.duplicate", true, Some("⌃⌘D"))
+        .unwrap();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌃⌘D".to_string()]
+    );
+    assert!(
+        h.engine
+            .set_command_key("file.duplicate", true, Some("⌘Q"))
+            .is_err()
+    );
+    assert!(h.engine.set_command_key("no.such", true, None).is_err());
+    h.engine.reset_command_keys(Some("file.duplicate")).unwrap();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌘D".to_string()]
+    );
 }

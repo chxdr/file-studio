@@ -17,6 +17,7 @@ nav.go_icloud
 nav.go_root
 nav.go_trash
 nav.connect_server
+nav.show_package_contents
 nav.mark_set
 nav.mark_jump
 select.all
@@ -49,6 +50,10 @@ file.move_here
 file.make_alias
 file.compress
 file.open_with
+file.folder_size
+file.batch_rename
+tags.toggle
+tags.edit
 file.open_in_editor
 edit.copy
 edit.cut
@@ -102,6 +107,10 @@ path.copy_file_url
 path.copy_quoted
 terminal.open
 file.reveal_in_finder
+sidebar.remove
+sidebar.rename
+drive.eject
+drive.info
 palette.open
 filter.focus
 filter.clear

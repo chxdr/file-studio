@@ -114,6 +114,8 @@ pub enum Handling {
 /// Commands that come in a later milestone (M3+).
 pub const LATER_COMMANDS: &[&str] = &[
     "file.compress",
+    "file.folder_size",
+    "file.batch_rename",
     "file.make_alias",
     "search.global",
     "nav.connect_server",
@@ -289,6 +291,52 @@ impl Engine {
         Ok(imported.warnings)
     }
 
+    /// The key-cap text of each binding a command has now, primary first.
+    pub fn command_keys(&self, command: &str) -> Vec<String> {
+        self.keymap
+            .lock()
+            .bindings_for(&CommandId::new(command))
+            .iter()
+            .map(|b| b.text())
+            .collect()
+    }
+
+    /// Sets (or with `None` clears) a command's primary or secondary key in
+    /// the active profile. `keys` is key-cap text (`⇧⌘N`, `g g`, `F5`); the
+    /// binding applies where the command does. Refuses macOS shortcuts.
+    pub fn set_command_key(&self, command: &str, primary: bool, keys: Option<&str>) -> Result<()> {
+        let info =
+            registry::get(command).ok_or_else(|| CoreError::UnknownCommand(command.to_string()))?;
+        let binding = match keys {
+            Some(k) => Some(
+                fstudio_keymap::Binding::parse(k, info.contexts[0].clone())
+                    .ok_or_else(|| CoreError::InvalidSetting(format!("can't read keys “{k}”")))?,
+            ),
+            None => None,
+        };
+        let slot = if primary {
+            fstudio_keymap::Slot::Primary
+        } else {
+            fstudio_keymap::Slot::Secondary
+        };
+        let mut s = self.settings();
+        s.keymap
+            .set_slot(&info.id, slot, binding)
+            .map_err(|e| CoreError::InvalidSetting(e.to_string()))?;
+        self.update_settings(s)
+    }
+
+    /// Puts one command's keys back to the profile's defaults (all commands
+    /// when `command` is `None`).
+    pub fn reset_command_keys(&self, command: Option<&str>) -> Result<()> {
+        let mut s = self.settings();
+        match command {
+            Some(c) => s.keymap.reset_command(&CommandId::new(c)),
+            None => s.keymap.reset_all(),
+        }
+        self.update_settings(s)
+    }
+
     /// Vim's modal state (`Off` with the Standard profile).
     pub fn vim_mode(&self) -> VimMode {
         *self.vim.lock()
@@ -331,7 +379,11 @@ impl Engine {
             | "filter.commit"
             | "app.settings"
             | "app.keyboard_shortcuts"
-            | "edit.copy" => Handling::Shell,
+            | "edit.copy"
+            | "tags.edit"
+            | "sidebar.rename"
+            | "drive.eject"
+            | "drive.info" => Handling::Shell,
             _ if id.starts_with("addressbar.")
                 || id.starts_with("palette.")
                 || id.starts_with("rename.") =>
@@ -374,6 +426,64 @@ impl Engine {
             .find(t)
             .ok_or_else(|| CoreError::NotFound(format!("tab {t}")))?;
         Ok(m.windows[pl.window].panes[pl.pane].id)
+    }
+
+    /// The items a command acts on: its path argument when it has one (a
+    /// context menu on an address-bar segment or a sidebar row), else the
+    /// selection.
+    fn arg_or_selection(inv: &CommandInvocation, t: &Tab) -> Vec<PathBuf> {
+        match &inv.arg {
+            Some(CommandArg::Path(p)) => vec![p.clone()],
+            _ => t.selected_pathbufs(),
+        }
+    }
+
+    fn need_targets(inv: &CommandInvocation, t: &Tab) -> Result<Vec<PathBuf>> {
+        let v = Self::arg_or_selection(inv, t);
+        if v.is_empty() {
+            return Err(CoreError::NotAvailable("nothing is selected".into()));
+        }
+        Ok(v)
+    }
+
+    fn sidebar_command(&self, id: &str, arg: Option<&CommandArg>) -> Result<Outcome> {
+        let Some(CommandArg::Path(p)) = arg else {
+            return Err(CoreError::NotAvailable("no sidebar item given".into()));
+        };
+        let path = s(p);
+        Ok(match id {
+            "sidebar.remove" => {
+                if self.is_favourite(&path) {
+                    self.remove_favourite(&path)?;
+                    Outcome::message("Removed from the sidebar")
+                } else {
+                    Outcome::message("That folder isn't in the sidebar")
+                }
+            }
+            "sidebar.rename" => {
+                let name = self
+                    .favourites()
+                    .into_iter()
+                    .find(|f| f.path == path)
+                    .map(|f| f.name)
+                    .unwrap_or_else(|| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    });
+                Outcome::shell(ShellRequest::AskFavouriteName { path, name })
+            }
+            _ => {
+                let mount = fstudio_fs::volume_for(p)
+                    .map(|v| s(&v.mount_path))
+                    .unwrap_or(path);
+                Outcome::shell(if id == "drive.eject" {
+                    ShellRequest::Eject { path: mount }
+                } else {
+                    ShellRequest::ShowDriveInfo { path: mount }
+                })
+            }
+        })
     }
 
     fn need_selection(t: &Tab) -> Result<Vec<PathBuf>> {
@@ -560,8 +670,16 @@ impl Engine {
         Ok(Outcome::op(id).with_tab(t.id()))
     }
 
-    fn copy_paths(&self, t: &Tab, style: PathStyle, folder: bool) -> Outcome {
-        let paths: Vec<String> = if folder {
+    fn copy_paths(
+        &self,
+        t: &Tab,
+        inv: &CommandInvocation,
+        style: PathStyle,
+        folder: bool,
+    ) -> Outcome {
+        let paths: Vec<String> = if let Some(CommandArg::Path(p)) = &inv.arg {
+            vec![s(p)]
+        } else if folder {
             vec![t.location()]
         } else {
             let sel = t.selected_paths();
@@ -678,6 +796,10 @@ impl Engine {
                 || id.starts_with("palette.")
                 || id.starts_with("rename.") =>
             {
+                if let (Some(CommandArg::Path(p)), "addressbar.add_favourite") = (&inv.arg, id) {
+                    self.add_favourite(&s(p), None)?;
+                    return Ok(Outcome::message("Added to Favourites"));
+                }
                 if let Some(CommandArg::Path(p)) = &inv.arg {
                     let t = self.target(inv.tab)?;
                     let t = if id == "addressbar.commit_other_pane" {
@@ -694,6 +816,9 @@ impl Engine {
                 }));
             }
             "filter.commit" => return Ok(Outcome::shell(ShellRequest::FocusList)),
+            "sidebar.remove" | "sidebar.rename" | "drive.eject" | "drive.info" => {
+                return self.sidebar_command(id, inv.arg.as_ref());
+            }
             _ => {}
         }
 
@@ -709,7 +834,7 @@ impl Engine {
         Ok(match id {
             // ── navigation ──
             "nav.open" => {
-                let sel = Self::need_selection(&t)?;
+                let sel = Self::need_targets(inv, &t)?;
                 let (dirs, files): (Vec<PathBuf>, Vec<PathBuf>) = sel.into_iter().partition(|p| {
                     let l = t.listing();
                     p.file_name()
@@ -735,7 +860,7 @@ impl Engine {
                 }
             }
             "nav.open_new_tab" => {
-                let sel = t.selected_pathbufs();
+                let sel = Self::arg_or_selection(inv, &t);
                 let dirs: Vec<PathBuf> = sel.into_iter().filter(|p| p.is_dir()).collect();
                 let pane = self.pane_of(tid)?;
                 if dirs.is_empty() {
@@ -748,7 +873,7 @@ impl Engine {
             }
             "nav.open_other_pane" => {
                 let o = self.other(&t)?;
-                let d = Self::need_selection(&t)?
+                let d = Self::need_targets(inv, &t)?
                     .into_iter()
                     .find(|p| p.is_dir())
                     .ok_or_else(|| CoreError::NotAvailable("no folder is selected".into()))?;
@@ -794,6 +919,13 @@ impl Engine {
                     return Err(CoreError::NotFound(s(&d)));
                 }
                 self.shared.frecency.visit(&d);
+                self.go_dir(&t, d)
+            }
+            "nav.show_package_contents" => {
+                let d = Self::need_targets(inv, &t)?
+                    .into_iter()
+                    .find(|p| p.is_dir())
+                    .ok_or_else(|| CoreError::NotAvailable("no package is selected".into()))?;
                 self.go_dir(&t, d)
             }
             "nav.mark_set" => {
@@ -1022,7 +1154,7 @@ impl Engine {
             })
             .with_tab(tid),
             "file.reveal_in_finder" => {
-                let sel = t.selected_pathbufs();
+                let sel = Self::arg_or_selection(inv, &t);
                 let paths = if sel.is_empty() {
                     vec![t.location()]
                 } else {
@@ -1196,11 +1328,11 @@ impl Engine {
 
             // ── preview, paths, terminal ──
             "preview.quick_look" => Outcome::shell(ShellRequest::QuickLook {
-                paths: strings(&Self::need_selection(&t)?),
+                paths: strings(&Self::need_targets(inv, &t)?),
             })
             .with_tab(tid),
             "preview.get_info" => {
-                let sel = t.selected_pathbufs();
+                let sel = Self::arg_or_selection(inv, &t);
                 let paths = if sel.is_empty() {
                     vec![t.location()]
                 } else {
@@ -1208,16 +1340,26 @@ impl Engine {
                 };
                 Outcome::shell(ShellRequest::GetInfo { paths }).with_tab(tid)
             }
-            "path.copy_path" => self.copy_paths(&t, PathStyle::Posix, false).with_tab(tid),
-            "path.copy_escaped" => self.copy_paths(&t, PathStyle::Escaped, false).with_tab(tid),
-            "path.copy_home_relative" => self
-                .copy_paths(&t, PathStyle::HomeRelative, false)
+            "path.copy_path" => self
+                .copy_paths(&t, inv, PathStyle::Posix, false)
                 .with_tab(tid),
-            "path.copy_file_url" => self.copy_paths(&t, PathStyle::FileUrl, false).with_tab(tid),
-            "path.copy_quoted" => self.copy_paths(&t, PathStyle::Quoted, false).with_tab(tid),
-            "path.copy_folder_path" => self.copy_paths(&t, PathStyle::Posix, true).with_tab(tid),
+            "path.copy_escaped" => self
+                .copy_paths(&t, inv, PathStyle::Escaped, false)
+                .with_tab(tid),
+            "path.copy_home_relative" => self
+                .copy_paths(&t, inv, PathStyle::HomeRelative, false)
+                .with_tab(tid),
+            "path.copy_file_url" => self
+                .copy_paths(&t, inv, PathStyle::FileUrl, false)
+                .with_tab(tid),
+            "path.copy_quoted" => self
+                .copy_paths(&t, inv, PathStyle::Quoted, false)
+                .with_tab(tid),
+            "path.copy_folder_path" => self
+                .copy_paths(&t, inv, PathStyle::Posix, true)
+                .with_tab(tid),
             "path.copy_name" => {
-                let sel = t.selected_pathbufs();
+                let sel = Self::arg_or_selection(inv, &t);
                 let text = if sel.is_empty() {
                     t.location_path()
                         .file_name()
@@ -1232,8 +1374,28 @@ impl Engine {
                 Outcome::shell(ShellRequest::CopyText { text }).with_tab(tid)
             }
             "terminal.open" => {
-                Outcome::shell(ShellRequest::OpenTerminal { dir: t.location() }).with_tab(tid)
+                let dir = match &inv.arg {
+                    Some(CommandArg::Path(p)) => s(&crate::menus::folder_of(p)),
+                    _ => t.location(),
+                };
+                Outcome::shell(ShellRequest::OpenTerminal { dir }).with_tab(tid)
             }
+            "tags.toggle" => {
+                let Some(CommandArg::Text(name)) = &inv.arg else {
+                    return Err(CoreError::NotAvailable("no tag given".into()));
+                };
+                let sel = Self::need_selection(&t)?;
+                let n = crate::menus::toggle_tag(&sel, name)?;
+                Outcome::message(format!(
+                    "Tag “{name}” changed on {n} item{}",
+                    if n == 1 { "" } else { "s" }
+                ))
+                .with_tab(tid)
+            }
+            "tags.edit" => Outcome::shell(ShellRequest::EditTags {
+                paths: strings(&Self::need_selection(&t)?),
+            })
+            .with_tab(tid),
 
             // ── filter ──
             "filter.focus" => Outcome::shell(ShellRequest::FocusFilter).with_tab(tid),

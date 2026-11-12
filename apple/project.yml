@@ -1,0 +1,70 @@
+# XcodeGen spec for the File Studio macOS shell.
+# Generate the project with:  cd apple && xcodegen
+# The .xcodeproj is NOT committed; this file is the source of truth.
+name: FileStudio
+options:
+  bundleIdPrefix: app.filestudio
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
+    ONLY_ACTIVE_ARCH: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_APP_SANDBOX: NO          # a file manager needs the whole disk (F-011)
+    # The pre-build phase runs cargo, which reads/writes outside the project dir.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"         # ad-hoc for local builds; Developer ID at release time
+    DEVELOPMENT_TEAM: ""
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  File Studio:
+    type: application
+    platform: macOS
+    sources:
+      - path: FileStudio
+        excludes:
+          - "**/README.md"
+    settings:
+      base:
+        PRODUCT_NAME: File Studio
+        PRODUCT_MODULE_NAME: FileStudio
+        PRODUCT_BUNDLE_IDENTIFIER: app.filestudio.mac
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: File Studio
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSHumanReadableCopyright: "GPL-3.0-or-later"
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "File Studio asks Finder to show Get Info windows."
+        INFOPLIST_KEY_NSRemovableVolumesUsageDescription: "File Studio browses cards and external drives."
+        INFOPLIST_KEY_NSNetworkVolumesUsageDescription: "File Studio browses network shares."
+        # Rust core (F-004, Import Studio's D-024): read the UniFFI module map
+        # and link the static library straight from where
+        # scripts/build-core-apple.sh writes them (the RustCore target runs
+        # first), so headers are never stale.
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../target/uniffi-headers"
+        OTHER_LDFLAGS: "$(inherited) $(SRCROOT)/../target/aarch64-apple-darwin/release/libfstudio_ffi.a"
+    dependencies:
+      - target: RustCore
+    scheme: {}
+
+  # Builds the Rust core (static lib + Swift bindings + headers).
+  RustCore:
+    type: ""
+    platform: macOS
+    legacy:
+      toolPath: /bin/sh
+      arguments: "-c '\"${SRCROOT}/../scripts/build-core-apple.sh\" release'"
+      passSettings: true
+      workingDirectory: ""

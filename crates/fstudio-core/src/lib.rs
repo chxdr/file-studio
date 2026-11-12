@@ -38,8 +38,10 @@ mod commands;
 mod engine;
 mod error;
 mod events;
+mod favourites;
 mod ids;
 mod listing;
+pub mod menus;
 mod outcome;
 mod probe;
 mod settings;
@@ -57,13 +59,18 @@ pub use error::{CoreError, Result};
 pub use events::{
     COALESCE_WINDOW, ChangeKind, CoreEvent, EventSink, HintInfo, NullEventSink, VolumeSummary,
 };
+pub use favourites::Favourite;
 pub use ids::{PaneId, TabId, WindowId, WorkspaceId};
 pub use listing::{Listing, ListingState, RowInfo, RowKind};
+pub use menus::{
+    MenuCommand, MenuContext, MenuEntryInfo, MenuItem, MenuKind, MenuOverride, MenuPlacement,
+    MenuSettings, MenuTarget, SidebarItemKind, SystemMenu,
+};
 pub use outcome::{Outcome, ShellRequest};
 pub use probe::{FsCoreProbe, FsDirSource};
 pub use settings::{
     FolderMemory, GeneralSettings, OperationsSettings, PathBarSettings, RowDensity,
-    SETTINGS_VERSION, Settings, ViewSettings,
+    SETTINGS_VERSION, Settings, TerminalApp, ViewSettings,
 };
 pub use shared::MIGRATIONS;
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};

@@ -445,8 +445,15 @@ impl OpQueue {
 
     /// Cancels an op. Items already finished stay; the item in flight is
     /// stopped and its temporary file removed.
+    ///
+    /// An op interrupted by an earlier run (see [`OpQueue::interrupted`]) can
+    /// be cancelled without resuming it: our leftover temporary files are
+    /// removed, nothing else is touched (a move's sources stay where they
+    /// are), and the op is marked cancelled.
     pub fn cancel(&self, id: OpId) -> Result<()> {
-        let o = self.inner.find(id).ok_or(OpsError::NoSuchOp(id))?;
+        let Some(o) = self.inner.find(id) else {
+            return self.cancel_interrupted(id);
+        };
         o.ctl.cancel.store(true, Ordering::Release);
         let _ = o.ctl_tx.send(Ctl::Wake);
         let guard = self.inner.ops.lock();
@@ -473,6 +480,39 @@ impl OpQueue {
                 .sink
                 .on_event(OpEvent::OpFinished { op: id, report });
         }
+        Ok(())
+    }
+
+    /// Cancels an op that is only interrupted in the journal (not loaded in
+    /// this session). Runs the same recovery as resume, which removes only
+    /// our own recorded partial files, then marks the op cancelled.
+    fn cancel_interrupted(&self, id: OpId) -> Result<()> {
+        let row = self
+            .inner
+            .journal
+            .load_op(id)?
+            .ok_or(OpsError::NoSuchOp(id))?;
+        if row.state != OpState::Interrupted {
+            return Err(OpsError::NoSuchOp(id));
+        }
+        recover::recover(&self.inner.journal, &row)?;
+        self.inner.journal.set_op_state(id, OpState::Cancelled)?;
+        let items = self.inner.journal.load_items(id)?;
+        let st = status_from_journal(&row, &items);
+        let report = OpReport {
+            id,
+            kind: row.request.kind(),
+            state: OpState::Cancelled,
+            files_done: st.files_done,
+            files_failed: st.errors.len() as u64,
+            files_skipped: 0,
+            bytes_done: st.bytes_done,
+            errors: st.errors,
+            elapsed_ms: 0,
+        };
+        self.inner
+            .sink
+            .on_event(OpEvent::OpFinished { op: id, report });
         Ok(())
     }
 

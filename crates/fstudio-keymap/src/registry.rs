@@ -179,6 +179,7 @@ fn table() -> Vec<B> {
         c("nav.go_root", "Go to Root Folder", Navigation, "Go to the top of the startup disk").global(),
         c("nav.go_trash", "Go to Trash", Navigation, "Open the Trash folder").global(),
         c("nav.connect_server", "Connect to Server…", Navigation, "Connect to a network server").global().s("⌘K"),
+        c("nav.show_package_contents", "Show Package Contents", Navigation, "Open a package such as an app as a folder"),
         c("nav.mark_set", "Set Mark", Vim, "Remember this folder under a letter").arg(ArgKind::Char).nomenu().nohint().v("m {a-z}"),
         c("nav.mark_jump", "Jump to Mark", Vim, "Go to the folder remembered under a letter").arg(ArgKind::Char).nomenu().nohint().v("' {a-z}"),
         // ── Selection and cursor ──
@@ -214,6 +215,10 @@ fn table() -> Vec<B> {
         c("file.make_alias", "Make Alias", File, "Create an alias to the selection"),
         c("file.compress", "Compress", File, "Compress the selection into an archive"),
         c("file.open_with", "Open With…", File, "Choose an app to open the selection"),
+        c("file.folder_size", "Get Folder Size", File, "Work out how much space a folder uses"),
+        c("file.batch_rename", "Batch Rename…", File, "Rename several items at once with a pattern"),
+        c("tags.toggle", "Toggle Tag", File, "Add or remove a Finder tag on the selection").arg(ArgKind::Text).nomenu().nohint(),
+        c("tags.edit", "Tags…", File, "Edit the Finder tags of the selection"),
         c("file.open_in_editor", "Open in Editor", File, "Open the selection in your editor").s("⌘E"),
         // ── Edit ──
         c("edit.copy", "Copy", Edit, "Copy the selection").s("⌘C").v("y y").vv("y"),
@@ -275,6 +280,10 @@ fn table() -> Vec<B> {
         c("path.copy_quoted", "Copy Path, Quoted", Path, "Copy the path in single quotes"),
         c("terminal.open", "Open in Terminal", Path, "Open Terminal in this folder").s("⇧⌘R"),
         c("file.reveal_in_finder", "Reveal in Finder", Path, "Show the selection in Finder").s("⌥⌘R"),
+        c("sidebar.remove", "Remove from Sidebar", Navigation, "Remove a favourite from the sidebar").arg(ArgKind::Path).nomenu().nohint(),
+        c("sidebar.rename", "Rename Favourite…", Navigation, "Give a sidebar favourite another name").arg(ArgKind::Path).nomenu().nohint(),
+        c("drive.eject", "Eject", Navigation, "Eject a drive, card or disk image").arg(ArgKind::Path).nomenu().nohint(),
+        c("drive.info", "Show Drive Info", Navigation, "Show details about a drive").arg(ArgKind::Path).nomenu().nohint(),
         // ── Palette, filter, search ──
         c("palette.open", "Command Palette…", Search, "Search every command").global().s("⇧⌘P").v(":"),
         c("filter.focus", "Filter List", Search, "Filter the list as you type").s("⌘F").v("/"),
