@@ -595,3 +595,67 @@ fn s7_move_here_of_a_protected_folder_asks_and_toasts() {
     ));
     assert!(h.p("Projects/Documents").is_dir());
 }
+
+// ───────────────────────── S9 ─────────────────────────
+
+/// p3: copy folder Site, save new work into the copy, ⌘Z. The undo is
+/// refused with a message; the copy and the new work stay.
+#[test]
+fn s9_p3_undo_of_a_copy_refuses_when_work_was_added() {
+    let h = harness();
+    mkdirs(&h.p("src/Site/css"));
+    touch(&h.p("src/Site/index.html"));
+    touch(&h.p("src/Site/css/a.css"));
+    mkdirs(&h.p("dst"));
+    let id = h
+        .engine
+        .enqueue(OpRequest::Copy {
+            sources: vec![h.p("src/Site")],
+            dest_dir: h.p("dst"),
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    std::fs::write(h.p("dst/Site/css/new-work.css"), b"hours of work").unwrap();
+    let out = h.engine.undo().unwrap();
+    assert!(out.ops.is_empty(), "nothing is queued");
+    let msg = out.message.unwrap();
+    assert!(msg.starts_with("Can’t undo:"), "{msg}");
+    assert!(msg.contains("“Site”"), "{msg}");
+    assert!(h.p("dst/Site/css/new-work.css").exists());
+    assert!(dir_names(&h.trash).is_empty());
+}
+
+/// The same for Duplicate, and for a file inside the copy that was edited.
+/// An untouched copy is still undone.
+#[test]
+fn s9_undo_of_duplicate_refuses_edited_contents_and_undoes_untouched_copies() {
+    let h = harness();
+    mkdirs(&h.p("Site"));
+    std::fs::write(h.p("Site/index.html"), b"v1").unwrap();
+    let id = h
+        .engine
+        .enqueue(OpRequest::Duplicate {
+            paths: vec![h.p("Site")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    assert_eq!(dir_names(&h.p("Site copy")), vec!["index.html"]);
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(h.p("Site copy/index.html"), b"edited, longer").unwrap();
+    let out = h.engine.undo().unwrap();
+    assert!(out.ops.is_empty());
+    assert!(out.message.unwrap().contains("was changed"));
+    assert!(h.p("Site copy/index.html").exists());
+    // A fresh, untouched duplicate is undone.
+    std::fs::remove_dir_all(h.p("Site copy")).unwrap();
+    let id = h
+        .engine
+        .enqueue(OpRequest::Duplicate {
+            paths: vec![h.p("Site")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    let out = h.engine.undo().unwrap();
+    ok(&h, &out);
+    assert!(!h.p("Site copy").exists());
+}

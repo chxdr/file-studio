@@ -49,6 +49,47 @@ fn check_dest(it: &ItemRow, verb: &str) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+/// A copied folder must hold only what the op put there (S9 of the safety
+/// audit): a folder's inode doesn't change when work is saved into it, so
+/// without this, undoing the copy would send that work to the Trash. Every
+/// entry inside must be one of the op's items, and each file must be
+/// unchanged since it was copied.
+fn check_tree(top: &std::path::Path, items: &[ItemRow], verb: &str) -> Result<(), String> {
+    let made: HashMap<&std::path::Path, &ItemRow> = items
+        .iter()
+        .filter(|i| i.state == ItemState::Done)
+        .filter_map(|i| i.dest.as_deref().map(|d| (d, i)))
+        .collect();
+    let mut stack = vec![top.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("{} can't be read ({e})", q(&dir)))?;
+        for ent in rd {
+            let ent = ent.map_err(|e| format!("{} can't be read ({e})", q(&dir)))?;
+            let p = ent.path();
+            let Some(it) = made.get(p.as_path()) else {
+                return Err(format!(
+                    "{} has items that weren't {verb} with it, such as {}",
+                    q(top),
+                    q(&p)
+                ));
+            };
+            let md = meta::lstat(&p).map_err(|_| format!("{} changed", q(&p)))?;
+            if md.is_dir() {
+                stack.push(p);
+            } else if let Some(was) = it.dest_ident
+                && !meta::ident(&md).unchanged(&was)
+            {
+                return Err(format!(
+                    "{} inside {} was changed after it was {verb}",
+                    q(&p),
+                    q(top)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_free(p: &std::path::Path) -> Result<(), String> {
     if meta::exists(p) {
         return Err(format!(
@@ -88,8 +129,14 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
             };
             let paths = tops(items)
                 .into_iter()
-                .map(|i| check_dest(i, verb))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|i| {
+                    let dest = check_dest(i, verb)?;
+                    if i.kind == EntryKind::Dir {
+                        check_tree(&dest, items, verb)?;
+                    }
+                    Ok(dest)
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let back = replaced(items)?;
             if !paths.is_empty() {
                 out.push(OpRequest::Trash { paths });
