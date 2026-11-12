@@ -445,3 +445,48 @@ fn s5_p10_acting_on_a_stale_name_never_hits_the_renamed_file() {
     assert!(h.p("NOTES.txt").exists(), "the renamed file is untouched");
     assert!(dir_names(&h.trash).is_empty());
 }
+
+// ───────────────────────── S6 ─────────────────────────
+
+/// p15: holding ⌘⌫ (the first press, then auto-repeats) trashes one item,
+/// not a1, a2, a3… Holding ↓ still moves the cursor on every repeat.
+#[test]
+fn s6_p15_held_keys_repeat_movement_only() {
+    let h = harness();
+    for n in ["a1", "a2", "a3", "a4", "a5"] {
+        touch(&h.p(n));
+    }
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["a1".into()]));
+    let chord = fstudio_keymap::display::parse_chord("⌘⌫").unwrap();
+    let ctx = |is_repeat| InputContext {
+        focus: Focus::List,
+        tab: Some(t.id()),
+        is_repeat,
+    };
+    let mut ops = Vec::new();
+    for k in 0..3 {
+        let out = h.engine.handle_key(chord, ctx(k > 0)).unwrap();
+        ops.extend(out.ops);
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    for id in &ops {
+        h.engine.wait_op(*id, T).unwrap();
+    }
+    assert_eq!(ops.len(), 1);
+    assert_eq!(dir_names(&h.trash), vec!["a1"]);
+    // F6-style and creating commands don't repeat either.
+    for keys in ["⌘D", "⇧⌘N"] {
+        let c = fstudio_keymap::display::parse_chord(keys).unwrap();
+        let out = h.engine.handle_key(c, ctx(true)).unwrap();
+        assert!(out.ops.is_empty() && out.command.is_none(), "{keys}");
+    }
+    // ↓ repeats.
+    wait_complete(&t);
+    eventually("a1 gone", || !names(&t).contains(&"a1".to_string()));
+    t.set_selection(SelectionChange::Names(vec!["a2".into()]));
+    let down = fstudio_keymap::display::parse_chord("↓").unwrap();
+    h.engine.handle_key(down, ctx(false)).unwrap();
+    h.engine.handle_key(down, ctx(true)).unwrap();
+    assert_eq!(t.selection().names, vec!["a4".to_string()]);
+}

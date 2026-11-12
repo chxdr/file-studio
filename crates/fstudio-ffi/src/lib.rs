@@ -1051,6 +1051,7 @@ mod tests {
                 FfiInputContext {
                     focus: FfiFocus::List,
                     tab: Some(t.id()),
+                    is_repeat: false,
                 },
             )
             .unwrap();

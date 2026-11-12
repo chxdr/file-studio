@@ -91,7 +91,12 @@ public struct InputContext: Equatable, Sendable {
     public var focus: Focus
     /// The tab whose pane has focus (nil: the focused tab).
     public var tab: TabID?
-    public init(focus: Focus, tab: TabID? = nil) { self.focus = focus; self.tab = tab }
+    /// The key is held and this is the system's auto-repeat (`NSEvent.isARepeat`).
+    /// The core repeats only movement (safety audit S6).
+    public var isRepeat: Bool
+    public init(focus: Focus, tab: TabID? = nil, isRepeat: Bool = false) {
+        self.focus = focus; self.tab = tab; self.isRepeat = isRepeat
+    }
 }
 
 /// How a command was issued (hints count mouse uses; keyboard uses teach).

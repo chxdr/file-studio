@@ -50,7 +50,13 @@ final class KeyRouter {
     private func route(_ e: NSEvent) -> Bool {
         guard let chord = KeyChord(event: e), let w = e.window ?? NSApp.keyWindow,
               w.windowController is CoreWindowIdentifying, w.attachedSheet == nil else { return false }
-        let (ctx, wid) = Self.context(in: w)
+        var (ctx, wid) = Self.context(in: w)
+        // Auto-repeat goes to the core too, marked, so it can repeat movement
+        // and swallow everything else (safety audit S6).
+        ctx.isRepeat = e.isARepeat
+        #if DEBUG
+        if e.isARepeat { print("KEY repeat \(chord)") }
+        #endif
         return model.handleKey(chord, context: ctx, window: wid)
     }
 }

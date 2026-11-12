@@ -394,6 +394,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func handleKey(_ chord: KeyChord, context: InputContext) -> Outcome? {
         if let o = columnKey(chord, context: context) { return o }  // ui-list addition
         if let inv = keyCommand(chord, focus: context.focus) {
+            // S6: a held key repeats movement only.
+            if context.isRepeat && !inv.id.hasPrefix("cursor.") && !inv.id.hasPrefix("select.extend_") { return Outcome() }
             var inv = inv
             inv.tab = context.tab
             return (try? perform(inv, via: .keyboard)) ?? Outcome(command: inv.id, message: "Not available")

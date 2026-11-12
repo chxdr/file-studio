@@ -260,6 +260,8 @@ pub struct FfiInputContext {
     pub focus: FfiFocus,
     /// The tab whose pane has focus (the focused tab when `None`).
     pub tab: Option<u64>,
+    /// This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+    pub is_repeat: bool,
 }
 
 impl From<FfiInputContext> for core::InputContext {
@@ -267,6 +269,7 @@ impl From<FfiInputContext> for core::InputContext {
         core::InputContext {
             focus: c.focus.into(),
             tab: c.tab.map(core::TabId),
+            is_repeat: c.is_repeat,
         }
     }
 }

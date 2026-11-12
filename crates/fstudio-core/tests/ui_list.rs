@@ -18,6 +18,7 @@ fn list_ctx(t: &Tab) -> InputContext {
     InputContext {
         focus: Focus::List,
         tab: Some(t.id()),
+        is_repeat: false,
     }
 }
 

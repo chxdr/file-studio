@@ -60,7 +60,7 @@ extension InputContext {
         case .filter: .filter
         case .other: .other
         }
-        return FfiInputContext(focus: f, tab: tab)
+        return FfiInputContext(focus: f, tab: tab, isRepeat: isRepeat)
     }
 }
 
@@ -807,8 +807,14 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     init(dataDir: URL) throws {
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         let sink = self.sink
+        // DEBUG only: `-FSTrashDir <folder>` trashes into a scratch folder, so
+        // scripted runs never put anything in the real Trash.
+        var trashDir: String?
+        #if DEBUG
+        trashDir = UserDefaults.standard.string(forKey: "FSTrashDir")
+        #endif
         ffi = try wrap {
-            try FfiEngine(config: FfiEngineConfig(dataDir: dataDir.path, home: nil, trashDir: nil, pollWatcher: false),
+            try FfiEngine(config: FfiEngineConfig(dataDir: dataDir.path, home: nil, trashDir: trashDir, pollWatcher: false),
                           sink: sink)
         }
     }

@@ -466,7 +466,10 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
                 return true
             }
             return false
-        case #selector(NSResponder.insertNewline(_:)): textCommand("addressbar.commit"); return true
+        case #selector(NSResponder.insertNewline(_:)):
+            // A held Return never commits twice (safety audit S6, S13).
+            if NSApp.currentEvent?.isARepeat != true { textCommand("addressbar.commit") }
+            return true
         case #selector(NSResponder.cancelOperation(_:)): textCommand("addressbar.cancel"); return true
         case #selector(NSResponder.insertTab(_:)): textCommand("addressbar.complete_next"); return true
         case #selector(NSResponder.insertBacktab(_:)): textCommand("addressbar.complete_prev"); return true

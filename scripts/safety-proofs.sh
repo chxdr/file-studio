@@ -24,7 +24,7 @@ FAILS=0
 
 # run <name> <script>: runs the app with HOME=$H; output in $OUT.
 run() {
-  OUT="$(HOME="$H" "$ROOT/scripts/run-debug.sh" --no-build --shots "$H/.shots" "$2" 2>&1)"
+  OUT="$(HOME="$H" "$ROOT/scripts/run-debug.sh" --no-build --shots "$H/.shots" --trash "$H/.Trash" "$2" 2>&1)"
   echo "$OUT" | grep -E "^(STEP|CONFIRM|LS|TOAST|MOVED|KEY|PASTE|LIST row|STATUS)" > "$H/.log" || true
 }
 # expect <description> <grep pattern>: the output has a matching line.
@@ -38,7 +38,7 @@ refuse() {
 home() {
   H="$(mktemp -d "${TMPDIR:-/tmp}/fstudio-safety.XXXXXX")"
   H="$(cd "$H" && pwd -P)"
-  mkdir -p "$H/Library"
+  mkdir -p "$H/Library" "$H/.Trash"
   BAD=0
 }
 finish() {
@@ -86,6 +86,20 @@ s5() {
   expect "the row is NOTES.txt" "^LIST row 2 \\[x\\]> NOTES.txt"
   refuse "no ghost row" "^LIST row .*Notes.txt"
   finish s5
+}
+
+# S6: hold ⌘⌫ (one press + 4 auto-repeats): one item goes to the (scratch)
+# Trash. Hold ⌘D: one duplicate. Hold ↓ (1 + 3 repeats): the cursor moves 4.
+s6() {
+  home
+  mkdir -p "$H/w"
+  for n in a1 a2 a3 a4 a5 a6 a7; do echo "$n" > "$H/w/$n"; done
+  run s6 "wait:1;go:$H/w;wait:1;focus:list;select:a1;holdkey:cmd+delete:4;wait:1.5;ls:$H/w;ls:$H/.Trash;holdkey:cmd+d:4;wait:1.5;ls:$H/w;select:a2;holdkey:down:3;wait:0.5;sel;quit"
+  expect "the repeats reached the app" "^KEY repeat .*delete"
+  expect "held ⌘⌫ trashed a1 only" "^LS .*/\\.Trash: a1$"
+  expect "held ⌘D duplicated once" "^LS .*/w: a2, a2 copy, a3, a4, a5, a6, a7$"
+  expect "held ↓ moved four rows" "^SEL 1: a5$"
+  finish s6
 }
 
 for p in "${WANT[@]}"; do

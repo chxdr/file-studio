@@ -4526,15 +4526,23 @@ public struct FfiInputContext: Equatable, Hashable {
      * The tab whose pane has focus (the focused tab when `None`).
      */
     public var tab: UInt64?
+    /**
+     * This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+     */
+    public var isRepeat: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(focus: FfiFocus, 
         /**
          * The tab whose pane has focus (the focused tab when `None`).
-         */tab: UInt64?) {
+         */tab: UInt64?, 
+        /**
+         * This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+         */isRepeat: Bool) {
         self.focus = focus
         self.tab = tab
+        self.isRepeat = isRepeat
     }
 
     
@@ -4554,13 +4562,15 @@ public struct FfiConverterTypeFfiInputContext: FfiConverterRustBuffer {
         return
             try FfiInputContext(
                 focus: FfiConverterTypeFfiFocus.read(from: &buf), 
-                tab: FfiConverterOptionUInt64.read(from: &buf)
+                tab: FfiConverterOptionUInt64.read(from: &buf), 
+                isRepeat: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiInputContext, into buf: inout [UInt8]) {
         FfiConverterTypeFfiFocus.write(value.focus, into: &buf)
         FfiConverterOptionUInt64.write(value.tab, into: &buf)
+        FfiConverterBool.write(value.isRepeat, into: &buf)
     }
 }
 

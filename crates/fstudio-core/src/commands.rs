@@ -65,6 +65,10 @@ pub struct InputContext {
     pub focus: Focus,
     /// The tab whose pane has focus (the focused tab when `None`).
     pub tab: Option<TabId>,
+    /// The key is held down and this press is the system's auto-repeat
+    /// (`NSEvent.isARepeat`). Only repeatable commands run again (S6).
+    #[serde(default)]
+    pub is_repeat: bool,
 }
 
 /// A registered command, for menus, the palette and Settings.
@@ -163,6 +167,15 @@ impl Engine {
         }
         let kctx = self.key_context(&ctx);
         let res = self.keymap.lock().resolve(chord, &kctx, Instant::now());
+        // S6: a held key repeats movement only. The repeat of any other
+        // command is swallowed (handled, nothing done), so neither the core
+        // nor a menu acts on it again.
+        if ctx.is_repeat
+            && let Resolution::Command(id, _) = &res
+            && !registry::get(id.as_str()).is_some_and(|c| c.repeatable)
+        {
+            return Some(Outcome::none());
+        }
         self.run_resolution(res, ctx)
     }
 

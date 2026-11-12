@@ -211,3 +211,40 @@ fn settings_have_defaults() {
         )
     );
 }
+
+/// S6 (safety audit): only movement repeats while a key is held.
+#[test]
+fn only_movement_commands_repeat() {
+    let repeat: Vec<&str> = fstudio_keymap::registry::all()
+        .iter()
+        .filter(|c| c.repeatable)
+        .map(|c| c.id.as_str())
+        .collect();
+    for id in &repeat {
+        assert!(
+            id.starts_with("cursor.")
+                || id.starts_with("select.extend_")
+                || id.ends_with(".next")
+                || id.ends_with(".prev")
+                || id.starts_with("addressbar.complete_"),
+            "{id} must not repeat"
+        );
+    }
+    for id in [
+        "file.trash",
+        "file.delete_immediately",
+        "file.move_to_other_pane",
+        "file.copy_to_other_pane",
+        "file.duplicate",
+        "file.new_folder",
+        "edit.paste",
+        "file.move_here",
+        "edit.undo",
+        "edit.redo",
+        "addressbar.commit",
+        "nav.open",
+    ] {
+        assert!(!repeat.contains(&id), "{id}");
+    }
+    assert!(repeat.contains(&"cursor.down") && repeat.contains(&"cursor.page_down"));
+}
