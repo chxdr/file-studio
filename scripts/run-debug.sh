@@ -9,23 +9,26 @@
 #   --data <dir>    the core's data folder (default: a fresh temporary one,
 #                   so runs never touch your real session)
 #   --shots <dir>   where snap: writes PNGs (default: build/debug-shots)
+#   --trash <dir>   trash into this folder instead of the real Trash (it
+#                   must be on the same volume as what is trashed)
 #   --no-build      skip xcodegen/xcodebuild
 # Prints the app's STEP/STATE/MENU/SNAP/BENCH lines; exits when the script quits
 # (or after 120 s).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOCK=() DATA="" SHOTS="$ROOT/build/debug-shots" BUILD=1
+MOCK=() DATA="" SHOTS="$ROOT/build/debug-shots" BUILD=1 TRASH=()
 while [ $# -gt 1 ]; do
   case "$1" in
     --mock) MOCK=(-FSMockCore); shift ;;
     --data) DATA="$2"; shift 2 ;;
     --shots) SHOTS="$2"; shift 2 ;;
+    --trash) TRASH=(-FSTrashDir "$2"); shift 2 ;;
     --no-build) BUILD=0; shift ;;
     *) break ;;
   esac
 done
-SCRIPT="${1:?usage: run-debug.sh [--mock] [--data dir] [--shots dir] [--no-build] \"step;step;…\"}"
+SCRIPT="${1:?usage: run-debug.sh [--mock] [--data dir] [--shots dir] [--trash dir] [--no-build] \"step;step;…\"}"
 [ -z "$DATA" ] && DATA="$(mktemp -d "${TMPDIR:-/tmp}/fstudio-debug.XXXXXX")"
 mkdir -p "$SHOTS"
 
@@ -40,7 +43,7 @@ fi
 APP="$ROOT/apple/build/DerivedData/Build/Products/Debug/File Studio Debug.app/Contents/MacOS/File Studio Debug"
 echo "data: $DATA  shots: $SHOTS"
 # NSUserDefaults reads -Key value pairs from the arguments.
-"$APP" ${MOCK[@]+"${MOCK[@]}"} -FSDataDir "$DATA" -FSDebugSnapshotDir "$SHOTS" -FSDebugScript "$SCRIPT" \
+"$APP" ${MOCK[@]+"${MOCK[@]}"} ${TRASH[@]+"${TRASH[@]}"} -FSDataDir "$DATA" -FSDebugSnapshotDir "$SHOTS" -FSDebugScript "$SCRIPT" \
   -ApplePersistenceIgnoreState YES 2>/dev/null &
 PID=$!
 ( sleep 120; kill "$PID" 2>/dev/null ) >/dev/null 2>&1 &

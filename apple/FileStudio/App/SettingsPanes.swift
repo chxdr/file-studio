@@ -223,6 +223,12 @@ struct SettingsOperationsPane: View {
                 Stepper("Undo steps kept: \(model.settings.operations.undoLimit)",
                         value: a.double(\.operations.undoLimit).int, in: 1...1000, step: 10)
             }
+            Section("Renaming") {
+                Toggle("Ask before changing a file’s extension",
+                       isOn: a.bool("operations.warn_extension_change", default: true))
+                Toggle("Ask before a name that starts with a dot (it hides the item)",
+                       isOn: a.bool("operations.warn_hidden_rename", default: true))
+            }
             Section {
                 Toggle("Allow “Delete Immediately”", isOn: deleteBinding)
                 Label {

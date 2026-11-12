@@ -391,3 +391,19 @@ fn huge_folder() {
     assert_eq!(st.state, OpState::Completed);
     assert_eq!(tree(&e.p("src")), tree(&img.mount.join("src")));
 }
+
+/// Duplicating a folder names only the folder "… copy"; its contents keep
+/// their names.
+#[test]
+fn duplicate_keeps_the_names_inside_a_folder() {
+    let e = env();
+    std::fs::create_dir_all(e.p("Site/css")).unwrap();
+    std::fs::write(e.p("Site/index.html"), b"x").unwrap();
+    std::fs::write(e.p("Site/css/a.css"), b"y").unwrap();
+    let st = e.run(OpRequest::Duplicate {
+        paths: vec![e.p("Site")],
+    });
+    assert_eq!(st.state, OpState::Completed);
+    assert!(e.p("Site copy/index.html").exists());
+    assert!(e.p("Site copy/css/a.css").exists());
+}

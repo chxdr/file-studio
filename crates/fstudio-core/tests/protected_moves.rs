@@ -136,12 +136,13 @@ fn dropping_a_standard_folder_asks_first_and_cancel_keeps_it() {
     assert_eq!(snapshot(&h.root), before);
     // A cancelled token can't be confirmed later.
     assert!(h.engine.confirm_move(token).is_err());
-    // The plain entry point refuses instead of asking.
-    assert!(
-        h.engine
-            .drop_items(&[h.s("Applications")], &h.s("Documents"), Mods::NONE)
-            .is_err()
-    );
+    // The list's entry point asks too (S2a), and moves nothing until yes.
+    let out = h
+        .engine
+        .drop_items(&[h.s("Applications")], &h.s("Documents"), Mods::NONE)
+        .unwrap();
+    let (token, _) = confirm_token(&out);
+    h.engine.cancel_confirmation(token);
     assert_eq!(snapshot(&h.root), before);
 }
 

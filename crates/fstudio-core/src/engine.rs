@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, Result};
 use crate::events::{CoreEvent, EventHub, EventSink, OpsBridge, VolumeSummary};
 use crate::ids::{PaneId, TabId, WindowId, WorkspaceId};
-use crate::outcome::Outcome;
+use crate::outcome::{Outcome, ShellRequest};
 use crate::probe::FsCoreProbe;
 use crate::settings::{SETTINGS_KEY, Settings};
 use crate::shared::{self, Shared};
@@ -83,8 +83,8 @@ pub struct Engine {
     pub(crate) vim: Mutex<VimMode>,
     pub(crate) marks: Mutex<HashMap<char, String>>,
     pub(crate) favourites: Mutex<Vec<crate::favourites::Favourite>>,
-    /// Moves of protected folders waiting for the user's yes (F-023).
-    pub(crate) pending_moves: Mutex<crate::protect::Pending>,
+    /// Questions waiting for the user's yes, by token (S1, F-023).
+    pub(crate) pending: Mutex<crate::confirm::Pending>,
     last_saved: Mutex<String>,
 }
 
@@ -201,7 +201,7 @@ impl Engine {
             vim: Mutex::new(vim),
             marks: Mutex::new(marks),
             favourites: Mutex::new(favourites),
-            pending_moves: Mutex::new(crate::protect::Pending::default()),
+            pending: Mutex::new(crate::confirm::Pending::default()),
             last_saved: Mutex::new(String::new()),
         });
         let weak = Arc::downgrade(&engine);
@@ -336,31 +336,134 @@ impl Engine {
     /// A refusal ("“a.txt” was changed after it was copied") comes back as
     /// the outcome's message, not an error.
     pub fn undo(&self) -> Result<Outcome> {
-        let ids = match self.ops().undo() {
+        self.undo_in(None)
+    }
+
+    /// Undo for the window holding `tab`: the toast names the folder the
+    /// undo changed when that window doesn't show it (S11).
+    pub(crate) fn undo_in(&self, tab: Option<TabId>) -> Result<Outcome> {
+        self.undo_run(tab, None)
+    }
+
+    /// Undo, or (with `recreate_for`) undo recreating the missing folders
+    /// the user agreed to (S14).
+    pub(crate) fn undo_run(
+        &self,
+        tab: Option<TabId>,
+        recreate_for: Option<OpId>,
+    ) -> Result<Outcome> {
+        let top = self.ops().undo_top()?;
+        let res = match recreate_for {
+            Some(op) => self.ops().undo_recreating(op),
+            None => self.ops().undo(),
+        };
+        let ids = match res {
             Ok(ids) => ids,
             Err(fstudio_ops::OpsError::UndoRefused(why)) => {
-                return Ok(Outcome::message(format!("Can’t undo: {why}")));
+                return Ok(Self::refusal(format!("Can’t undo: {why}")));
+            }
+            Err(fstudio_ops::OpsError::NeedsFolders(dirs)) => {
+                // S14: never recreate a deleted folder unasked.
+                let Some((op, label, _)) = top else {
+                    return Ok(Outcome::none());
+                };
+                let first = crate::confirm::display_name(&dirs[0]);
+                let title = match dirs.len() {
+                    1 => format!("Recreate the folder “{first}”?"),
+                    n => format!("Recreate {n} folders, starting with “{first}”?"),
+                };
+                let detail = format!(
+                    "Undoing {label} puts items back into “{first}”, which no longer exists. \
+                     File Studio can create it again; that is part of the undo, so Redo \
+                     and Undo still work."
+                );
+                let token = self.ask(crate::confirm::PendingAction::UndoRecreating(op, tab));
+                let mut out = Outcome::shell(ShellRequest::Confirm {
+                    token,
+                    title,
+                    detail,
+                    yes: "Recreate and Undo".into(),
+                    no: "Cancel".into(),
+                });
+                out.tab = tab;
+                return Ok(out);
             }
             Err(e) => return Err(e.into()),
         };
-        Ok(if ids.is_empty() {
-            Outcome::none()
-        } else {
-            Outcome {
-                ops: ids,
-                ..Outcome::none()
-            }
-        })
+        if ids.is_empty() {
+            return Ok(Outcome::message("Nothing to undo"));
+        }
+        let mut out = Outcome {
+            ops: ids,
+            ..Outcome::none()
+        };
+        if let Some((_, label, req)) = top {
+            out.shell = Some(self.history_toast(
+                crate::feedback::undo_text(&req, &label),
+                tab,
+                "Redo",
+                "edit.redo",
+            ));
+        }
+        Ok(out)
     }
 
-    /// Redoes the last undone operation.
+    /// A refused undo or redo: the reason as the message and as a toast.
+    fn refusal(text: String) -> Outcome {
+        Outcome {
+            shell: Some(ShellRequest::Toast {
+                text: text.clone(),
+                button: None,
+                command: None,
+            }),
+            ..Outcome::message(text)
+        }
+    }
+
+    /// Redoes the most recently undone op (see [`Engine::undo`]).
+    ///
+    /// Redo acts only on the objects the undo put back (S3): if one changed,
+    /// it is refused with a message. Redoing a move of a protected folder
+    /// asks first (F-023), like any other move.
     pub fn redo(&self) -> Result<Outcome> {
-        Ok(match self.ops().redo()? {
-            Some(id) => Outcome::op(id),
-            None => Outcome::none(),
-        })
+        self.redo_in(None)
     }
 
+    /// Redo for the window holding `tab` (see [`Engine::undo_in`]).
+    pub(crate) fn redo_in(&self, tab: Option<TabId>) -> Result<Outcome> {
+        if let Some((op, OpRequest::Move { sources, dest_dir })) = self.ops().redo_peek()?
+            && let Some(ask) = self.guard_move(&sources, &dest_dir, || {
+                crate::confirm::PendingAction::Redo(op, tab)
+            })
+        {
+            return Ok(ask);
+        }
+        self.redo_op(None, tab)
+    }
+
+    /// Redoes the top of the redo stack, if it is still `expect`.
+    pub(crate) fn redo_op(&self, expect: Option<OpId>, tab: Option<TabId>) -> Result<Outcome> {
+        let top = self.ops().redo_top()?;
+        Ok(match self.ops().redo_op(expect) {
+            Ok(Some(id)) => {
+                let mut out = Outcome::op(id);
+                if let Some((_, label, req)) = top {
+                    out.shell = Some(self.history_toast(
+                        crate::feedback::redo_text(&req, &label),
+                        tab,
+                        "Undo",
+                        "edit.undo",
+                    ));
+                }
+                out
+            }
+            Ok(None) => Outcome::message("Nothing to redo"),
+            Err(fstudio_ops::OpsError::RedoRefused(why)) => {
+                Self::refusal(format!("Can’t redo: {why}"))
+            }
+            Err(e) => return Err(e.into()),
+        })
+    }
     /// The Edit menu's undo and redo labels.
     pub fn undo_state(&self) -> UndoState {
         self.ops().undo_state()

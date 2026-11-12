@@ -690,6 +690,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func breadcrumbs(path: String)  -> [FfiCrumb]
     
     /**
+     * The user said no to a question carrying `token`.
+     */
+    func cancelConfirmation(token: UInt64) 
+    
+    /**
      * The user cancelled `ShellRequest::ConfirmMove`.
      */
     func cancelMove(token: UInt64) 
@@ -721,6 +726,13 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func commands()  -> [FfiCommandInfo]
     
     func complete(input: String, cursor: UInt32, cwd: String)  -> FfiCompletions
+    
+    /**
+     * The user said yes to a question carrying `token` (`ConfirmTrash`,
+     * `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+     * the question named, if they are unchanged.
+     */
+    func confirm(token: UInt64) throws  -> FfiOutcome
     
     /**
      * The user said Move to `ShellRequest::ConfirmMove`.
@@ -763,7 +775,7 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     /**
      * Decides the drop and queues the copy or move.
      */
-    func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> Int64
+    func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> FfiOutcome
     
     /**
      * Queues an operation (drag and drop).
@@ -891,6 +903,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func parseLocation(raw: String, cwd: String)  -> FfiParsedLocation
     
+    /**
+     * The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+     */
+    func pasteboardWritten(changeCount: Int64) 
+    
     func pendingKeys()  -> String?
     
     /**
@@ -973,6 +990,12 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func subfolders(path: String)  -> [FfiCrumb]
     
     func swapPanes(window: UInt64) throws 
+    
+    /**
+     * The system pasteboard's `changeCount` and file paths, before a key or
+     * command runs (S7). See `Engine::sync_pasteboard`.
+     */
+    func syncPasteboard(changeCount: Int64, files: [String]) 
     
     func tab(id: UInt64)  -> FfiTab?
     
@@ -1121,6 +1144,18 @@ open func breadcrumbs(path: String) -> [FfiCrumb]  {
 }
     
     /**
+     * The user said no to a question carrying `token`.
+     */
+open func cancelConfirmation(token: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_cancel_confirmation(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * The user cancelled `ShellRequest::ConfirmMove`.
      */
 open func cancelMove(token: UInt64)  {try! rustCall() {
@@ -1225,6 +1260,21 @@ open func complete(input: String, cursor: UInt32, cwd: String) -> FfiCompletions
         FfiConverterString.lower(input),
         FfiConverterUInt32.lower(cursor),
         FfiConverterString.lower(cwd),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The user said yes to a question carrying `token` (`ConfirmTrash`,
+     * `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+     * the question named, if they are unchanged.
+     */
+open func confirm(token: UInt64)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_confirm(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
     )
 })
 }
@@ -1349,8 +1399,8 @@ open func dropFiles(sources: [String], destDir: String, mods: FfiMods)throws  ->
     /**
      * Decides the drop and queues the copy or move.
      */
-open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> Int64  {
-    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_drop_items(
             self.uniffiCloneHandle(),
@@ -1790,6 +1840,18 @@ open func parseLocation(raw: String, cwd: String) -> FfiParsedLocation  {
 })
 }
     
+    /**
+     * The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+     */
+open func pasteboardWritten(changeCount: Int64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_pasteboard_written(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(changeCount),uniffiCallStatus
+    )
+}
+}
+    
 open func pendingKeys() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
         uniffiCallStatus in
@@ -2065,6 +2127,20 @@ open func swapPanes(window: UInt64)throws   {try rustCallWithError(FfiConverterT
     uniffi_fstudio_ffi_fn_method_ffiengine_swap_panes(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(window),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The system pasteboard's `changeCount` and file paths, before a key or
+     * command runs (S7). See `Engine::sync_pasteboard`.
+     */
+open func syncPasteboard(changeCount: Int64, files: [String])  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_sync_pasteboard(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(changeCount),
+        FfiConverterSequenceString.lower(files),uniffiCallStatus
     )
 }
 }
@@ -4487,15 +4563,23 @@ public struct FfiInputContext: Equatable, Hashable {
      * The tab whose pane has focus (the focused tab when `None`).
      */
     public var tab: UInt64?
+    /**
+     * This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+     */
+    public var isRepeat: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(focus: FfiFocus, 
         /**
          * The tab whose pane has focus (the focused tab when `None`).
-         */tab: UInt64?) {
+         */tab: UInt64?, 
+        /**
+         * This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+         */isRepeat: Bool) {
         self.focus = focus
         self.tab = tab
+        self.isRepeat = isRepeat
     }
 
     
@@ -4515,13 +4599,15 @@ public struct FfiConverterTypeFfiInputContext: FfiConverterRustBuffer {
         return
             try FfiInputContext(
                 focus: FfiConverterTypeFfiFocus.read(from: &buf), 
-                tab: FfiConverterOptionUInt64.read(from: &buf)
+                tab: FfiConverterOptionUInt64.read(from: &buf), 
+                isRepeat: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: FfiInputContext, into buf: inout [UInt8]) {
         FfiConverterTypeFfiFocus.write(value.focus, into: &buf)
         FfiConverterOptionUInt64.write(value.tab, into: &buf)
+        FfiConverterBool.write(value.isRepeat, into: &buf)
     }
 }
 
@@ -9255,6 +9341,10 @@ public enum FfiOpKind: Equatable, Hashable {
     case rename
     case duplicate
     case moveTo
+    /**
+     * Several steps as one op (New Folder with Selection, a chain of folders).
+     */
+    case compound
 
 
 
@@ -9293,6 +9383,8 @@ public struct FfiConverterTypeFfiOpKind: FfiConverterRustBuffer {
         case 8: return .duplicate
         
         case 9: return .moveTo
+        
+        case 10: return .compound
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9336,6 +9428,10 @@ public struct FfiConverterTypeFfiOpKind: FfiConverterRustBuffer {
         
         case .moveTo:
             writeInt(&buf, Int32(9))
+        
+        
+        case .compound:
+            writeInt(&buf, Int32(10))
         
         }
     }
@@ -10179,9 +10275,9 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case offerCreateFolder(path: String, nearestExisting: String
     )
-    case confirmTrash(paths: [String]
+    case confirmTrash(token: UInt64, paths: [String]
     )
-    case confirmDeleteImmediately(paths: [String]
+    case confirmDeleteImmediately(token: UInt64, paths: [String]
     )
     case askPattern(select: Bool
     )
@@ -10200,6 +10296,10 @@ public enum FfiShellRequest: Equatable, Hashable {
     case confirmMove(token: UInt64, title: String, detail: String, paths: [String]
     )
     case moved(text: String
+    )
+    case toast(text: String, button: String?, command: String?
+    )
+    case confirm(token: UInt64, title: String, detail: String, yes: String, no: String
     )
     case showPowerTour
     case toggleSidebar
@@ -10273,10 +10373,10 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 12: return .offerCreateFolder(path: try FfiConverterString.read(from: &buf), nearestExisting: try FfiConverterString.read(from: &buf)
         )
         
-        case 13: return .confirmTrash(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 13: return .confirmTrash(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 14: return .confirmDeleteImmediately(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 14: return .confirmDeleteImmediately(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
         case 15: return .askPattern(select: try FfiConverterBool.read(from: &buf)
@@ -10309,28 +10409,34 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 26: return .moved(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 27: return .showPowerTour
-        
-        case 28: return .toggleSidebar
-        
-        case 29: return .toggleInspector
-        
-        case 30: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 27: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf)
         )
         
-        case 31: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 28: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
         )
         
-        case 32: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 29: return .showPowerTour
+        
+        case 30: return .toggleSidebar
+        
+        case 31: return .toggleInspector
+        
+        case 32: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 33: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 33: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 34: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 34: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 35: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 35: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        )
+        
+        case 36: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 37: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10404,13 +10510,15 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(nearestExisting, into: &buf)
             
         
-        case let .confirmTrash(paths):
+        case let .confirmTrash(token,paths):
             writeInt(&buf, Int32(13))
+            FfiConverterUInt64.write(token, into: &buf)
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
-        case let .confirmDeleteImmediately(paths):
+        case let .confirmDeleteImmediately(token,paths):
             writeInt(&buf, Int32(14))
+            FfiConverterUInt64.write(token, into: &buf)
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
@@ -10472,46 +10580,62 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(text, into: &buf)
             
         
-        case .showPowerTour:
+        case let .toast(text,button,command):
             writeInt(&buf, Int32(27))
+            FfiConverterString.write(text, into: &buf)
+            FfiConverterOptionString.write(button, into: &buf)
+            FfiConverterOptionString.write(command, into: &buf)
+            
         
-        
-        case .toggleSidebar:
+        case let .confirm(token,title,detail,yes,no):
             writeInt(&buf, Int32(28))
+            FfiConverterUInt64.write(token, into: &buf)
+            FfiConverterString.write(title, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+            FfiConverterString.write(yes, into: &buf)
+            FfiConverterString.write(no, into: &buf)
+            
         
-        
-        case .toggleInspector:
+        case .showPowerTour:
             writeInt(&buf, Int32(29))
         
         
-        case let .eject(path):
+        case .toggleSidebar:
             writeInt(&buf, Int32(30))
+        
+        
+        case .toggleInspector:
+            writeInt(&buf, Int32(31))
+        
+        
+        case let .eject(path):
+            writeInt(&buf, Int32(32))
             FfiConverterString.write(path, into: &buf)
             
         
         case let .showDriveInfo(path):
-            writeInt(&buf, Int32(31))
+            writeInt(&buf, Int32(33))
             FfiConverterString.write(path, into: &buf)
             
         
         case let .askFavouriteName(path,name):
-            writeInt(&buf, Int32(32))
+            writeInt(&buf, Int32(34))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(33))
+            writeInt(&buf, Int32(35))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(34))
+            writeInt(&buf, Int32(36))
             FfiConverterUInt64.write(window, into: &buf)
             
         
         case let .closeWindow(window):
-            writeInt(&buf, Int32(35))
+            writeInt(&buf, Int32(37))
             FfiConverterUInt64.write(window, into: &buf)
             
         }
@@ -12217,6 +12341,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_breadcrumbs() != 32063) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_confirmation() != 37408) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_move() != 45113) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12247,6 +12374,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_complete() != 1014) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_confirm() != 49088) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_confirm_move() != 20767) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12274,7 +12404,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_files() != 55869) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 42296) {
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 29777) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_enqueue() != 44324) {
@@ -12391,6 +12521,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_parse_location() != 58432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_pasteboard_written() != 61386) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_pending_keys() != 25890) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12464,6 +12597,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_swap_panes() != 52422) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_sync_pasteboard() != 38285) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_tab() != 58293) {

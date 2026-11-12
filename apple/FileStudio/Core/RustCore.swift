@@ -60,7 +60,7 @@ extension InputContext {
         case .filter: .filter
         case .other: .other
         }
-        return FfiInputContext(focus: f, tab: tab)
+        return FfiInputContext(focus: f, tab: tab, isRepeat: isRepeat)
     }
 }
 
@@ -142,8 +142,8 @@ extension ShellRequest {
         case .beginRename(let t, let n): self = .beginRename(tab: t, name: n)
         case .renameDialog(let t, let p): self = .renameDialog(tab: t, paths: p)
         case .offerCreateFolder(let p, let n): self = .offerCreateFolder(path: p, nearestExisting: n)
-        case .confirmTrash(let p): self = .confirmTrash(paths: p)
-        case .confirmDeleteImmediately(let p): self = .confirmDeleteImmediately(paths: p)
+        case .confirmTrash(let t, let p): self = .confirmTrash(token: t, paths: p)
+        case .confirmDeleteImmediately(let t, let p): self = .confirmDeleteImmediately(token: t, paths: p)
         case .askPattern(let s): self = .askPattern(select: s)
         case .askWorkspaceName: self = .askWorkspaceName
         case .manageWorkspaces: self = .manageWorkspaces
@@ -156,6 +156,8 @@ extension ShellRequest {
         case .showSettings(let s): self = .showSettings(section: s)
         case .confirmMove(let t, let title, let d, let p): self = .confirmMove(token: t, title: title, detail: d, paths: p)
         case .moved(let t): self = .moved(text: t)
+        case .toast(let t, let b, let c): self = .toast(text: t, button: b, command: c)
+        case .confirm(let tok, let t, let d, let y, let n): self = .confirm(token: tok, title: t, detail: d, yes: y, no: n)
         case .showPowerTour: self = .showPowerTour
         case .toggleSidebar: self = .toggleSidebar
         case .toggleInspector: self = .toggleInspector
@@ -431,6 +433,7 @@ extension OpKind {
         case .rename: self = .rename
         case .duplicate: self = .duplicate
         case .moveTo: self = .moveTo
+        case .compound: self = .compound
         }
     }
 }
@@ -807,8 +810,14 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     init(dataDir: URL) throws {
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         let sink = self.sink
+        // DEBUG only: `-FSTrashDir <folder>` trashes into a scratch folder, so
+        // scripted runs never put anything in the real Trash.
+        var trashDir: String?
+        #if DEBUG
+        trashDir = UserDefaults.standard.string(forKey: "FSTrashDir")
+        #endif
         ffi = try wrap {
-            try FfiEngine(config: FfiEngineConfig(dataDir: dataDir.path, home: nil, trashDir: nil, pollWatcher: false),
+            try FfiEngine(config: FfiEngineConfig(dataDir: dataDir.path, home: nil, trashDir: trashDir, pollWatcher: false),
                           sink: sink)
         }
     }
@@ -905,6 +914,8 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         try wrap { Outcome(try ffi.createFolderAndGo(tab: tab, path: path)) }
     }
     func setClipboard(_ paths: [String], cut: Bool) { ffi.setClipboard(paths: paths, cut: cut) }
+    func syncPasteboard(changeCount: Int, files: [String]) { ffi.syncPasteboard(changeCount: Int64(changeCount), files: files) }
+    func pasteboardWritten(changeCount: Int) { ffi.pasteboardWritten(changeCount: Int64(changeCount)) }
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
         switch ffi.dropAction(sources: sources, destDir: destDir, mods: mods.ffi) {
         case .none: .none
@@ -987,6 +998,8 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     func addFavourite(_ path: String, index: UInt32?) throws { try wrap { try ffi.addFavourite(path: path, index: index) } }
     func removeFavourite(_ path: String) throws { try wrap { try ffi.removeFavourite(path: path) } }
     func renameFavourite(_ path: String, name: String) throws { try wrap { try ffi.renameFavourite(path: path, name: name) } }
+    func confirm(_ token: UInt64) throws -> Outcome { try wrap { Outcome(try ffi.confirm(token: token)) } }
+    func cancelConfirmation(_ token: UInt64) { ffi.cancelConfirmation(token: token) }
     func confirmMove(_ token: UInt64) throws -> Outcome { try wrap { Outcome(try ffi.confirmMove(token: token)) } }
     func cancelMove(_ token: UInt64) { ffi.cancelMove(token: token) }
     func moveFavourite(_ path: String, to index: UInt32) throws { try wrap { try ffi.moveFavourite(path: path, index: index) } }
@@ -1070,8 +1083,8 @@ extension RustEngine: ListEngineAPI {
         case .none: .none
         }
     }
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
-        try wrap { try ffi.dropItems(sources: sources, dest: dest, mods: mods.ffi) }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome {
+        try wrap { Outcome(try ffi.dropItems(sources: sources, dest: dest, mods: mods.ffi)) }
     }
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
         try wrap { Outcome(try ffi.sortByColumn(tab: tab, column: ColumnSpec(id: column, width: 0).ffi.id)) }

@@ -25,7 +25,7 @@ enum PlatformActions {
                 model.statusMessage = t.contains("\n") ? "Copied paths" : "Copied “\(t)”"
             }
         }
-        on("writeFilePasteboard") { if case .writeFilePasteboard(let p) = $0 { Pasteboard.writeFiles(p) } }
+        on("writeFilePasteboard") { if case .writeFilePasteboard(let p) = $0 { Pasteboard.writeFiles(p, engine: model.engine) } }
         on("eject") { if case .eject(let p) = $0 { eject(p, model: model) } }
         on("showDriveInfo") { if case .showDriveInfo(let p) = $0 { getInfo([p]) } }
         on("toggleSidebar") { _ in NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil) }

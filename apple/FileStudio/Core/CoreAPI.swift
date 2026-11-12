@@ -91,7 +91,12 @@ public struct InputContext: Equatable, Sendable {
     public var focus: Focus
     /// The tab whose pane has focus (nil: the focused tab).
     public var tab: TabID?
-    public init(focus: Focus, tab: TabID? = nil) { self.focus = focus; self.tab = tab }
+    /// The key is held and this is the system's auto-repeat (`NSEvent.isARepeat`).
+    /// The core repeats only movement (safety audit S6).
+    public var isRepeat: Bool
+    public init(focus: Focus, tab: TabID? = nil, isRepeat: Bool = false) {
+        self.focus = focus; self.tab = tab; self.isRepeat = isRepeat
+    }
 }
 
 /// How a command was issued (hints count mouse uses; keyboard uses teach).
@@ -195,9 +200,11 @@ public enum ShellRequest: Equatable, Sendable {
     case renameDialog(tab: TabID, paths: [String])
     /// Offer "Create Folder"; on yes call `engine.createFolderAndGo`.
     case offerCreateFolder(path: String, nearestExisting: String)
-    /// On yes perform `file.trash` with `.confirmed`.
-    case confirmTrash(paths: [String])
-    case confirmDeleteImmediately(paths: [String])
+    /// Ask before trashing `paths`; on yes `engine.confirm(token)`, on no
+    /// `engine.cancelConfirmation(token)`. Only these items are acted on (S1).
+    case confirmTrash(token: UInt64, paths: [String])
+    /// Ask before deleting `paths` for good; answered like `confirmTrash`.
+    case confirmDeleteImmediately(token: UInt64, paths: [String])
     case askPattern(select: Bool)
     case askWorkspaceName
     case manageWorkspaces
@@ -214,6 +221,12 @@ public enum ShellRequest: Equatable, Sendable {
     case confirmMove(token: UInt64, title: String, detail: String, paths: [String])
     /// A move was queued: show `text` for ~6 s with Undo (`edit.undo`).
     case moved(text: String)
+    /// Show `text` for ~6 s; with `button`, a button that performs `command`
+    /// (S11: Trash, Delete Immediately, Undo and Redo say what they did).
+    case toast(text: String, button: String?, command: String?)
+    /// A yes/no question with `no` as the default button; on yes
+    /// `engine.confirm(token)`, on no `engine.cancelConfirmation(token)` (S14).
+    case confirm(token: UInt64, title: String, detail: String, yes: String, no: String)
     /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
     case showPowerTour
     case toggleSidebar
@@ -254,6 +267,8 @@ public enum ShellRequest: Equatable, Sendable {
         case .showQuickOpen: "showQuickOpen"
         case .showSettings: "showSettings"
         case .confirmMove: "confirmMove"
+        case .toast: "toast"
+        case .confirm: "confirm"
         case .moved: "moved"
         case .showPowerTour: "showPowerTour"
         case .toggleSidebar: "toggleSidebar"
@@ -593,7 +608,11 @@ public struct FrecentDir: Equatable, Sendable {
 
 // MARK: - Operations
 
-public enum OpKind: Equatable, Sendable { case copy, move, trash, deleteImmediately, newFolder, newFile, rename, duplicate, moveTo }
+public enum OpKind: Equatable, Sendable {
+    case copy, move, trash, deleteImmediately, newFolder, newFile, rename, duplicate, moveTo
+    /// Several steps as one op (New Folder with Selection, a chain of folders).
+    case compound
+}
 
 public enum OpState: Equatable, Sendable {
     case queued, running, paused, waitingForDecision, completed, completedWithErrors, cancelled, failed, interrupted
@@ -1033,6 +1052,13 @@ public protocol EngineAPI: AnyObject, Sendable {
     func createFolderAndGo(tab: TabID, path: String) throws -> Outcome
     /// Files from another app's pasteboard (or cut, pending a move).
     func setClipboard(_ paths: [String], cut: Bool)
+    /// S7: the system pasteboard's `changeCount` and file paths (call before
+    /// keys and commands when the count changed). A change File Studio didn't
+    /// make drops the core's clipboard (a cut expires); Paste then copies the
+    /// pasteboard's files.
+    func syncPasteboard(changeCount: Int, files: [String])
+    /// S7: the shell wrote `writeFilePasteboard`; the pasteboard now has `changeCount`.
+    func pasteboardWritten(changeCount: Int)
     /// What a drop of `sources` onto the folder `destDir` with these modifiers
     /// would do (drag cursor and highlight). `lstat`s each source.
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction
@@ -1096,6 +1122,11 @@ public protocol EngineAPI: AnyObject, Sendable {
     func removeFavourite(_ path: String) throws
     func renameFavourite(_ path: String, name: String) throws
     func moveFavourite(_ path: String, to index: UInt32) throws
+    /// S1: the user said yes to a question carrying `token` (trash, delete,
+    /// protected move…). The core acts only on what the question named.
+    func confirm(_ token: UInt64) throws -> Outcome
+    /// S1: the user said no to a question carrying `token`.
+    func cancelConfirmation(_ token: UInt64)
     /// F-023: the user said Move to `ShellRequest.confirmMove`.
     func confirmMove(_ token: UInt64) throws -> Outcome
     /// F-023: the user cancelled `ShellRequest.confirmMove`.
@@ -1189,8 +1220,9 @@ public protocol ListEngineAPI: AnyObject, Sendable {
     func columnSelect(tab: TabID, dir: String, name: String?) throws -> Outcome
     /// What dropping `sources` onto the folder `dest` does. Metadata only.
     func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect
-    /// Decides the drop and queues the copy or move.
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID
+    /// Decides the drop and queues the copy or move, like `dropFiles`: a move
+    /// of a protected folder comes back as `confirmMove`, a move as `moved`.
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome
     /// A click on a list-view column header: sorts by it, or flips the direction.
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome
 }

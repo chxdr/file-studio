@@ -629,6 +629,7 @@ impl Engine {
     /// are `Multi`.
     pub fn menu_target_at(&self, tab: TabId, row: Option<u32>) -> Result<MenuTarget> {
         let t = self.target(Some(tab))?;
+        t.note_user_selection();
         let Some(row) = row else {
             t.set_selection(SelectionChange::None);
             return Ok(MenuTarget::EmptySpace { tab });

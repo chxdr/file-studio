@@ -32,6 +32,8 @@ final class CoreTableView: NSTableView, CoreFocusReporting {
     var onMouseUp: ((NSEvent) -> Void)?
     var menuProvider: ((NSEvent) -> NSMenu?)?
     var onFocusChange: (() -> Void)?
+    /// A drag left the table (safety audit S8: cancel spring-loading).
+    var onDragExit: (() -> Void)?
     /// Takes keyboard focus on click (only the tab's own table does).
     var takesFocus = true
 
@@ -46,6 +48,10 @@ final class CoreTableView: NSTableView, CoreFocusReporting {
         super.rightMouseDown(with: event)
     }
     override func menu(for event: NSEvent) -> NSMenu? { menuProvider?(event) }
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        onDragExit?()
+    }
     override var acceptsFirstResponder: Bool { takesFocus }
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
@@ -99,9 +105,15 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
     private var band: RubberBand?
     private var springTimer: Timer?
     private var springRow = -1
-    /// The folder the last validated drop highlighted (F-023: the drop goes
-    /// exactly there, or nowhere).
-    private var highlightedDrop: String?
+    /// What the last validated drop highlighted: the folder, the listing
+    /// version it was read from and the row (F-023, safety audit S8: the drop
+    /// goes exactly there, or nowhere).
+    private struct DropTarget: Equatable {
+        let dest: String
+        let version: UInt64
+        let row: Int
+    }
+    private var highlightedDrop: DropTarget?
     private var loadingTimer: Timer?
 
     init(model: AppModel, kind: CellKind) {
@@ -125,6 +137,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
         table.onMouseUp = { [weak self] e in self?.mouseUp(e) }
         table.menuProvider = { [weak self] e in self?.contextMenu(e) }
         table.onFocusChange = { [weak self] in self?.refreshActive() }
+        table.onDragExit = { [weak self] in self?.dragExited() }
         table.registerForDraggedTypes([.fileURL])
         table.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
         table.setDraggingSourceOperationMask([.copy, .move, .link, .generic], forLocal: false)
@@ -631,16 +644,25 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
     @discardableResult
     func performDrop(_ paths: [String], row: Int, flags: NSEvent.ModifierFlags) -> Bool {
         guard let dest = dropDestination(row: row) else { return false }
+        return performDrop(paths, into: dest, flags: flags)
+    }
+
+    /// Drops `paths` into the folder `dest` (the core decides copy or move).
+    @discardableResult
+    func performDrop(_ paths: [String], into dest: String, flags: NSEvent.ModifierFlags) -> Bool {
         do {
             let out = try model.engine.dropFiles(sources: paths, destDir: dest, mods: Self.mods(flags))
             print("DROP into \(dest): ops \(out.ops)\(out.shell.map { " shell \($0.kind)" } ?? "")")
             model.handle(out, in: model.keyWindowID)
             return true
         } catch {
-            model.statusMessage = (error as? CoreError)?.message ?? error.localizedDescription
+            MoveSafety.refused(Self.sentence((error as? CoreError)?.message ?? error.localizedDescription), model: model)
             return false
         }
     }
+
+    /// "the items can’t be dropped there" → "The items can’t be dropped there".
+    static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
     private static func paths(_ info: NSDraggingInfo) -> [String] {
         (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?
@@ -662,7 +684,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
             tv.setDropRow(-1, dropOperation: .on)
         }
         let (effect, dest) = dropEffect(paths, row: target, flags: NSEvent.modifierFlags)
-        highlightedDrop = effect == .none ? nil : dest
+        highlightedDrop = effect == .none ? nil : dest.map { DropTarget(dest: $0, version: self.info.version, row: target) }
         armSpring(effect == .none ? -1 : target)
         switch effect {
         case .copy: return .copy
@@ -675,23 +697,44 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
                    dropOperation: NSTableView.DropOperation) -> Bool {
         springTimer?.invalidate(); springRow = -1
         if SidebarViewController.isSidebarDrag(info) { return false }
-        let target = row >= 0 && self.row(row)?.kind == .folder ? row : -1
-        // The drop goes exactly where the highlight was: if the rows changed
-        // under the pointer (a spring-loaded folder opened, the folder
-        // refreshed), the row index may now name another folder. Refuse.
+        // The drop goes exactly where the highlight was, never to a row index
+        // read again now. If the listing changed since the highlight (an item
+        // landed above, a spring-loaded folder opened) and that folder is no
+        // longer at that row, refuse.
         let highlighted = highlightedDrop
         highlightedDrop = nil
-        guard let dest = dropDestination(row: target), dest == highlighted else {
-            model.statusMessage = "The folder under the pointer changed, so nothing was dropped"
+        let stillThere: (DropTarget) -> Bool = { h in
+            h.row < 0 ? self.source?.dir == h.dest
+                      : h.row == row && self.source?.pathAt(UInt32(row)) == h.dest
+        }
+        guard let h = highlighted, h.version == self.info.version || stillThere(h) else {
+            MoveSafety.refused("The folder under the pointer changed, so nothing was dropped", model: model)
             return false
         }
-        return performDrop(Self.paths(info), row: target, flags: NSEvent.modifierFlags)
+        return performDrop(Self.paths(info), into: h.dest, flags: NSEvent.modifierFlags)
     }
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt p: NSPoint,
                    operation: NSDragOperation) {
         springTimer?.invalidate(); springRow = -1
     }
+
+    /// The drag left the table: no spring-loading, no stale highlight (S8).
+    func dragExited() {
+        springTimer?.invalidate(); springTimer = nil; springRow = -1
+        highlightedDrop = nil
+    }
+
+    #if DEBUG
+    /// The spring-load timer is armed (debug automation).
+    var springArmed: Bool { springTimer?.isValid == true }
+    /// The stored drop target and the listing now (debug automation).
+    func debugDropState(row: Int) -> String {
+        "stored=\(highlightedDrop.map { "\(($0.dest as NSString).lastPathComponent)@\($0.row) v\($0.version)" } ?? "none") "
+            + "now=\(dropDestination(row: row).map { ($0 as NSString).lastPathComponent } ?? "-")@\(row) v\(info.version) "
+            + "kind=\(String(describing: self.row(row)?.kind)) path=\(source?.pathAt(UInt32(row)) ?? "nil") dest=\(highlightedDrop?.dest ?? "nil")"
+    }
+    #endif
 
     /// Spring-loaded folders: hovering a folder row for 0.8 s opens it.
     private func armSpring(_ row: Int) {

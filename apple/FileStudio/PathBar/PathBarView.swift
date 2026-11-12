@@ -466,7 +466,10 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
                 return true
             }
             return false
-        case #selector(NSResponder.insertNewline(_:)): textCommand("addressbar.commit"); return true
+        case #selector(NSResponder.insertNewline(_:)):
+            // A held Return never commits twice (safety audit S6, S13).
+            if NSApp.currentEvent?.isARepeat != true { textCommand("addressbar.commit") }
+            return true
         case #selector(NSResponder.cancelOperation(_:)): textCommand("addressbar.cancel"); return true
         case #selector(NSResponder.insertTab(_:)): textCommand("addressbar.complete_next"); return true
         case #selector(NSResponder.insertBacktab(_:)): textCommand("addressbar.complete_prev"); return true
@@ -568,6 +571,9 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
 
     private func showRows() {
         var rows: [PopupRow] = []
+        // S13: with more than one folder to create, Return defaults to "Go to
+        // Nearest Folder", so a typo plus a second Return can't litter the disk.
+        var defaultPayload = "create"
         if let o = offer {
             let home = model.engine.home()
             let tilde = { (p: String) in p == home || p.hasPrefix(home + "/") ? "~" + p.dropFirst(home.count) : p }
@@ -577,11 +583,14 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             // The part that would be created ("x/y" when there are two).
             let name = o.path.hasPrefix(o.nearest + "/") ? String(o.path.dropFirst(o.nearest.count + 1))
                 : (o.path as NSString).lastPathComponent
+            if missing > 1 { defaultPayload = "nearest" }
             rows.append(PopupRow(kind: .action, icon: PathBarStyle.symbol("folder.badge.plus", size: 13, color: .controlAccentColor),
                                  title: missing > 1 ? "Create \(missing) Folders “\(name)”" : "Create Folder “\(name)”",
-                                 detail: missing > 1 ? tilde(o.path) : nil, badgeText: "↩", payload: "create"))
+                                 detail: missing > 1 ? tilde(o.path) : nil,
+                                 badgeText: defaultPayload == "create" ? "↩" : nil, payload: "create"))
             rows.append(PopupRow(kind: .action, icon: CrumbIcons.folder(path: o.nearest),
-                                 title: "Go to Nearest Folder", detail: tilde(o.nearest), payload: "nearest"))
+                                 title: "Go to Nearest Folder", detail: tilde(o.nearest),
+                                 badgeText: defaultPayload == "nearest" ? "↩" : nil, payload: "nearest"))
         } else if let e = errorText {
             rows.append(PopupRow(kind: .error, title: e))
         } else {
@@ -593,7 +602,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         let list = panel.list
         list.rows = rows
         if offer != nil {
-            list.highlight = rows.firstIndex { $0.payload == "create" }
+            list.highlight = rows.firstIndex { $0.payload == defaultPayload }
         } else if list.highlight == nil || typedText == nil {
             list.highlight = nil
         }
@@ -676,7 +685,8 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         switch cmd {
         case "addressbar.commit": commit(otherPane: false)
         case "addressbar.commit_other_pane":
-            if offer != nil { createFolder() } else { commit(otherPane: true) }
+            // S13: ⌘Return never creates folders; with an offer it shows it.
+            if offer != nil { showRows() } else { commit(otherPane: true) }
         case "addressbar.cancel":
             if panel.isVisible {
                 // First Esc closes the list; the text (or the previewed row) stays.
@@ -1082,10 +1092,10 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             let out = try model.engine.dropFiles(sources: sources, destDir: dir, mods: Mods(NSEvent.modifierFlags))
             model.handle(out, in: windowID)
             return true
-        } catch let e as CoreError {
-            model.statusMessage = e.message
+        } catch {
+            MoveSafety.refused(FileTable.sentence((error as? CoreError)?.message ?? error.localizedDescription), model: model)
             return false
-        } catch { return false }
+        }
     }
 
     func crumbStrip(springLoad crumb: Crumb) { goTo(crumb.path) }

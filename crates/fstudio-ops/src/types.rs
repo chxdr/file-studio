@@ -79,12 +79,30 @@ pub enum OpRequest {
         /// The items to duplicate.
         paths: Vec<PathBuf>,
     },
-    /// Move each `(from, to)` to the exact destination path `to`, creating
-    /// missing parent folders. Undo uses this to move items back, put them
-    /// back from the Trash and rename them back.
+    /// Move each `(from, to)` to the exact destination path `to`. The folder
+    /// `to` goes into must exist: a missing one is never created silently
+    /// (undo asks, then creates it as a journaled step, S14). Undo uses this
+    /// to move items back, put them back from the Trash and rename them back.
     MoveTo {
         /// `(from, to)`, where `to` is the full destination path.
         pairs: Vec<(PathBuf, PathBuf)>,
+    },
+    /// Several requests run one after another as **one** journaled op with
+    /// one undo entry (New Folder with Selection, a chain of new folders,
+    /// putting an item back into a recreated folder). Each step runs as its
+    /// own op once the one before it has completed; if a step doesn't
+    /// complete, the rest are not run. Undo undoes the steps in reverse.
+    Compound {
+        /// The Edit menu's label ("New Folder with Items").
+        label: String,
+        /// The steps, in order.
+        steps: Vec<OpRequest>,
+    },
+    /// Inside a [`OpRequest::Compound`] only: undo the op `op` (its inverse
+    /// is worked out when this step starts, after the steps before it ran).
+    UndoOf {
+        /// The op to undo.
+        op: OpId,
     },
 }
 
@@ -101,6 +119,7 @@ impl OpRequest {
             OpRequest::Rename { .. } => OpKind::Rename,
             OpRequest::Duplicate { .. } => OpKind::Duplicate,
             OpRequest::MoveTo { .. } => OpKind::MoveTo,
+            OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => OpKind::Compound,
         }
     }
 }
@@ -126,6 +145,8 @@ pub enum OpKind {
     Duplicate,
     /// An [`OpRequest::MoveTo`].
     MoveTo,
+    /// An [`OpRequest::Compound`].
+    Compound,
 }
 
 impl OpKind {
@@ -140,6 +161,7 @@ impl OpKind {
             OpKind::NewFile => "New File",
             OpKind::Rename => "Rename",
             OpKind::Duplicate => "Duplicate",
+            OpKind::Compound => "Change",
         }
     }
 
@@ -595,6 +617,14 @@ pub enum OpsError {
     #[error("can't undo: {0}")]
     /// Undo would overwrite or lose something, so it was refused.
     UndoRefused(String),
+    /// Undo would put items back into folders that no longer exist (listed,
+    /// outermost first). Ask, then call `OpQueue::undo_recreating`.
+    #[error("can't undo: a folder it goes back into is gone")]
+    NeedsFolders(Vec<PathBuf>),
+    /// Redo would act on something that changed since the undo put it back
+    /// (the reason is a sentence).
+    #[error("can't redo: {0}")]
+    RedoRefused(String),
     #[error("journal data: {0}")]
     /// A journal row couldn't be decoded.
     Json(#[from] serde_json::Error),

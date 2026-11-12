@@ -147,6 +147,11 @@ pub struct CommandInfo {
     pub shows_in_palette: bool,
     /// May produce a "Did you know?" hint when used with the mouse.
     pub hint_eligible: bool,
+    /// Runs again while its key is held (key auto-repeat). Only cursor
+    /// movement, extending the selection, page keys and moving through a
+    /// suggestion list repeat; holding any other key does it once (safety
+    /// audit S6: a held ⌘⌫ must not walk down the list trashing each item).
+    pub repeatable: bool,
 }
 
 impl CommandInfo {

@@ -2,7 +2,7 @@
 // folders; incident 2026-11-12). The core decides; this only shows:
 // - `ShellRequest.confirmMove`: a sheet, "Move “Downloads” into “Import
 //   Studio”?", with Cancel as the default button (Return and Esc both
-//   cancel); Move calls `engine.confirmMove(token)`.
+//   cancel); Move calls `engine.confirm(token)`.
 // - `ShellRequest.moved`: a toast, "Moved “X” to “Y”", for about six seconds
 //   with Undo (`edit.undo`, as ⌘Z).
 
@@ -37,6 +37,23 @@ enum MoveSafety {
             }
             return true
         }
+        // S11: Trash, Delete Immediately, Undo and Redo always say what they did.
+        model.registerShellHandler(for: "toast") { req, ctx in
+            guard case .toast(let text, let button, let command) = req else { return false }
+            #if DEBUG
+            lastToast = text
+            print("TOAST \(text)\(button.map { " [\($0)]" } ?? "")")
+            #endif
+            let refused = text.hasPrefix("Can’t")
+            if let button, let command {
+                ToastCenter.of(model).show(text, style: .success, seconds: 6, actionTitle: button) {
+                    model.perform(Invocation(id: command), via: .mouse, window: ctx.window)
+                }
+            } else {
+                ToastCenter.of(model).show(text, style: refused ? .warning : .info, seconds: refused ? 6 : 4)
+            }
+            return true
+        }
     }
 
     private static func host(_ id: WindowID?) -> NSWindow? {
@@ -65,15 +82,25 @@ enum MoveSafety {
         let done: (NSApplication.ModalResponse) -> Void = { r in
             openAlert = nil
             if r == .alertSecondButtonReturn {
-                do { model.handle(try model.engine.confirmMove(token), in: window) } catch {
+                do { model.handle(try model.engine.confirm(token), in: window) } catch {
                     model.statusMessage = error.localizedDescription
                 }
             } else {
-                model.engine.cancelMove(token)
+                model.engine.cancelConfirmation(token)
                 model.statusMessage = "Nothing was moved"
             }
         }
         if let w = host(window) { a.beginSheetModal(for: w, completionHandler: done) } else { done(a.runModal()) }
+    }
+
+    /// A drop or move the core refused: say why where the user is looking (a
+    /// toast) and in the status line, never just a beep (safety audit S2).
+    static func refused(_ text: String, model: AppModel) {
+        model.statusMessage = text
+        #if DEBUG
+        print("REFUSED \(text)")
+        #endif
+        ToastCenter.of(model).show(text, style: .warning, seconds: 5)
     }
 
     /// Answers the open confirmation as if a button were pressed (debug automation).

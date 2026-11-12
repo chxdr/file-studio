@@ -150,6 +150,7 @@ final class OpsModel {
         case .newFolder, .newFile: "Creating"
         case .rename: "Renaming"
         case .duplicate: "Duplicating"
+        case .compound: "Working"
         }
     }
 

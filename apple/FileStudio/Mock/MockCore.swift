@@ -394,6 +394,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func handleKey(_ chord: KeyChord, context: InputContext) -> Outcome? {
         if let o = columnKey(chord, context: context) { return o }  // ui-list addition
         if let inv = keyCommand(chord, focus: context.focus) {
+            // S6: a held key repeats movement only.
+            if context.isRepeat && !inv.id.hasPrefix("cursor.") && !inv.id.hasPrefix("select.extend_") { return Outcome() }
             var inv = inv
             inv.tab = context.tab
             return (try? perform(inv, via: .keyboard)) ?? Outcome(command: inv.id, message: "Not available")
@@ -582,6 +584,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         Outcome(tab: tab, message: "Mock: folders aren't created")
     }
     func setClipboard(_ paths: [String], cut: Bool) { clipboard = paths }
+    func syncPasteboard(changeCount: Int, files: [String]) {}
+    func pasteboardWritten(changeCount: Int) {}
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
         guard !sources.isEmpty, node(destDir)?.isDir == true,
               !sources.contains(where: { destDir == $0 || destDir.hasPrefix($0 + "/") }) else { return .none }
@@ -622,6 +626,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                        ops: [startOp(.move, "Move", files: UInt64(sources.count), bytes: 9_000_000)])
     }
     func cancelMove(_ token: UInt64) { pendingMove[token] = nil }
+    func confirm(_ token: UInt64) throws -> Outcome { try confirmMove(token) }
+    func cancelConfirmation(_ token: UInt64) { cancelMove(token) }
     func clipboardPaths() -> [String] { clipboard }
 
     // MARK: Menus
@@ -1223,12 +1229,8 @@ extension MockEngine: ListEngineAPI {
         if mods.cmd { return .move }
         return sources.allSatisfy { $0.hasPrefix("/Mock/") } ? .move : .copy
     }
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
-        switch dropEffect(sources: sources, dest: dest, mods: mods) {
-        case .copy: return try enqueue(.copy(sources: sources, destDir: dest))
-        case .move: return try enqueue(.move(sources: sources, destDir: dest))
-        case .none: throw CoreError(.notAvailable, "These items can't be dropped here")
-        }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome {
+        try dropFiles(sources: sources, destDir: dest, mods: mods)
     }
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
         guard let t = tabs[tab] else { throw CoreError(.notFound, "tab \(tab)") }

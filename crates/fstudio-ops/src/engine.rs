@@ -240,6 +240,7 @@ impl Env<'_> {
             OpKind::Trash => self.trash(item).map(|()| Vec::new()),
             OpKind::DeleteImmediately => self.delete(item).map(|()| Vec::new()),
             OpKind::NewFolder | OpKind::NewFile => self.create(item, decision).map(|()| Vec::new()),
+            OpKind::Compound => Err(fail("a compound op has no items of its own")),
         }
     }
 
@@ -345,14 +346,18 @@ impl Env<'_> {
             (None, None) => return Err(fail("the item has no destination")),
         };
         if self.kind == OpKind::MoveTo && !meta::exists(&dest_dir) {
-            std::fs::create_dir_all(&dest_dir)?;
+            // Never recreated silently (S14): undo asks first and creates the
+            // folders as journaled steps (`OpQueue::undo_recreating`).
+            return Err(fail("the folder it goes back into is gone"));
         }
         let dir_md = meta::lstat(&dest_dir)?;
         if !dir_md.is_dir() {
             return Err(fail("the destination is not a folder"));
         }
         let src_name = file_name(&item.source);
-        if self.kind == OpKind::Duplicate && item.dest_name.is_none() {
+        // Only the duplicated item itself gets "name copy"; what is inside a
+        // duplicated folder keeps its name.
+        if self.kind == OpKind::Duplicate && item.parent.is_none() && item.dest_name.is_none() {
             let free = names::duplicate_names(&src_name, src.is_dir())
                 .find(|n| !meta::exists(&dest_dir.join(n)))
                 .expect("infinite candidates");
@@ -834,6 +839,9 @@ impl Env<'_> {
         item.state = ItemState::InProgress;
         self.save(item)?;
         let loc = self.trasher.trash(&item.source)?;
+        // What is in the Trash now, so undo can tell it from another item
+        // that later gets the same Trash name (S10).
+        item.dest_ident = meta::lstat(&loc).ok().map(|m| meta::ident(&m));
         item.trash_loc = Some(loc);
         if item.kind != EntryKind::Dir {
             item.bytes = md.len();

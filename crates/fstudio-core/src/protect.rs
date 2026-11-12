@@ -20,14 +20,11 @@
 //! Every move that is queued also answers with [`ShellRequest::Moved`]: a
 //! toast with Undo, so a move is never invisible.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use fstudio_ops::OpRequest;
-
-use crate::commands::CommandInvocation;
+use crate::confirm::{PendingAction, PendingOp};
 use crate::engine::Engine;
-use crate::error::{CoreError, Result};
+use crate::error::Result;
 use crate::outcome::{Outcome, ShellRequest};
 
 /// The protected folders a new install starts with.
@@ -75,22 +72,6 @@ impl Why {
             Why::OpenInTab => "A tab is showing it, or a folder inside it.",
         }
     }
-}
-
-/// A move waiting for the user's yes.
-#[derive(Debug, Clone)]
-pub(crate) enum PendingMove {
-    /// A drop: queue this request.
-    Request(OpRequest),
-    /// A command (F6, paste…): run it again with `Confirmed`.
-    Command(CommandInvocation),
-}
-
-/// The pending moves, by token.
-#[derive(Debug, Default)]
-pub(crate) struct Pending {
-    next: u64,
-    moves: HashMap<u64, PendingMove>,
 }
 
 /// `~` and `~/x` against `home`.
@@ -203,12 +184,13 @@ impl Engine {
     }
 
     /// Checks a move before it is queued. `None`: go ahead. `Some`: an outcome
-    /// asking the shell to confirm; the move waits under a token.
+    /// asking the shell to confirm; the move waits under a one-shot token
+    /// with the identity of every item (S1).
     pub(crate) fn guard_move(
         &self,
         sources: &[PathBuf],
         dest: &Path,
-        pending: impl FnOnce() -> PendingMove,
+        pending: impl FnOnce() -> PendingAction,
     ) -> Option<Outcome> {
         let (listed, roots, open) = self.protection_lists();
         let hit = sources
@@ -228,11 +210,10 @@ impl Engine {
             "{} Apps and other programs may stop finding it after a move.",
             why.text()
         );
-        let mut p = self.pending_moves.lock();
-        p.next += 1;
-        let token = p.next;
-        p.moves.insert(token, pending());
-        Some(Outcome::shell(ShellRequest::ConfirmMove {
+        let action = pending();
+        let tab = action.tab();
+        let token = self.ask(action);
+        let mut out = Outcome::shell(ShellRequest::ConfirmMove {
             token,
             title,
             detail,
@@ -240,34 +221,37 @@ impl Engine {
                 .iter()
                 .map(|s| s.to_string_lossy().into_owned())
                 .collect(),
-        }))
+        });
+        out.tab = tab;
+        Some(out)
+    }
+
+    /// Runs a move now, or asks first when a protected folder is among
+    /// `sources` (F-023). Either way only `op`'s exact request is queued.
+    pub(crate) fn move_or_ask(
+        &self,
+        sources: &[PathBuf],
+        dest: &Path,
+        op: PendingOp,
+    ) -> Result<Outcome> {
+        let mut slot = Some(op);
+        if let Some(ask) = self.guard_move(sources, dest, || {
+            PendingAction::Op(Box::new(slot.take().expect("taken once")))
+        }) {
+            return Ok(ask);
+        }
+        self.run_pending_op(slot.take().expect("not taken"), false)
     }
 
     /// The user said Move to a [`ShellRequest::ConfirmMove`]: queue it.
+    /// The same as [`Engine::confirm`].
     pub fn confirm_move(&self, token: u64) -> Result<Outcome> {
-        let pending = self
-            .pending_moves
-            .lock()
-            .moves
-            .remove(&token)
-            .ok_or_else(|| CoreError::NotFound(format!("pending move {token}")))?;
-        match pending {
-            PendingMove::Request(req) => {
-                let text = match &req {
-                    OpRequest::Move { sources, dest_dir } => Some(moved_text(sources, dest_dir)),
-                    _ => None,
-                };
-                let mut out = Outcome::op(self.enqueue(req)?);
-                out.shell = text.map(|text| ShellRequest::Moved { text });
-                Ok(out)
-            }
-            PendingMove::Command(inv) => self.perform(inv, fstudio_model::Via::Menu),
-        }
+        self.confirm(token)
     }
 
     /// The user cancelled a [`ShellRequest::ConfirmMove`]: forget it.
     pub fn cancel_move(&self, token: u64) {
-        self.pending_moves.lock().moves.remove(&token);
+        self.cancel_confirmation(token)
     }
 }
 

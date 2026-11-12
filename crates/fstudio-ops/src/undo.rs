@@ -49,6 +49,47 @@ fn check_dest(it: &ItemRow, verb: &str) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+/// A copied folder must hold only what the op put there (S9 of the safety
+/// audit): a folder's inode doesn't change when work is saved into it, so
+/// without this, undoing the copy would send that work to the Trash. Every
+/// entry inside must be one of the op's items, and each file must be
+/// unchanged since it was copied.
+fn check_tree(top: &std::path::Path, items: &[ItemRow], verb: &str) -> Result<(), String> {
+    let made: HashMap<&std::path::Path, &ItemRow> = items
+        .iter()
+        .filter(|i| i.state == ItemState::Done)
+        .filter_map(|i| i.dest.as_deref().map(|d| (d, i)))
+        .collect();
+    let mut stack = vec![top.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("{} can't be read ({e})", q(&dir)))?;
+        for ent in rd {
+            let ent = ent.map_err(|e| format!("{} can't be read ({e})", q(&dir)))?;
+            let p = ent.path();
+            let Some(it) = made.get(p.as_path()) else {
+                return Err(format!(
+                    "{} has items that weren't {verb} with it, such as {}",
+                    q(top),
+                    q(&p)
+                ));
+            };
+            let md = meta::lstat(&p).map_err(|_| format!("{} changed", q(&p)))?;
+            if md.is_dir() {
+                stack.push(p);
+            } else if let Some(was) = it.dest_ident
+                && !meta::ident(&md).unchanged(&was)
+            {
+                return Err(format!(
+                    "{} inside {} was changed after it was {verb}",
+                    q(&p),
+                    q(top)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_free(p: &std::path::Path) -> Result<(), String> {
     if meta::exists(p) {
         return Err(format!(
@@ -88,8 +129,14 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
             };
             let paths = tops(items)
                 .into_iter()
-                .map(|i| check_dest(i, verb))
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|i| {
+                    let dest = check_dest(i, verb)?;
+                    if i.kind == EntryKind::Dir {
+                        check_tree(&dest, items, verb)?;
+                    }
+                    Ok(dest)
+                })
+                .collect::<Result<Vec<_>, String>>()?;
             let back = replaced(items)?;
             if !paths.is_empty() {
                 out.push(OpRequest::Trash { paths });
@@ -126,8 +173,25 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
                 let Some(loc) = &it.trash_loc else {
                     return Err(format!("the Trash didn't say where {} went", q(&it.source)));
                 };
-                if !meta::exists(loc) {
+                let Ok(md) = meta::lstat(loc) else {
                     return Err(format!("{} is no longer in the Trash", q(&it.source)));
+                };
+                // The same object that went to the Trash, not another item
+                // that got its Trash name later (S10).
+                match it.dest_ident.or(it.src_ident) {
+                    Some(was) if meta::ident(&md).same_object(&was) => {}
+                    Some(_) => {
+                        return Err(format!(
+                            "{} is no longer in the Trash (another item has its name there)",
+                            q(&it.source)
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "File Studio can’t tell whether {} in the Trash is the item it moved there",
+                            q(&it.source)
+                        ));
+                    }
                 }
                 check_free(&it.source)?;
                 pairs.push((loc.clone(), it.source.clone()));
@@ -156,9 +220,61 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
         OpKind::DeleteImmediately => {
             return Err("Delete Immediately can't be undone".into());
         }
+        OpKind::Compound => {
+            // The queue undoes a compound op step by step (see `OpQueue::undo`).
+            return Err("a compound op is undone by its steps".into());
+        }
     }
     if out.is_empty() {
         return Err("nothing was changed".into());
     }
     Ok(out)
+}
+
+/// The items a request acts on in place (moves, renames, trash) or reads
+/// (copies). New folders and files have none.
+pub fn sources(req: &OpRequest) -> Vec<PathBuf> {
+    match req {
+        OpRequest::NewFolder { .. } | OpRequest::NewFile { .. } | OpRequest::UndoOf { .. } => {
+            Vec::new()
+        }
+        OpRequest::Compound { steps, .. } => steps.iter().flat_map(sources).collect(),
+        _ => crate::plan::targets(req)
+            .into_iter()
+            .map(|(src, _, _)| src)
+            .collect(),
+    }
+}
+
+/// Whether redoing `op` would act on the same objects it acted on before
+/// (S3 of the safety audit). Each source must still be the object the undo
+/// put back there (`undo_items`: the items of the ops that undid it, with
+/// their identity once placed), or, for a source the undo didn't touch (a
+/// copy's original), the object the op first read. `Err` says what changed.
+pub fn redo_check(op: &OpRow, items: &[ItemRow], undo_items: &[ItemRow]) -> Result<(), String> {
+    for src in sources(&op.request) {
+        let put_back = undo_items
+            .iter()
+            .filter(|i| i.state == ItemState::Done && i.dest.as_deref() == Some(src.as_path()))
+            .find_map(|i| i.dest_ident);
+        let first_read = || {
+            items
+                .iter()
+                .filter(|i| i.parent.is_none() && i.source == src)
+                .find_map(|i| i.src_ident)
+        };
+        let Some(want) = put_back.or_else(first_read) else {
+            return Err(format!(
+                "File Studio can’t tell whether {} changed",
+                q(&src)
+            ));
+        };
+        let Ok(md) = meta::lstat(&src) else {
+            return Err(format!("{} is no longer where it was put back", q(&src)));
+        };
+        if !meta::ident(&md).same_object(&want) {
+            return Err(format!("{} changed since it was put back", q(&src)));
+        }
+    }
+    Ok(())
 }

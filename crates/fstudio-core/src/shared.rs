@@ -46,6 +46,18 @@ pub const MIGRATIONS: Migrations = Migrations {
 pub(crate) struct Clipboard {
     pub(crate) items: Vec<PathBuf>,
     pub(crate) cut: bool,
+    /// The system pasteboard's `changeCount` once the shell wrote these items
+    /// there (`None` until it does, and with no shell).
+    pub(crate) written: Option<i64>,
+}
+
+/// What the shell last told us is on the system pasteboard (S7).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SystemPasteboard {
+    /// `NSPasteboard.changeCount`.
+    pub(crate) change_count: i64,
+    /// The file URLs on it, as paths (empty for text and other data).
+    pub(crate) files: Vec<PathBuf>,
 }
 
 pub(crate) struct Shared {
@@ -59,6 +71,9 @@ pub(crate) struct Shared {
     pub(crate) ids: IdGen,
     pub(crate) home: PathBuf,
     pub(crate) clipboard: Mutex<Option<Clipboard>>,
+    /// The system pasteboard as the shell last reported it; `None` without a
+    /// shell (CLI, tests), where the core's clipboard is the only one.
+    pub(crate) pasteboard: Mutex<Option<SystemPasteboard>>,
     pub(crate) volumes: RwLock<Vec<fstudio_fs::VolumeInfo>>,
     folder_views: RwLock<HashMap<String, ViewState>>,
     dirty: Mutex<Option<Sender<()>>>,
@@ -99,6 +114,7 @@ impl Shared {
             ids: IdGen::default(),
             home,
             clipboard: Mutex::new(None),
+            pasteboard: Mutex::new(None),
             volumes: RwLock::new(volumes),
             folder_views: RwLock::new(folder_views),
             dirty: Mutex::new(None),

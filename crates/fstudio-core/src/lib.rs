@@ -35,11 +35,13 @@
 //! No method blocks on disk except where its docs say so.
 
 mod commands;
+mod confirm;
 mod drop;
 mod engine;
 mod error;
 mod events;
 mod favourites;
+mod feedback;
 mod ids;
 mod listing;
 mod listing_handle;

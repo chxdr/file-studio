@@ -77,13 +77,21 @@ pub enum ShellRequest {
         /// The deepest folder that does exist.
         nearest_existing: String,
     },
-    /// Ask before moving to the Trash; on yes perform `file.trash` again with `Confirmed`.
+    /// Ask before moving `paths` to the Trash; on yes call
+    /// `Engine::confirm(token)`, on no `Engine::cancel_confirmation(token)`.
+    /// Only these items are trashed, and only if they are unchanged (S1).
     ConfirmTrash {
+        /// The one-shot token for this question.
+        token: u64,
         /// The items.
         paths: Vec<String>,
     },
-    /// Ask before deleting for good; on yes perform `file.delete_immediately` with `Confirmed`.
+    /// Ask before deleting `paths` for good; on yes call
+    /// `Engine::confirm(token)`, on no `Engine::cancel_confirmation(token)`.
+    /// Only these items are deleted, and only if they are unchanged (S1).
     ConfirmDeleteImmediately {
+        /// The one-shot token for this question.
+        token: u64,
         /// The items.
         paths: Vec<String>,
     },
@@ -124,7 +132,7 @@ pub enum ShellRequest {
     },
     /// Moving these items needs the user's yes (F-023: a protected folder is
     /// among them). Ask with Cancel as the default button, then call
-    /// `Engine::confirm_move(token)` or `Engine::cancel_move(token)`.
+    /// `Engine::confirm(token)` or `Engine::cancel_confirmation(token)`.
     ConfirmMove {
         /// The pending move.
         token: u64,
@@ -140,6 +148,35 @@ pub enum ShellRequest {
     Moved {
         /// What moved where.
         text: String,
+    },
+    /// A yes/no question; `no` is the default button (Return and Esc). On
+    /// yes call `Engine::confirm(token)`, on no
+    /// `Engine::cancel_confirmation(token)` (renames that hide an item or
+    /// change its extension, putting an item back into a folder that is
+    /// gone: safety audit S14).
+    Confirm {
+        /// The one-shot token.
+        token: u64,
+        /// The question.
+        title: String,
+        /// One or two sentences under it.
+        detail: String,
+        /// The button that goes ahead ("Use .md").
+        yes: String,
+        /// The default button that doesn't ("Keep .txt", "Cancel").
+        no: String,
+    },
+    /// Show `text` as a toast for about six seconds (safety audit S11: Trash,
+    /// Delete Immediately, Undo and Redo say what they did, and where when
+    /// this window doesn't show it). With `button`, the toast has a button
+    /// with that title that performs `command` (`edit.undo`, `edit.redo`).
+    Toast {
+        /// "Put back 3 items", "Redid: Move of “Downloads” in “Projects”".
+        text: String,
+        /// The button's title ("Undo", "Redo"), if any.
+        button: Option<String>,
+        /// The command the button performs.
+        command: Option<String>,
     },
     /// Show the power tour (`app.power_tour`, Help › File Studio Power
     /// Tour): a short, skippable sequence of cards about the power-user

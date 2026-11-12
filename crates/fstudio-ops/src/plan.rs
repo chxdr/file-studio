@@ -37,6 +37,7 @@ pub fn targets(req: &OpRequest) -> Vec<(PathBuf, Option<PathBuf>, Option<String>
             path.parent().map(Path::to_path_buf),
             Some(new_name.clone()),
         )],
+        OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => Vec::new(),
         OpRequest::MoveTo { pairs } => pairs
             .iter()
             .map(|(from, to)| {
@@ -52,6 +53,25 @@ pub fn targets(req: &OpRequest) -> Vec<(PathBuf, Option<PathBuf>, Option<String>
 
 /// Checks a request's shape (absolute paths, valid names) without touching the disk.
 pub fn validate(req: &OpRequest) -> Result<(), String> {
+    match req {
+        OpRequest::Compound { steps, .. } => {
+            if steps.is_empty() {
+                return Err("nothing to do".into());
+            }
+            for s in steps {
+                match s {
+                    OpRequest::UndoOf { .. } => {}
+                    OpRequest::Compound { .. } => return Err("a compound op can't nest".into()),
+                    _ => validate(s)?,
+                }
+            }
+            return Ok(());
+        }
+        OpRequest::UndoOf { .. } => {
+            return Err("an undo step only runs inside a compound op".into());
+        }
+        _ => {}
+    }
     let abs = |p: &Path| {
         if p.is_absolute() {
             Ok(())

@@ -15,6 +15,7 @@ use fstudio_model::{KeyChord, PathStyle, Via};
 use fstudio_ops::{OpId, OpRequest};
 use serde::{Deserialize, Serialize};
 
+use crate::confirm::{After, PendingAction, PendingOp, snapshot};
 use crate::engine::Engine;
 use crate::error::{CoreError, Result};
 use crate::events::{CoreEvent, HintInfo};
@@ -64,6 +65,10 @@ pub struct InputContext {
     pub focus: Focus,
     /// The tab whose pane has focus (the focused tab when `None`).
     pub tab: Option<TabId>,
+    /// The key is held down and this press is the system's auto-repeat
+    /// (`NSEvent.isARepeat`). Only repeatable commands run again (S6).
+    #[serde(default)]
+    pub is_repeat: bool,
 }
 
 /// A registered command, for menus, the palette and Settings.
@@ -162,6 +167,15 @@ impl Engine {
         }
         let kctx = self.key_context(&ctx);
         let res = self.keymap.lock().resolve(chord, &kctx, Instant::now());
+        // S6: a held key repeats movement only. The repeat of any other
+        // command is swallowed (handled, nothing done), so neither the core
+        // nor a menu acts on it again.
+        if ctx.is_repeat
+            && let Resolution::Command(id, _) = &res
+            && !registry::get(id.as_str()).is_some_and(|c| c.repeatable)
+        {
+            return Some(Outcome::none());
+        }
         self.run_resolution(res, ctx)
     }
 
@@ -549,7 +563,31 @@ impl Engine {
         if v.is_empty() {
             return Err(CoreError::NotAvailable("nothing is selected".into()));
         }
+        Self::check_names_on_disk(t, &v)?;
         Ok(v)
+    }
+
+    /// S5: before acting on selected items, each selected name must be the
+    /// name on disk, byte for byte. A row left over from a case-only or
+    /// NFC ↔ NFD rename resolves to the renamed item on an insensitive
+    /// volume; acting on it would hit the real file. The list is refreshed
+    /// and nothing is done. (A missing item is left to the op, which reports
+    /// it per file.)
+    fn check_names_on_disk(t: &Tab, paths: &[PathBuf]) -> Result<()> {
+        for p in paths {
+            let Some(name) = p.file_name().map(|n| n.to_string_lossy()) else {
+                continue;
+            };
+            if let Ok(real) = fstudio_fs::on_disk_name(p)
+                && real != name
+            {
+                t.refresh();
+                return Err(CoreError::NotAvailable(format!(
+                    "“{name}” is now called “{real}”; the list was refreshed, so nothing was done"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The first of `base`, `base 2`, `base 3`… free in the tab's folder,
@@ -580,8 +618,73 @@ impl Engine {
             .iter()
             .filter_map(|p| p.parent().map(Path::to_path_buf))
             .collect();
-        *self.shared.clipboard.lock() = (!items.is_empty()).then_some(Clipboard { items, cut });
+        *self.shared.clipboard.lock() = (!items.is_empty()).then_some(Clipboard {
+            items,
+            cut,
+            written: None,
+        });
         self.redraw_dirs(&dirs);
+    }
+
+    /// The shell reports the system pasteboard (S7): its `changeCount` and
+    /// the file paths on it. Call it before running a key or command when
+    /// the count changed since the last call (cheap to call every time).
+    /// When the pasteboard changed to something File Studio didn't write,
+    /// the core's clipboard is stale: it is dropped, so a cut expires and
+    /// Paste uses what the pasteboard now holds (always as a copy).
+    pub fn sync_pasteboard(&self, change_count: i64, files: Vec<String>) {
+        let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+        let changed = {
+            let mut pb = self.shared.pasteboard.lock();
+            let changed = pb.as_ref().is_none_or(|p| p.change_count != change_count);
+            *pb = Some(crate::shared::SystemPasteboard {
+                change_count,
+                files,
+            });
+            changed
+        };
+        if !changed {
+            return;
+        }
+        let stale = self
+            .shared
+            .clipboard
+            .lock()
+            .as_ref()
+            .is_some_and(|c| c.written != Some(change_count));
+        if stale {
+            self.clear_cut_or_copy();
+        }
+    }
+
+    /// The shell wrote the core's clipboard to the system pasteboard
+    /// (`WriteFilePasteboard`), which now has `change_count`. Until the
+    /// pasteboard changes again, Paste uses the core's clipboard (and a cut
+    /// moves).
+    pub fn pasteboard_written(&self, change_count: i64) {
+        let files = {
+            let mut cb = self.shared.clipboard.lock();
+            let Some(c) = cb.as_mut() else { return };
+            c.written = Some(change_count);
+            c.items.clone()
+        };
+        *self.shared.pasteboard.lock() = Some(crate::shared::SystemPasteboard {
+            change_count,
+            files,
+        });
+    }
+
+    /// Drops the core's clipboard (copy or cut) and redraws cut marks.
+    fn clear_cut_or_copy(&self) {
+        let cb = self.shared.clipboard.lock().take();
+        if let Some(cb) = cb {
+            let dirs: Vec<PathBuf> = cb
+                .items
+                .iter()
+                .filter_map(|p| p.parent().map(Path::to_path_buf))
+                .collect();
+            self.redraw_dirs(&dirs);
+        }
     }
 
     /// What is on the core's clipboard: `(paths, cut)`.
@@ -616,12 +719,41 @@ impl Engine {
             return Ok(Outcome::none().with_tab(tab));
         }
         let path = t.rename_target(old_name, new_name)?;
-        let id = self.enqueue(OpRequest::Rename {
-            path,
-            new_name: new_name.to_string(),
-        })?;
-        t.select_when_present(vec![new_name.to_string()]);
-        Ok(Outcome::op(id).with_tab(tab))
+        let op = PendingOp {
+            req: OpRequest::Rename {
+                path: path.clone(),
+                new_name: new_name.to_string(),
+            },
+            items: snapshot(std::slice::from_ref(&path)),
+            tab: Some(tab),
+            after: After {
+                select: Some((tab, vec![new_name.to_string()])),
+                ..After::default()
+            },
+            toast: None,
+        };
+        // S14: ask first when the new name hides the item or changes its
+        // extension (both settings, on by default), as Finder does.
+        let ops = self.settings().operations;
+        let is_dir = t.listing().inner.get(old_name).is_some_and(|e| e.is_dir());
+        if let Some((title, detail, yes, no)) = crate::feedback::rename_warning(
+            old_name,
+            new_name,
+            is_dir,
+            ops.warn_hidden_rename,
+            ops.warn_extension_change,
+        ) {
+            let token = self.ask(PendingAction::Op(Box::new(op)));
+            return Ok(Outcome::shell(ShellRequest::Confirm {
+                token,
+                title,
+                detail,
+                yes,
+                no,
+            })
+            .with_tab(tab));
+        }
+        self.run_pending_op(op, false)
     }
 
     /// Creates a missing folder (and any missing parents) through the queue,
@@ -646,38 +778,40 @@ impl Engine {
                 .ok_or_else(|| CoreError::InvalidName(s(p)))?;
             fstudio_ops::names::validate_name(&name).map_err(CoreError::InvalidName)?;
         }
+        if missing.is_empty() {
+            return t.go(path);
+        }
+        // One journaled op for the whole chain, with one undo entry (S13).
+        let steps: Vec<OpRequest> = missing
+            .iter()
+            .map(|p| OpRequest::NewFolder {
+                parent: p.parent().map(Path::to_path_buf).unwrap_or_default(),
+                name: p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        let req = if steps.len() == 1 {
+            steps.into_iter().next().expect("one step")
+        } else {
+            OpRequest::Compound {
+                label: format!("New Folders “{}”", crate::confirm::display_name(&target)),
+                steps,
+            }
+        };
         let ops = self.ops();
+        let id = ops.enqueue(req)?;
         let me = self.me.clone();
-        let mut first = None;
-        let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::Builder::new()
             .name("fstudio-create-folder".into())
             .spawn(move || {
-                for (k, p) in missing.iter().enumerate() {
-                    let req = OpRequest::NewFolder {
-                        parent: p.parent().map(Path::to_path_buf).unwrap_or_default(),
-                        name: p
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                    };
-                    let Ok(id) = ops.enqueue(req) else { return };
-                    if k == 0 {
-                        let _ = tx.send(id);
-                    }
-                    ops.wait(id, Duration::from_secs(30));
-                }
-                if me.upgrade().is_some() {
+                ops.wait(id, Duration::from_secs(60));
+                if me.upgrade().is_some() && target.is_dir() {
                     t.navigate(target, None);
                 }
             })?;
-        if let Ok(id) = rx.recv_timeout(Duration::from_secs(5)) {
-            first = Some(id);
-        }
-        Ok(Outcome {
-            ops: first.into_iter().collect(),
-            ..Outcome::none().with_tab(tab)
-        })
+        Ok(Outcome::op(id).with_tab(tab))
     }
 
     /// What dropping `sources` onto the folder `dest_dir` would do, for the
@@ -715,68 +849,94 @@ impl Engine {
             }
             DropAction::Copy => OpRequest::Copy { sources, dest_dir },
             DropAction::Move => {
-                let req = OpRequest::Move {
-                    sources: sources.clone(),
-                    dest_dir: dest_dir.clone(),
+                let op = PendingOp {
+                    req: OpRequest::Move {
+                        sources: sources.clone(),
+                        dest_dir: dest_dir.clone(),
+                    },
+                    items: snapshot(&sources),
+                    tab: None,
+                    after: After::default(),
+                    toast: Some(ShellRequest::Moved {
+                        text: crate::protect::moved_text(&sources, &dest_dir),
+                    }),
                 };
-                if let Some(ask) = self.guard_move(&sources, &dest_dir, || {
-                    crate::protect::PendingMove::Request(req.clone())
-                }) {
-                    return Ok(ask);
-                }
-                let mut out = Outcome::op(self.enqueue(req)?);
-                out.shell = Some(ShellRequest::Moved {
-                    text: crate::protect::moved_text(&sources, &dest_dir),
-                });
-                return Ok(out);
+                return self.move_or_ask(&sources, &dest_dir, op);
             }
         };
         Ok(Outcome::op(self.enqueue(req)?))
     }
 
-    /// F-023 for commands that move (F6, paste, Paste as Move, New Folder
-    /// with Selection): unless the user already confirmed, a protected item
-    /// stops the command and asks; on yes the command runs again with
-    /// `Confirmed`.
-    fn guard_command(
-        &self,
-        inv: &CommandInvocation,
-        sources: &[PathBuf],
-        dest: &Path,
-    ) -> Option<Outcome> {
-        if matches!(inv.arg, Some(CommandArg::Confirmed)) {
-            return None;
+    /// New Folder with Selection as one journaled op (S12): create
+    /// `parent/name`, then move `sel` into it, with one undo entry. What is
+    /// asked about (F-023) and queued is exactly `sel`.
+    pub(crate) fn new_folder_with_op(
+        tab: TabId,
+        parent: PathBuf,
+        name: String,
+        sel: Vec<PathBuf>,
+    ) -> PendingOp {
+        let dest = parent.join(&name);
+        PendingOp {
+            req: OpRequest::Compound {
+                label: "New Folder with Items".into(),
+                steps: vec![
+                    OpRequest::NewFolder {
+                        parent,
+                        name: name.clone(),
+                    },
+                    OpRequest::Move {
+                        sources: sel.clone(),
+                        dest_dir: dest,
+                    },
+                ],
+            },
+            items: snapshot(&sel),
+            tab: Some(tab),
+            after: After {
+                begin_rename: Some((tab, name)),
+                ..After::default()
+            },
+            toast: None,
         }
-        self.guard_move(sources, dest, || {
-            let mut again = inv.clone();
-            again.arg = Some(CommandArg::Confirmed);
-            crate::protect::PendingMove::Command(again)
-        })
     }
 
-    /// The paste guard: only a cut (or Paste as Move) moves.
-    fn guard_paste(
-        &self,
-        inv: &CommandInvocation,
-        t: &Tab,
-        as_move: Option<bool>,
-    ) -> Option<Outcome> {
-        let cb = self.shared.clipboard.lock().clone()?;
-        if !as_move.unwrap_or(cb.cut) {
-            return None;
-        }
-        let dest = t.location_path();
-        if cb.items.iter().all(|p| p.parent() == Some(dest.as_path())) {
-            return None;
-        }
-        self.guard_command(inv, &cb.items, &dest)
-            .map(|o| o.with_tab(t.id()))
+    /// A cut was used up: forget it and redraw its cut marks.
+    pub(crate) fn clear_cut(&self) {
+        self.clear_cut_or_copy();
     }
 
+    /// Paste (or, with `as_move`, Paste as Move). A move of a protected
+    /// folder asks first (F-023); what is asked about is exactly what moves.
+    ///
+    /// What is pasted (S7): the core's clipboard while the system pasteboard
+    /// still holds what File Studio wrote there (any change drops it, see
+    /// [`Engine::sync_pasteboard`]); otherwise the files on the system
+    /// pasteboard, always as a copy, even for Paste as Move.
     fn paste_into(&self, t: &Tab, as_move: Option<bool>) -> Result<Outcome> {
-        let Some(cb) = self.shared.clipboard.lock().clone() else {
-            return Ok(Outcome::message("Nothing to paste"));
+        let cb = match self.shared.clipboard.lock().clone() {
+            Some(cb) => cb,
+            None => {
+                let files = self
+                    .shared
+                    .pasteboard
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.files.clone())
+                    .unwrap_or_default();
+                if files.is_empty() {
+                    return Ok(Outcome::message("Nothing to paste"));
+                }
+                Clipboard {
+                    items: files,
+                    cut: false,
+                    written: None,
+                }
+            }
         };
+        let from_core = self.shared.clipboard.lock().as_ref() == Some(&cb);
+        // Files from another app are always copied.
+        let as_move = if from_core { as_move } else { Some(false) };
         let dest = t.location_path();
         let mv = as_move.unwrap_or(cb.cut);
         let names: Vec<String> = cb
@@ -786,8 +946,7 @@ impl Engine {
             .collect();
         let here = cb.items.iter().all(|p| p.parent() == Some(dest.as_path()));
         if here && mv {
-            *self.shared.clipboard.lock() = None;
-            self.redraw_dirs(&[dest]);
+            self.clear_cut();
             return Ok(Outcome::message("The items are already here").with_tab(t.id()));
         }
         let req = if here {
@@ -798,30 +957,33 @@ impl Engine {
         } else if mv {
             OpRequest::Move {
                 sources: cb.items.clone(),
-                dest_dir: dest,
+                dest_dir: dest.clone(),
             }
         } else {
             OpRequest::Copy {
                 sources: cb.items.clone(),
-                dest_dir: dest,
+                dest_dir: dest.clone(),
             }
         };
-        let moved = mv.then(|| crate::protect::moved_text(&cb.items, &t.location_path()));
-        let id = self.enqueue(req)?;
+        let op = PendingOp {
+            req,
+            items: snapshot(&cb.items),
+            tab: Some(t.id()),
+            after: After {
+                // A cut is used up by its paste; nothing was deleted before now.
+                clear_cut: mv,
+                select: Some((t.id(), names)),
+                ..After::default()
+            },
+            toast: mv.then(|| ShellRequest::Moved {
+                text: crate::protect::moved_text(&cb.items, &dest),
+            }),
+        };
         if mv {
-            // A cut is used up by its paste; nothing was deleted before now.
-            let dirs: Vec<PathBuf> = cb
-                .items
-                .iter()
-                .filter_map(|p| p.parent().map(Path::to_path_buf))
-                .collect();
-            *self.shared.clipboard.lock() = None;
-            self.redraw_dirs(&dirs);
+            self.move_or_ask(&cb.items, &dest, op)
+        } else {
+            self.run_pending_op(op, false)
         }
-        t.select_when_present(names);
-        let mut out = Outcome::op(id).with_tab(t.id());
-        out.shell = moved.map(|text| ShellRequest::Moved { text });
-        Ok(out)
     }
 
     fn copy_paths(
@@ -915,8 +1077,8 @@ impl Engine {
                     None => Outcome::message("No closed tab to reopen"),
                 });
             }
-            "edit.undo" => return self.undo(),
-            "edit.redo" => return self.redo(),
+            "edit.undo" => return self.undo_in(inv.tab),
+            "edit.redo" => return self.redo_in(inv.tab),
             "app.settings" => {
                 return Ok(Outcome::shell(ShellRequest::ShowSettings {
                     section: String::new(),
@@ -1216,65 +1378,77 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let name = Self::free_name(&t, NEW_FOLDER_WITH_ITEMS);
                 let parent = t.location_path();
-                if let Some(ask) = self.guard_command(inv, &sel, &parent.join(&name)) {
-                    return Ok(ask.with_tab(tid));
-                }
-                let ops = self.ops();
-                let first = ops.enqueue(OpRequest::NewFolder {
-                    parent: parent.clone(),
-                    name: name.clone(),
-                })?;
                 let dest = parent.join(&name);
-                // The move needs the folder to exist (it picks its volume from it).
-                std::thread::Builder::new()
-                    .name("fstudio-new-folder-with-items".into())
-                    .spawn(move || {
-                        ops.wait(first, Duration::from_secs(30));
-                        if dest.is_dir() {
-                            let _ = ops.enqueue(OpRequest::Move {
-                                sources: sel,
-                                dest_dir: dest,
-                            });
-                        }
-                    })?;
-                t.select_when_present(vec![name.clone()]);
-                Outcome {
-                    ops: vec![first],
-                    shell: Some(ShellRequest::BeginRename { tab: tid, name }),
-                    ..done()
-                }
+                let op = Self::new_folder_with_op(tid, parent, name, sel.clone());
+                // Runs through move protection like F6 (F-023, S12).
+                self.move_or_ask(&sel, &dest, op)?.with_tab(tid)
             }
             "file.trash" => {
+                if matches!(inv.arg, Some(CommandArg::Confirmed)) {
+                    // S1: a yes is answered with its token, never by reading
+                    // the selection again.
+                    return Err(CoreError::NotAvailable(
+                        "confirm with the question's token".into(),
+                    ));
+                }
                 let sel = Self::need_selection(&t)?;
-                // `Confirmed` is the shell's "yes" to our own question: carry on.
-                let confirmed = matches!(inv.arg, Some(CommandArg::Confirmed));
                 let ask = matches!(inv.arg, Some(CommandArg::Confirm))
                     || self.settings().general.confirm_trash;
-                if ask && !confirmed {
+                let op = PendingOp {
+                    req: OpRequest::Trash { paths: sel.clone() },
+                    items: snapshot(&sel),
+                    tab: Some(tid),
+                    after: After {
+                        remove_from: Some(tid),
+                        ..After::default()
+                    },
+                    // S11: a trash is never silent.
+                    toast: Some(ShellRequest::Moved {
+                        text: crate::feedback::trashed_text(&sel),
+                    }),
+                };
+                if ask {
+                    let token = self.ask(PendingAction::Op(Box::new(op)));
                     return Ok(Outcome::shell(ShellRequest::ConfirmTrash {
+                        token,
                         paths: strings(&sel),
                     })
                     .with_tab(tid));
                 }
-                t.select_after_removing(&sel);
-                Outcome::op(self.enqueue(OpRequest::Trash { paths: sel })?).with_tab(tid)
+                self.run_pending_op(op, false)?
             }
             "file.delete_immediately" => {
+                if matches!(inv.arg, Some(CommandArg::Confirmed)) {
+                    return Err(CoreError::NotAvailable(
+                        "confirm with the question's token".into(),
+                    ));
+                }
                 let sel = Self::need_selection(&t)?;
                 if !self.settings().operations.allow_delete_immediately {
                     return Err(CoreError::NotAvailable(
                         "Delete Immediately is turned off in Settings".into(),
                     ));
                 }
-                if !matches!(inv.arg, Some(CommandArg::Confirm | CommandArg::Confirmed)) {
-                    return Ok(Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
-                        paths: strings(&sel),
-                    })
-                    .with_tab(tid));
-                }
-                t.select_after_removing(&sel);
-                Outcome::op(self.enqueue(OpRequest::DeleteImmediately { paths: sel })?)
-                    .with_tab(tid)
+                // Always asked, whatever the argument: there is no undo.
+                let token = self.ask(PendingAction::Op(Box::new(PendingOp {
+                    req: OpRequest::DeleteImmediately { paths: sel.clone() },
+                    items: snapshot(&sel),
+                    tab: Some(tid),
+                    after: After {
+                        remove_from: Some(tid),
+                        ..After::default()
+                    },
+                    toast: Some(ShellRequest::Toast {
+                        text: crate::feedback::deleted_text(&sel),
+                        button: None,
+                        command: None,
+                    }),
+                })));
+                Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
+                    token,
+                    paths: strings(&sel),
+                })
+                .with_tab(tid)
             }
             "file.duplicate" => {
                 let sel = Self::need_selection(&t)?;
@@ -1284,41 +1458,41 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let o = self.other(&t)?;
                 let dest_dir = o.location_path();
-                if id == "file.move_to_other_pane"
-                    && let Some(ask) = self.guard_command(inv, &sel, &dest_dir)
-                {
-                    return Ok(ask.with_tab(tid));
-                }
-                let moved = (id == "file.move_to_other_pane")
-                    .then(|| crate::protect::moved_text(&sel, &dest_dir));
                 let names: Vec<String> = sel
                     .iter()
                     .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
                     .collect();
-                let req = if id == "file.copy_to_other_pane" {
-                    OpRequest::Copy {
-                        sources: sel,
-                        dest_dir,
-                    }
-                } else {
-                    t.select_after_removing(&sel);
-                    OpRequest::Move {
-                        sources: sel,
-                        dest_dir,
-                    }
+                let moving = id == "file.move_to_other_pane";
+                let op = PendingOp {
+                    req: if moving {
+                        OpRequest::Move {
+                            sources: sel.clone(),
+                            dest_dir: dest_dir.clone(),
+                        }
+                    } else {
+                        OpRequest::Copy {
+                            sources: sel.clone(),
+                            dest_dir: dest_dir.clone(),
+                        }
+                    },
+                    items: snapshot(&sel),
+                    tab: Some(tid),
+                    after: After {
+                        remove_from: moving.then_some(tid),
+                        select: Some((o.id(), names)),
+                        ..After::default()
+                    },
+                    toast: moving.then(|| ShellRequest::Moved {
+                        text: crate::protect::moved_text(&sel, &dest_dir),
+                    }),
                 };
-                let op = self.enqueue(req)?;
-                o.select_when_present(names);
-                let mut out = Outcome::op(op).with_tab(tid);
-                out.shell = moved.map(|text| ShellRequest::Moved { text });
-                out
-            }
-            "file.move_here" => {
-                if let Some(ask) = self.guard_paste(inv, &t, Some(true)) {
-                    return Ok(ask);
+                if moving {
+                    self.move_or_ask(&sel, &dest_dir, op)?
+                } else {
+                    self.run_pending_op(op, false)?
                 }
-                self.paste_into(&t, Some(true))?
             }
+            "file.move_here" => self.paste_into(&t, Some(true))?,
             "file.open_with" => Outcome::shell(ShellRequest::OpenWith {
                 paths: strings(&Self::need_selection(&t)?),
             })
@@ -1350,7 +1524,12 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let n = sel.len();
                 self.set_clipboard(strings(&sel), true);
-                Outcome::message(format!(
+                // On the system pasteboard too, so its changeCount ties the
+                // cut to it: copying anything else ends the cut (S7).
+                let mut out = Outcome::shell(ShellRequest::WriteFilePasteboard {
+                    paths: strings(&sel),
+                });
+                out.message = Some(format!(
                     "{} marked to move; paste to move {}",
                     if n == 1 {
                         "1 item".to_string()
@@ -1358,15 +1537,10 @@ impl Engine {
                         format!("{n} items")
                     },
                     if n == 1 { "it" } else { "them" }
-                ))
-                .with_tab(tid)
+                ));
+                out.with_tab(tid)
             }
-            "edit.paste" => {
-                if let Some(ask) = self.guard_paste(inv, &t, None) {
-                    return Ok(ask);
-                }
-                self.paste_into(&t, None)?
-            }
+            "edit.paste" => self.paste_into(&t, None)?,
 
             // ── view ──
             "view.set_mode" => {

@@ -159,11 +159,22 @@ fn trash_confirmation_can_be_confirmed() {
         assert!(out.ops.is_empty());
         assert!(h.p("keep-me").exists());
     }
-    // "Yes" carries the action out.
-    let out = run(Some(CommandArg::Confirmed)).unwrap();
-    assert!(out.shell.is_none());
+    // A bare "Confirmed" is refused: the yes must carry the question's token (S1).
+    assert!(run(Some(CommandArg::Confirmed)).is_err());
+    assert!(h.p("keep-me").exists());
+    // "Yes" carries the action out, once.
+    let Some(ShellRequest::ConfirmTrash { token, paths }) = run(None).unwrap().shell else {
+        panic!("expected a question");
+    };
+    assert_eq!(paths, vec![h.s("keep-me")]);
+    let out = h.engine.confirm(token).unwrap();
+    assert!(
+        matches!(out.shell, Some(ShellRequest::Moved { .. })),
+        "the Trash toast (S11)"
+    );
     h.engine.wait_op(out.ops[0], T).unwrap();
     assert!(!h.p("keep-me").exists());
+    assert!(h.engine.confirm(token).is_err(), "a token works once");
 }
 
 #[test]
@@ -193,7 +204,22 @@ fn delete_immediately_only_when_enabled_and_confirmed() {
         Some(ShellRequest::ConfirmDeleteImmediately { .. })
     ));
     assert!(h.p("doomed").exists());
-    let out = run(Some(CommandArg::Confirm)).unwrap();
+    // Even with `Confirm`, it only asks; the yes is the token.
+    let Some(ShellRequest::ConfirmDeleteImmediately { token, .. }) =
+        run(Some(CommandArg::Confirm)).unwrap().shell
+    else {
+        panic!("expected a question");
+    };
+    assert!(h.p("doomed").exists());
+    // No: nothing happens, and the token is gone.
+    h.engine.cancel_confirmation(token);
+    assert!(h.engine.confirm(token).is_err());
+    assert!(h.p("doomed").exists());
+    let Some(ShellRequest::ConfirmDeleteImmediately { token, .. }) = run(None).unwrap().shell
+    else {
+        panic!("expected a question");
+    };
+    let out = h.engine.confirm(token).unwrap();
     h.engine.wait_op(out.ops[0], T).unwrap();
     assert!(!h.p("doomed").exists());
 }

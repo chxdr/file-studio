@@ -58,6 +58,7 @@ fn c(id: &str, title: &'static str, category: Category, description: &'static st
         shows_in_menu: true,
         shows_in_palette: true,
         hint_eligible: true,
+        repeatable: false,
     })
 }
 
@@ -130,6 +131,11 @@ impl B {
         self.0.arg = Some(k);
         self
     }
+    /// Repeats while its key is held (movement only; see `CommandInfo::repeatable`).
+    fn repeats(mut self) -> Self {
+        self.0.repeatable = true;
+        self
+    }
     fn nomenu(mut self) -> Self {
         self.0.shows_in_menu = false;
         self
@@ -189,17 +195,17 @@ fn table() -> Vec<B> {
         c("select.invert", "Invert Selection", Selection, "Select what is not selected and the reverse").s("⌃⌘A"),
         c("select.by_pattern", "Select by Pattern…", Selection, "Select items whose names match a pattern").s("⌘="),
         c("select.deselect_pattern", "Deselect by Pattern…", Selection, "Deselect items whose names match a pattern").s("⌘-"),
-        c("select.extend_up", "Extend Selection Up", Selection, "Add the item above to the selection").s("⇧↑").vv("k").nomenu().nohint(),
-        c("select.extend_down", "Extend Selection Down", Selection, "Add the item below to the selection").s("⇧↓").vv("j").nomenu().nohint(),
+        c("select.extend_up", "Extend Selection Up", Selection, "Add the item above to the selection").s("⇧↑").vv("k").nomenu().nohint().repeats(),
+        c("select.extend_down", "Extend Selection Down", Selection, "Add the item below to the selection").s("⇧↓").vv("j").nomenu().nohint().repeats(),
         c("select.visual", "Visual Selection", Vim, "Start selecting items as the cursor moves").nomenu().nohint().v("v"),
         c("select.visual_line", "Visual Line Selection", Vim, "Start selecting whole rows as the cursor moves").nomenu().nohint().v("V"),
         c("select.exit_visual", "Leave Visual Mode", Vim, "Stop extending the selection").nomenu().nohint().vv("⎋"),
-        c("cursor.up", "Move Up", Selection, "Move the cursor to the previous item").s("↑").v("k").nomenu().nohint(),
-        c("cursor.down", "Move Down", Selection, "Move the cursor to the next item").s("↓").v("j").nomenu().nohint(),
-        c("cursor.top", "Move to First Item", Selection, "Move the cursor to the first item").s("↖").v("g g").nomenu().nohint(),
-        c("cursor.bottom", "Move to Last Item", Selection, "Move the cursor to the last item").s("↘").v("G").nomenu().nohint(),
-        c("cursor.page_up", "Page Up", Selection, "Move the cursor up one page").s("⇞").v("⌃U").nomenu().nohint(),
-        c("cursor.page_down", "Page Down", Selection, "Move the cursor down one page").s("⇟").v("⌃D").nomenu().nohint(),
+        c("cursor.up", "Move Up", Selection, "Move the cursor to the previous item").s("↑").v("k").nomenu().nohint().repeats(),
+        c("cursor.down", "Move Down", Selection, "Move the cursor to the next item").s("↓").v("j").nomenu().nohint().repeats(),
+        c("cursor.top", "Move to First Item", Selection, "Move the cursor to the first item").s("↖").v("g g").nomenu().nohint().repeats(),
+        c("cursor.bottom", "Move to Last Item", Selection, "Move the cursor to the last item").s("↘").v("G").nomenu().nohint().repeats(),
+        c("cursor.page_up", "Page Up", Selection, "Move the cursor up one page").s("⇞").v("⌃U").nomenu().nohint().repeats(),
+        c("cursor.page_down", "Page Down", Selection, "Move the cursor down one page").s("⇟").v("⌃D").nomenu().nohint().repeats(),
         // ── File ──
         c("file.rename", "Rename", File, "Rename the selected item in place").s("↩").v("r"),
         c("file.rename_dialog", "Rename or Move As…", File, "Rename or move the selection through a dialog").s("⇧F6"),
@@ -300,17 +306,17 @@ fn table() -> Vec<B> {
         c("addressbar.commit", "Go", TextFields, "Go to the typed or highlighted path").ctx(ab.clone()).s("↩").hidden(),
         c("addressbar.commit_other_pane", "Go in Other Pane", TextFields, "Go to the path in the other pane").ctx(ab.clone()).s("⌘↩").hidden(),
         c("addressbar.cancel", "Cancel", TextFields, "Close the suggestions, then leave the address bar").ctx(ab.clone()).s("⎋").hidden(),
-        c("addressbar.complete_next", "Complete / Next Suggestion", TextFields, "Extend to the common prefix, then cycle suggestions").ctx(ab.clone()).s("⇥").hidden(),
-        c("addressbar.complete_prev", "Previous Suggestion", TextFields, "Cycle suggestions backwards").ctx(ab.clone()).s("⇧⇥").hidden(),
-        c("addressbar.next", "Highlight Next Suggestion", TextFields, "Move down the suggestion list").ctx(ab.clone()).s("↓").hidden(),
-        c("addressbar.prev", "Highlight Previous Suggestion", TextFields, "Move up the suggestion list").ctx(ab.clone()).s("↑").hidden(),
+        c("addressbar.complete_next", "Complete / Next Suggestion", TextFields, "Extend to the common prefix, then cycle suggestions").ctx(ab.clone()).s("⇥").hidden().repeats(),
+        c("addressbar.complete_prev", "Previous Suggestion", TextFields, "Cycle suggestions backwards").ctx(ab.clone()).s("⇧⇥").hidden().repeats(),
+        c("addressbar.next", "Highlight Next Suggestion", TextFields, "Move down the suggestion list").ctx(ab.clone()).s("↓").hidden().repeats(),
+        c("addressbar.prev", "Highlight Previous Suggestion", TextFields, "Move up the suggestion list").ctx(ab.clone()).s("↑").hidden().repeats(),
         c("addressbar.accept_ghost", "Accept Suggestion", TextFields, "Accept the grey completion text").ctx(ab.clone()).s("↘").hidden(),
         c("addressbar.delete_component", "Delete Path Component", TextFields, "Delete back to the previous /").ctx(ab.clone()).s("⌥⌫").hidden(),
         c("addressbar.clear_line", "Clear to Start", TextFields, "Delete back to the start of the path").ctx(ab.clone()).s("⌘⌫").hidden(),
         c("addressbar.add_favourite", "Add to Favourites", TextFields, "Add the highlighted or current folder to Favourites").ctx(ab).s("⌘D").hidden(),
         c("palette.run", "Run", TextFields, "Run the highlighted command").ctx(When::PaletteOpen).s("↩").hidden(),
-        c("palette.next", "Next Result", TextFields, "Highlight the next result").ctx(When::PaletteOpen).s("↓").hidden(),
-        c("palette.prev", "Previous Result", TextFields, "Highlight the previous result").ctx(When::PaletteOpen).s("↑").hidden(),
+        c("palette.next", "Next Result", TextFields, "Highlight the next result").ctx(When::PaletteOpen).s("↓").hidden().repeats(),
+        c("palette.prev", "Previous Result", TextFields, "Highlight the previous result").ctx(When::PaletteOpen).s("↑").hidden().repeats(),
         c("palette.close", "Close Palette", TextFields, "Close the palette").ctx(When::PaletteOpen).s("⎋").hidden(),
         c("rename.commit", "Finish Rename", TextFields, "Apply the new name").ctx(When::RenameEditing).s("↩").hidden(),
         c("rename.cancel", "Cancel Rename", TextFields, "Keep the old name").ctx(When::RenameEditing).s("⎋").hidden(),

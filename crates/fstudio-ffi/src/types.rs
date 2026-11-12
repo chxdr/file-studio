@@ -260,6 +260,8 @@ pub struct FfiInputContext {
     pub focus: FfiFocus,
     /// The tab whose pane has focus (the focused tab when `None`).
     pub tab: Option<u64>,
+    /// This key-down is the system's auto-repeat (`NSEvent.isARepeat`).
+    pub is_repeat: bool,
 }
 
 impl From<FfiInputContext> for core::InputContext {
@@ -267,6 +269,7 @@ impl From<FfiInputContext> for core::InputContext {
         core::InputContext {
             focus: c.focus.into(),
             tab: c.tab.map(core::TabId),
+            is_repeat: c.is_repeat,
         }
     }
 }
@@ -540,9 +543,11 @@ pub enum FfiShellRequest {
         nearest_existing: String,
     },
     ConfirmTrash {
+        token: u64,
         paths: Vec<String>,
     },
     ConfirmDeleteImmediately {
+        token: u64,
         paths: Vec<String>,
     },
     AskPattern {
@@ -572,6 +577,18 @@ pub enum FfiShellRequest {
     },
     Moved {
         text: String,
+    },
+    Toast {
+        text: String,
+        button: Option<String>,
+        command: Option<String>,
+    },
+    Confirm {
+        token: u64,
+        title: String,
+        detail: String,
+        yes: String,
+        no: String,
     },
     ShowPowerTour,
     ToggleSidebar,
@@ -619,8 +636,10 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 path,
                 nearest_existing,
             },
-            S::ConfirmTrash { paths } => Self::ConfirmTrash { paths },
-            S::ConfirmDeleteImmediately { paths } => Self::ConfirmDeleteImmediately { paths },
+            S::ConfirmTrash { token, paths } => Self::ConfirmTrash { token, paths },
+            S::ConfirmDeleteImmediately { token, paths } => {
+                Self::ConfirmDeleteImmediately { token, paths }
+            }
             S::AskPattern { select } => Self::AskPattern { select },
             S::AskWorkspaceName => Self::AskWorkspaceName,
             S::ManageWorkspaces => Self::ManageWorkspaces,
@@ -643,6 +662,28 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 paths,
             },
             S::Moved { text } => Self::Moved { text },
+            S::Toast {
+                text,
+                button,
+                command,
+            } => Self::Toast {
+                text,
+                button,
+                command,
+            },
+            S::Confirm {
+                token,
+                title,
+                detail,
+                yes,
+                no,
+            } => Self::Confirm {
+                token,
+                title,
+                detail,
+                yes,
+                no,
+            },
             S::ShowPowerTour => Self::ShowPowerTour,
             S::ToggleSidebar => Self::ToggleSidebar,
             S::ToggleInspector => Self::ToggleInspector,
@@ -1366,6 +1407,8 @@ pub enum FfiOpKind {
     Rename,
     Duplicate,
     MoveTo,
+    /// Several steps as one op (New Folder with Selection, a chain of folders).
+    Compound,
 }
 
 impl From<core::OpKind> for FfiOpKind {
@@ -1380,6 +1423,7 @@ impl From<core::OpKind> for FfiOpKind {
             core::OpKind::Rename => FfiOpKind::Rename,
             core::OpKind::Duplicate => FfiOpKind::Duplicate,
             core::OpKind::MoveTo => FfiOpKind::MoveTo,
+            core::OpKind::Compound => FfiOpKind::Compound,
         }
     }
 }

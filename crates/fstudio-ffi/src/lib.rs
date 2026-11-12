@@ -647,6 +647,15 @@ impl FfiEngine {
     pub fn set_clipboard(&self, paths: Vec<String>, cut: bool) {
         self.inner.set_clipboard(paths, cut);
     }
+    /// The system pasteboard's `changeCount` and file paths, before a key or
+    /// command runs (S7). See `Engine::sync_pasteboard`.
+    pub fn sync_pasteboard(&self, change_count: i64, files: Vec<String>) {
+        self.inner.sync_pasteboard(change_count, files);
+    }
+    /// The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+    pub fn pasteboard_written(&self, change_count: i64) {
+        self.inner.pasteboard_written(change_count);
+    }
     /// The core clipboard's paths (empty when nothing is copied).
     pub fn clipboard_paths(&self) -> Vec<String> {
         self.inner.clipboard().map(|c| c.0).unwrap_or_default()
@@ -845,7 +854,18 @@ impl FfiEngine {
         Ok(self.inner.move_favourite(&path, index)?)
     }
 
-    // ── protected moves (F-023) ──
+    // ── questions (S1) and protected moves (F-023) ──
+
+    /// The user said yes to a question carrying `token` (`ConfirmTrash`,
+    /// `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+    /// the question named, if they are unchanged.
+    pub fn confirm(&self, token: u64) -> R<FfiOutcome> {
+        Ok(self.inner.confirm(token)?.into())
+    }
+    /// The user said no to a question carrying `token`.
+    pub fn cancel_confirmation(&self, token: u64) {
+        self.inner.cancel_confirmation(token)
+    }
 
     /// The user said Move to `ShellRequest::ConfirmMove`.
     pub fn confirm_move(&self, token: u64) -> R<FfiOutcome> {
@@ -903,8 +923,8 @@ impl FfiEngine {
         Ok(self.inner.sort_by_column(TabId(tab), column.into())?.into())
     }
     /// Decides the drop and queues the copy or move.
-    pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<i64> {
-        Ok(self.inner.drop_items(&sources, &dest, mods.into())?.0)
+    pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<FfiOutcome> {
+        Ok(self.inner.drop_items(&sources, &dest, mods.into())?.into())
     }
 }
 
@@ -1040,6 +1060,7 @@ mod tests {
                 FfiInputContext {
                     focus: FfiFocus::List,
                     tab: Some(t.id()),
+                    is_repeat: false,
                 },
             )
             .unwrap();

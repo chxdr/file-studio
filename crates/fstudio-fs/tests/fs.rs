@@ -621,3 +621,37 @@ fn hundred_thousand_entries() {
     eprintln!("all {n} in {:?}", start.elapsed());
     assert_eq!(n, 100_000);
 }
+
+/// S5 (safety audit): after a case-only or NFD → NFC rename, the old
+/// spelling still `lstat`s on an insensitive volume, but the entry is named
+/// as the disk stores it, so a watcher patch can't bring the old name back.
+#[test]
+fn stat_entry_names_the_item_as_stored_on_disk() {
+    let d = tempfile::tempdir().unwrap();
+    let dir = d.path();
+    std::fs::write(dir.join("Notes.txt"), b"x").unwrap();
+    std::fs::rename(dir.join("Notes.txt"), dir.join("NOTES.txt")).unwrap();
+    let sensitive = std::fs::symlink_metadata(dir.join("Notes.txt")).is_err();
+    if !sensitive {
+        let e = fstudio_fs::stat_entry(dir.join("Notes.txt")).unwrap();
+        assert_eq!(e.name, "NOTES.txt");
+        assert_eq!(
+            fstudio_fs::on_disk_name(dir.join("notes.TXT")).unwrap(),
+            "NOTES.txt"
+        );
+    }
+    std::fs::write(dir.join("Cafe\u{301}.txt"), b"x").unwrap();
+    assert_eq!(
+        fstudio_fs::on_disk_name(dir.join("Cafe\u{301}.txt")).unwrap(),
+        "Cafe\u{301}.txt"
+    );
+    std::fs::rename(dir.join("Cafe\u{301}.txt"), dir.join("Caf\u{e9}.txt")).unwrap();
+    if !sensitive {
+        let e = fstudio_fs::stat_entry(dir.join("Cafe\u{301}.txt")).unwrap();
+        assert_eq!(e.name, "Caf\u{e9}.txt");
+    }
+    // A symlink is named, not followed.
+    std::os::unix::fs::symlink("NOTES.txt", dir.join("link")).unwrap();
+    assert_eq!(fstudio_fs::on_disk_name(dir.join("link")).unwrap(), "link");
+    assert!(fstudio_fs::on_disk_name(dir.join("missing")).is_err());
+}
