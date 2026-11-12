@@ -899,11 +899,11 @@ fn s14_p9_renames_that_hide_or_change_the_extension_ask_first() {
     assert!(h.p("plan.txt").exists());
 }
 
-/// p11 (the rest of S14): undoing a move whose original folder was deleted
-/// asks before recreating it; yes recreates it inside the journaled undo
-/// (so it can be redone and undone), no leaves everything as it is.
+/// S14: undoing a move whose original folder was deleted asks before
+/// recreating it; yes recreates it inside the journaled undo (so it can be
+/// redone and undone), no leaves everything as it is.
 #[test]
-fn s14_p11_undo_asks_before_recreating_a_deleted_folder() {
+fn s14_undo_asks_before_recreating_a_deleted_folder() {
     let h = harness();
     mkdirs(&h.p("Projects/app"));
     touch(&h.p("Projects/app/main.rs"));
@@ -939,4 +939,27 @@ fn s14_p11_undo_asks_before_recreating_a_deleted_folder() {
     ok(&h, &out);
     assert!(h.p("Archive/main.rs").exists());
     assert!(h.p("Projects/app").is_dir());
+}
+
+/// p11 (checked and fine in the audit, kept as a regression test): renaming
+/// onto another item's name, even in another case, stops at a conflict and
+/// never overwrites.
+#[test]
+fn s14_p11_rename_onto_an_existing_name_never_overwrites() {
+    let h = harness();
+    std::fs::write(h.p("a.txt"), b"A").unwrap();
+    std::fs::write(h.p("taken.txt"), b"TAKEN").unwrap();
+    let t = h.window_at("");
+    let out = h.engine.rename_item(t.id(), "a.txt", "Taken.txt").unwrap();
+    let st = h
+        .engine
+        .wait_op(out.ops[0], Duration::from_secs(2))
+        .unwrap();
+    if insensitive(&h) {
+        assert_eq!(st.state, OpState::WaitingForDecision);
+        assert_eq!(st.conflicts.len(), 1);
+        h.engine.ops().cancel(out.ops[0]).unwrap();
+    }
+    assert_eq!(std::fs::read(h.p("taken.txt")).unwrap(), b"TAKEN");
+    assert_eq!(std::fs::read(h.p("a.txt")).unwrap(), b"A");
 }
