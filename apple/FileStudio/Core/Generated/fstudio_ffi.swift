@@ -702,6 +702,12 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     
     func closeWindow(id: UInt64) throws 
     
+    /**
+     * A click in another column of the column view: the tab goes to `dir`
+     * and selects `name` (or nothing).
+     */
+    func columnSelect(tab: UInt64, dir: String, name: String?) throws  -> FfiOutcome
+    
     func commandKeys(command: String)  -> [String]
     
     /**
@@ -727,6 +733,16 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func dataDir()  -> String
     
     func deleteWorkspace(id: UInt64) throws 
+    
+    /**
+     * What dropping `sources` onto the folder `dest` does (metadata only).
+     */
+    func dropEffect(sources: [String], dest: String, mods: FfiMods)  -> FfiDropEffect
+    
+    /**
+     * Decides the drop and queues the copy or move.
+     */
+    func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> Int64
     
     /**
      * Queues an operation (drag and drop).
@@ -822,6 +838,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func opResume(id: Int64) throws 
     
     func opStatus(id: Int64)  -> FfiOpStatus?
+    
+    /**
+     * Lists a folder without a tab (column view). See [`FfiListing`].
+     */
+    func openListing(path: String, showHidden: Bool)  -> FfiListing
     
     func openTab(path: String?) throws  -> FfiTab
     
@@ -1115,6 +1136,22 @@ open func closeWindow(id: UInt64)throws   {try rustCallWithError(FfiConverterTyp
 }
 }
     
+    /**
+     * A click in another column of the column view: the tab goes to `dir`
+     * and selects `name` (or nothing).
+     */
+open func columnSelect(tab: UInt64, dir: String, name: String?)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_column_select(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(tab),
+        FfiConverterString.lower(dir),
+        FfiConverterOptionString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
 open func commandKeys(command: String) -> [String]  {
     return try!  FfiConverterSequenceString.lift(try! rustCall() {
         uniffiCallStatus in
@@ -1205,6 +1242,36 @@ open func deleteWorkspace(id: UInt64)throws   {try rustCallWithError(FfiConverte
         FfiConverterUInt64.lower(id),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * What dropping `sources` onto the folder `dest` does (metadata only).
+     */
+open func dropEffect(sources: [String], dest: String, mods: FfiMods) -> FfiDropEffect  {
+    return try!  FfiConverterTypeFfiDropEffect_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_drop_effect(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(sources),
+        FfiConverterString.lower(dest),
+        FfiConverterTypeFfiMods_lower(mods),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decides the drop and queues the copy or move.
+     */
+open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> Int64  {
+    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_drop_items(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(sources),
+        FfiConverterString.lower(dest),
+        FfiConverterTypeFfiMods_lower(mods),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -1534,6 +1601,20 @@ open func opStatus(id: Int64) -> FfiOpStatus?  {
     uniffi_fstudio_ffi_fn_method_ffiengine_op_status(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Lists a folder without a tab (column view). See [`FfiListing`].
+     */
+open func openListing(path: String, showHidden: Bool) -> FfiListing  {
+    return try!  FfiConverterTypeFfiListing_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_open_listing(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterBool.lower(showHidden),uniffiCallStatus
     )
 })
 }
@@ -2228,6 +2309,297 @@ public func FfiConverterTypeFfiEventSink_lower(_ value: FfiEventSink) -> UInt64 
 
 
 /**
+ * A folder listed without a tab (a column of the column view), with its own
+ * selection. Its events carry [`FfiListing::id`] in the `tab` field.
+ * Releasing it stops the listing and unwatches the folder.
+ */
+public protocol FfiListingProtocol: AnyObject, Sendable {
+    
+    /**
+     * The folder listed.
+     */
+    func dir()  -> String
+    
+    /**
+     * The id its events carry.
+     */
+    func id()  -> UInt64
+    
+    func indexOf(name: String)  -> UInt32?
+    
+    func listingInfo()  -> FfiListingInfo
+    
+    /**
+     * The right-click target (Finder's rule); menu commands act through `owner`.
+     */
+    func menuTargetAt(owner: UInt64, row: UInt32?)  -> FfiMenuTarget
+    
+    func pathAt(i: UInt32)  -> String?
+    
+    func refresh() 
+    
+    func rows(start: UInt32, count: UInt32)  -> [FfiRow]
+    
+    /**
+     * Packed like [`FfiTab::rows_packed`].
+     */
+    func rowsPacked(start: UInt32, count: UInt32)  -> Data
+    
+    func selectedPaths()  -> [String]
+    
+    func selection()  -> FfiSelection
+    
+    func setSelection(change: FfiSelectionChange) 
+    
+    func setVisibleRange(start: UInt32, count: UInt32) 
+    
+}
+/**
+ * A folder listed without a tab (a column of the column view), with its own
+ * selection. Its events carry [`FfiListing::id`] in the `tab` field.
+ * Releasing it stops the listing and unwatches the folder.
+ */
+open class FfiListing: FfiListingProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffilisting(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffilisting(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The folder listed.
+     */
+open func dir() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_dir(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The id its events carry.
+     */
+open func id() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_id(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func indexOf(name: String) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_index_of(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+open func listingInfo() -> FfiListingInfo  {
+    return try!  FfiConverterTypeFfiListingInfo_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_listing_info(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The right-click target (Finder's rule); menu commands act through `owner`.
+     */
+open func menuTargetAt(owner: UInt64, row: UInt32?) -> FfiMenuTarget  {
+    return try!  FfiConverterTypeFfiMenuTarget_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_menu_target_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(owner),
+        FfiConverterOptionUInt32.lower(row),uniffiCallStatus
+    )
+})
+}
+    
+open func pathAt(i: UInt32) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_path_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(i),uniffiCallStatus
+    )
+})
+}
+    
+open func refresh()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_refresh(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func rows(start: UInt32, count: UInt32) -> [FfiRow]  {
+    return try!  FfiConverterSequenceTypeFfiRow.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Packed like [`FfiTab::rows_packed`].
+     */
+open func rowsPacked(start: UInt32, count: UInt32) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_rows_packed(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+})
+}
+    
+open func selectedPaths() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_selected_paths(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func selection() -> FfiSelection  {
+    return try!  FfiConverterTypeFfiSelection_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_selection(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func setSelection(change: FfiSelectionChange)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_set_selection(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiSelectionChange_lower(change),uniffiCallStatus
+    )
+}
+}
+    
+open func setVisibleRange(start: UInt32, count: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffilisting_set_visible_range(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiListing: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiListing
+
+    public static func lift(_ handle: UInt64) throws -> FfiListing {
+        return FfiListing(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiListing) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiListing {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiListing, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiListing_lift(_ handle: UInt64) throws -> FfiListing {
+    return try FfiConverterTypeFfiListing.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiListing_lower(_ value: FfiListing) -> UInt64 {
+    return FfiConverterTypeFfiListing.lower(value)
+}
+
+
+
+
+
+
+/**
  * One tab: a location, its history, view state, selection and listing.
  */
 public protocol FfiTabProtocol: AnyObject, Sendable {
@@ -2310,6 +2682,9 @@ public protocol FfiTabProtocol: AnyObject, Sendable {
      * u64 size, i64 modified_ns,
      * 5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
      * size_text, modified_text
+     * then a trailer (added later; older readers can stop before it):
+     * per row, in the same order: i64 created_ns,
+     * 2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
      * ```
      */
     func rowsPacked(start: UInt32, count: UInt32)  -> Data
@@ -2604,6 +2979,9 @@ open func rows(start: UInt32, count: UInt32) -> [FfiRow]  {
      * u64 size, i64 modified_ns,
      * 5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
      * size_text, modified_text
+     * then a trailer (added later; older readers can stop before it):
+     * per row, in the same order: i64 created_ns,
+     * 2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
      * ```
      */
 open func rowsPacked(start: UInt32, count: UInt32) -> Data  {
@@ -2801,6 +3179,63 @@ public func FfiConverterTypeFfiTab_lower(_ value: FfiTab) -> UInt64 {
 }
 
 
+
+
+/**
+ * One shown column and its width in points.
+ */
+public struct FfiColumnSpec: Equatable, Hashable {
+    public var id: FfiColumnId
+    public var width: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: FfiColumnId, width: Double) {
+        self.id = id
+        self.width = width
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiColumnSpec: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiColumnSpec: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiColumnSpec {
+        return
+            try FfiColumnSpec(
+                id: FfiConverterTypeFfiColumnId.read(from: &buf), 
+                width: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiColumnSpec, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiColumnId.write(value.id, into: &buf)
+        FfiConverterDouble.write(value.width, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnSpec_lift(_ buf: RustBuffer) throws -> FfiColumnSpec {
+    return try FfiConverterTypeFfiColumnSpec.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnSpec_lower(_ value: FfiColumnSpec) -> RustBuffer {
+    return FfiConverterTypeFfiColumnSpec.lower(value)
+}
 
 
 /**
@@ -5158,6 +5593,15 @@ public struct FfiRow: Equatable, Hashable {
     public var isSelected: Bool
     public var isCursor: Bool
     public var isCutPending: Bool
+    /**
+     * Creation time (the modification time when the filesystem has none).
+     */
+    public var createdNs: Int64
+    public var createdText: String
+    /**
+     * The extension as on disk; empty for folders.
+     */
+    public var extText: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5167,7 +5611,13 @@ public struct FfiRow: Equatable, Hashable {
          */name: String, kind: FfiRowKind, 
         /**
          * `folder`, `package.app`, `file.png`, `file`, `symlink`, `other`.
-         */iconKey: String, kindText: String, size: UInt64, sizeText: String, modifiedNs: Int64, modifiedText: String, isHidden: Bool, isDataless: Bool, isPackage: Bool, isSymlink: Bool, isSelected: Bool, isCursor: Bool, isCutPending: Bool) {
+         */iconKey: String, kindText: String, size: UInt64, sizeText: String, modifiedNs: Int64, modifiedText: String, isHidden: Bool, isDataless: Bool, isPackage: Bool, isSymlink: Bool, isSelected: Bool, isCursor: Bool, isCutPending: Bool, 
+        /**
+         * Creation time (the modification time when the filesystem has none).
+         */createdNs: Int64, createdText: String, 
+        /**
+         * The extension as on disk; empty for folders.
+         */extText: String) {
         self.index = index
         self.name = name
         self.kind = kind
@@ -5184,6 +5634,9 @@ public struct FfiRow: Equatable, Hashable {
         self.isSelected = isSelected
         self.isCursor = isCursor
         self.isCutPending = isCutPending
+        self.createdNs = createdNs
+        self.createdText = createdText
+        self.extText = extText
     }
 
     
@@ -5217,7 +5670,10 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
                 isSymlink: FfiConverterBool.read(from: &buf), 
                 isSelected: FfiConverterBool.read(from: &buf), 
                 isCursor: FfiConverterBool.read(from: &buf), 
-                isCutPending: FfiConverterBool.read(from: &buf)
+                isCutPending: FfiConverterBool.read(from: &buf), 
+                createdNs: FfiConverterInt64.read(from: &buf), 
+                createdText: FfiConverterString.read(from: &buf), 
+                extText: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -5238,6 +5694,9 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
         FfiConverterBool.write(value.isSelected, into: &buf)
         FfiConverterBool.write(value.isCursor, into: &buf)
         FfiConverterBool.write(value.isCutPending, into: &buf)
+        FfiConverterInt64.write(value.createdNs, into: &buf)
+        FfiConverterString.write(value.createdText, into: &buf)
+        FfiConverterString.write(value.extText, into: &buf)
     }
 }
 
@@ -5762,13 +6221,20 @@ public struct FfiViewSettings: Equatable, Hashable {
     public var folderMemory: Bool
     public var hour24: Bool
     public var density: FfiRowDensity
+    /**
+     * The list view's default columns.
+     */
+    public var columns: [FfiColumnSpec]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(mode: FfiViewMode, sort: FfiSortBy, ascending: Bool, foldersFirst: Bool, showHidden: Bool, packagesAsFiles: Bool, 
         /**
          * Per-folder view memory ("smart") is on.
-         */folderMemory: Bool, hour24: Bool, density: FfiRowDensity) {
+         */folderMemory: Bool, hour24: Bool, density: FfiRowDensity, 
+        /**
+         * The list view's default columns.
+         */columns: [FfiColumnSpec]) {
         self.mode = mode
         self.sort = sort
         self.ascending = ascending
@@ -5778,6 +6244,7 @@ public struct FfiViewSettings: Equatable, Hashable {
         self.folderMemory = folderMemory
         self.hour24 = hour24
         self.density = density
+        self.columns = columns
     }
 
     
@@ -5804,7 +6271,8 @@ public struct FfiConverterTypeFfiViewSettings: FfiConverterRustBuffer {
                 packagesAsFiles: FfiConverterBool.read(from: &buf), 
                 folderMemory: FfiConverterBool.read(from: &buf), 
                 hour24: FfiConverterBool.read(from: &buf), 
-                density: FfiConverterTypeFfiRowDensity.read(from: &buf)
+                density: FfiConverterTypeFfiRowDensity.read(from: &buf), 
+                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf)
         )
     }
 
@@ -5818,6 +6286,7 @@ public struct FfiConverterTypeFfiViewSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.folderMemory, into: &buf)
         FfiConverterBool.write(value.hour24, into: &buf)
         FfiConverterTypeFfiRowDensity.write(value.density, into: &buf)
+        FfiConverterSequenceTypeFfiColumnSpec.write(value.columns, into: &buf)
     }
 }
 
@@ -5847,16 +6316,24 @@ public struct FfiViewState: Equatable, Hashable {
     public var foldersFirst: Bool
     public var showHidden: Bool
     public var packagesAsFiles: Bool
+    /**
+     * The list view's columns, in order, with widths.
+     */
+    public var columns: [FfiColumnSpec]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(mode: FfiViewMode, sort: FfiSortBy, ascending: Bool, foldersFirst: Bool, showHidden: Bool, packagesAsFiles: Bool) {
+    public init(mode: FfiViewMode, sort: FfiSortBy, ascending: Bool, foldersFirst: Bool, showHidden: Bool, packagesAsFiles: Bool, 
+        /**
+         * The list view's columns, in order, with widths.
+         */columns: [FfiColumnSpec]) {
         self.mode = mode
         self.sort = sort
         self.ascending = ascending
         self.foldersFirst = foldersFirst
         self.showHidden = showHidden
         self.packagesAsFiles = packagesAsFiles
+        self.columns = columns
     }
 
     
@@ -5880,7 +6357,8 @@ public struct FfiConverterTypeFfiViewState: FfiConverterRustBuffer {
                 ascending: FfiConverterBool.read(from: &buf), 
                 foldersFirst: FfiConverterBool.read(from: &buf), 
                 showHidden: FfiConverterBool.read(from: &buf), 
-                packagesAsFiles: FfiConverterBool.read(from: &buf)
+                packagesAsFiles: FfiConverterBool.read(from: &buf), 
+                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf)
         )
     }
 
@@ -5891,6 +6369,7 @@ public struct FfiConverterTypeFfiViewState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.foldersFirst, into: &buf)
         FfiConverterBool.write(value.showHidden, into: &buf)
         FfiConverterBool.write(value.packagesAsFiles, into: &buf)
+        FfiConverterSequenceTypeFfiColumnSpec.write(value.columns, into: &buf)
     }
 }
 
@@ -6268,6 +6747,103 @@ public func FfiConverterTypeFfiChangeKind_lift(_ buf: RustBuffer) throws -> FfiC
 #endif
 public func FfiConverterTypeFfiChangeKind_lower(_ value: FfiChangeKind) -> RustBuffer {
     return FfiConverterTypeFfiChangeKind.lower(value)
+}
+
+
+
+/**
+ * A list-view column.
+ */
+
+public enum FfiColumnId: Equatable, Hashable {
+    
+    case name
+    case size
+    case modified
+    case created
+    case kind
+    case `extension`
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiColumnId: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiColumnId: FfiConverterRustBuffer {
+    typealias SwiftType = FfiColumnId
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiColumnId {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .name
+        
+        case 2: return .size
+        
+        case 3: return .modified
+        
+        case 4: return .created
+        
+        case 5: return .kind
+        
+        case 6: return .`extension`
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiColumnId, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .name:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .size:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .modified:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .created:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .kind:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .`extension`:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnId_lift(_ buf: RustBuffer) throws -> FfiColumnId {
+    return try FfiConverterTypeFfiColumnId.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiColumnId_lower(_ value: FfiColumnId) -> RustBuffer {
+    return FfiConverterTypeFfiColumnId.lower(value)
 }
 
 
@@ -6735,6 +7311,82 @@ public func FfiConverterTypeFfiCursorMove_lift(_ buf: RustBuffer) throws -> FfiC
 #endif
 public func FfiConverterTypeFfiCursorMove_lower(_ value: FfiCursorMove) -> RustBuffer {
     return FfiConverterTypeFfiCursorMove.lower(value)
+}
+
+
+
+/**
+ * What a drop does.
+ */
+
+public enum FfiDropEffect: Equatable, Hashable {
+    
+    case copy
+    case move
+    case none
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDropEffect: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDropEffect: FfiConverterRustBuffer {
+    typealias SwiftType = FfiDropEffect
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDropEffect {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .copy
+        
+        case 2: return .move
+        
+        case 3: return .none
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiDropEffect, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .copy:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .move:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .none:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropEffect_lift(_ buf: RustBuffer) throws -> FfiDropEffect {
+    return try FfiConverterTypeFfiDropEffect.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropEffect_lower(_ value: FfiDropEffect) -> RustBuffer {
+    return FfiConverterTypeFfiDropEffect.lower(value)
 }
 
 
@@ -10465,6 +11117,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiColumnSpec: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiColumnSpec]
+
+    public static func write(_ value: [FfiColumnSpec], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiColumnSpec.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiColumnSpec] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiColumnSpec]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiColumnSpec.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiCommandInfo: FfiConverterRustBuffer {
     typealias SwiftType = [FfiCommandInfo]
 
@@ -10970,6 +11647,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_close_window() != 38839) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_column_select() != 10639) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_command_keys() != 42438) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -10992,6 +11672,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_delete_workspace() != 21528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_effect() != 61237) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 42296) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_enqueue() != 44324) {
@@ -11082,6 +11768,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_op_status() != 35484) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_open_listing() != 550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_open_tab() != 42651) {
@@ -11204,6 +11893,45 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffieventsink_on_event() != 3498) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_dir() != 35741) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_id() != 20618) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_index_of() != 34405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_listing_info() != 32838) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_menu_target_at() != 34461) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_path_at() != 44876) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_refresh() != 51412) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_rows() != 21544) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_rows_packed() != 54987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_selected_paths() != 24242) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_selection() != 22142) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_set_selection() != 57897) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffilisting_set_visible_range() != 31277) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_back() != 15762) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11249,7 +11977,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffitab_rows() != 29485) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_fstudio_ffi_checksum_method_ffitab_rows_packed() != 41782) {
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_rows_packed() != 44715) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_scroll_anchor() != 914) {

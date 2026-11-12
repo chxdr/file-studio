@@ -312,6 +312,13 @@ public struct Row: Equatable, Sendable, Identifiable {
         self.isSymlink = isSymlink; self.isSelected = isSelected; self.isCursor = isCursor
         self.isCutPending = isCutPending
     }
+    // MARK: ui-list additions
+    /// Creation time, ns (the modification time when the filesystem has none).
+    public var createdNs: Int64 = 0
+    /// The Date Created column.
+    public var createdText = ""
+    /// The Extension column, as on disk; empty for folders.
+    public var extText = ""
 }
 
 public enum ListingState: Equatable, Sendable { case loading, complete, error }
@@ -347,6 +354,9 @@ public struct ViewState: Equatable, Sendable {
     public var showHidden = false
     public var packagesAsFiles = true
     public init() {}
+    // MARK: ui-list additions
+    /// The list view's columns, in order, with widths (remembered per folder).
+    public var columns: [ColumnSpec] = ColumnSpec.defaults
 }
 
 /// The selection.
@@ -816,6 +826,9 @@ public struct Settings: Equatable, Sendable {
         public var folderMemory = true
         public var hour24 = true
         public var density: RowDensity = .regular
+        // MARK: ui-list additions
+        /// The list view's default columns.
+        public var columns: [ColumnSpec] = ColumnSpec.defaults
     }
     public struct PathBar: Equatable, Sendable {
         public var completionLimit: UInt32 = 50
@@ -1039,4 +1052,89 @@ public protocol EngineAPI: AnyObject, Sendable {
     func volumesChanged()
     /// Save the session and flush before quitting.
     func appWillQuit()
+}
+
+// MARK: - ui-list additions
+
+/// A list-view column (the core's `ColumnId`).
+public enum ColumnID: String, Equatable, Hashable, Sendable, CaseIterable {
+    case name, size, modified, created, kind, ext
+
+    /// The header title.
+    public var title: String {
+        switch self {
+        case .name: "Name"
+        case .size: "Size"
+        case .modified: "Date Modified"
+        case .created: "Date Created"
+        case .kind: "Kind"
+        case .ext: "Extension"
+        }
+    }
+    /// The width a newly shown column gets.
+    public var defaultWidth: Double {
+        switch self {
+        case .name: 300
+        case .size: 80
+        case .modified, .created: 160
+        case .kind: 130
+        case .ext: 70
+        }
+    }
+    /// What clicking its header sorts by.
+    public var sortBy: SortBy {
+        switch self {
+        case .name: .name
+        case .size: .size
+        case .modified: .modified
+        case .created: .created
+        case .kind: .kind
+        case .ext: .ext
+        }
+    }
+}
+
+/// One shown column and its width in points.
+public struct ColumnSpec: Equatable, Hashable, Sendable {
+    public var id: ColumnID
+    public var width: Double
+    public init(id: ColumnID, width: Double) { self.id = id; self.width = width }
+    /// The core's defaults: Name, Size, Date Modified, Kind.
+    public static let defaults: [ColumnSpec] = [ColumnID.name, .size, .modified, .kind].map {
+        ColumnSpec(id: $0, width: $0.defaultWidth)
+    }
+}
+
+/// What a drop does (the core decides: `engine.dropEffect`).
+public enum DropEffect: Equatable, Sendable { case copy, move, none }
+
+/// A folder listed without a tab: one column of the column view. Same row,
+/// selection and menu rules as a tab; its events carry `id` in the `tab`
+/// field. Releasing it stops the listing and unwatches the folder.
+public protocol ListingAPI: AnyObject, Sendable {
+    var id: TabID { get }
+    func dir() -> String
+    func listingInfo() -> ListingInfo
+    func rows(start: UInt32, count: UInt32) -> [Row]
+    func indexOf(name: String) -> UInt32?
+    func pathAt(_ row: UInt32) -> String?
+    func selection() -> Selection
+    func setSelection(_ change: SelectionChange)
+    func selectedPaths() -> [String]
+    func setVisibleRange(start: UInt32, count: UInt32)
+    func refresh()
+    /// Finder's right-click rule on this listing; menu commands act through `owner`.
+    func menuTarget(owner: TabID, row: UInt32?) -> MenuTarget
+}
+
+/// Engine calls for the list and column views.
+public protocol ListEngineAPI: AnyObject, Sendable {
+    /// Lists a folder without a tab (column view).
+    func openListing(path: String, showHidden: Bool) -> ListingAPI
+    /// A click in another column: the tab goes to `dir` and selects `name`.
+    func columnSelect(tab: TabID, dir: String, name: String?) throws -> Outcome
+    /// What dropping `sources` onto the folder `dest` does. Metadata only.
+    func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect
+    /// Decides the drop and queues the copy or move.
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID
 }
