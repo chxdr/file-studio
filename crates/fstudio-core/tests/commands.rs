@@ -132,6 +132,41 @@ fn later_commands_are_registered() {
 }
 
 #[test]
+fn trash_confirmation_can_be_confirmed() {
+    let h = harness();
+    touch(&h.p("keep-me"));
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["keep-me".into()]));
+    let run = |arg: Option<CommandArg>| {
+        h.engine.perform(
+            CommandInvocation {
+                id: "file.trash".into(),
+                arg,
+                tab: None,
+            },
+            Via::Menu,
+        )
+    };
+    // Default: no question, straight to the Trash (as in Finder).
+    assert!(!h.engine.settings().general.confirm_trash);
+    h.engine
+        .set_setting("general.confirm_trash", "true")
+        .unwrap();
+    // With the setting on, the core asks, however often it is performed.
+    for arg in [None, Some(CommandArg::Confirm)] {
+        let out = run(arg).unwrap();
+        assert!(matches!(out.shell, Some(ShellRequest::ConfirmTrash { .. })));
+        assert!(out.ops.is_empty());
+        assert!(h.p("keep-me").exists());
+    }
+    // "Yes" carries the action out.
+    let out = run(Some(CommandArg::Confirmed)).unwrap();
+    assert!(out.shell.is_none());
+    h.engine.wait_op(out.ops[0], T).unwrap();
+    assert!(!h.p("keep-me").exists());
+}
+
+#[test]
 fn delete_immediately_only_when_enabled_and_confirmed() {
     let h = harness();
     touch(&h.p("doomed"));

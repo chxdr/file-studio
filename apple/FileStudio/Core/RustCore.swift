@@ -103,6 +103,7 @@ extension CommandArg {
         case .viewMode(let m): .viewMode(mode: m.ffi)
         case .char(let c): .char(value: String(c))
         case .confirm: .confirm
+        case .confirmed: .confirmed
         case .text(let t): .text(text: t)
         }
     }
@@ -115,6 +116,7 @@ extension CommandArg {
             guard let c = v.first else { return nil }
             self = .char(c)
         case .confirm: self = .confirm
+        case .confirmed: self = .confirmed
         case .text(let t): self = .text(t)
         }
     }

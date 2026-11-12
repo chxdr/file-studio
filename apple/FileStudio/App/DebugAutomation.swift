@@ -30,6 +30,7 @@
 //   appearance:dark|light|system   forces the app's appearance (for light/dark snapshots)
 //   quit
 // UI sessions add their own steps with `DebugAutomation.register("name") { arg, model in … }`.
+//   (more steps for the ops UI, toasts and Settings: Views/DebugSteps.swift)
 
 #if DEBUG
 import AppKit
@@ -108,7 +109,7 @@ enum DebugAutomation {
             }
         case "quit": NSApp.terminate(nil)
         default:
-            if let f = custom[op] { f(arg, model) } else { print("DEBUG unknown step \(step)") }
+            if let f = custom[op] { f(arg, model) } else if !UIDebugSteps.run(op, arg, model) { print("DEBUG unknown step \(step)") }
         }
         fflush(stdout)
     }

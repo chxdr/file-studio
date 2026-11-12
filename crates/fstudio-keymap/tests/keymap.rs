@@ -64,6 +64,7 @@ fn standard_table_section_9() {
         ("preview.get_info", &["⌘I"]),
         ("preview.quick_look", &["Space", "⌘Y"]),
         ("edit.copy", &["⌘C"]),
+        ("edit.cut", &["⌘X"]),
         ("edit.paste", &["⌘V"]),
         ("file.move_here", &["⌥⌘V"]),
         ("file.copy_to_other_pane", &["F5"]),
@@ -152,6 +153,7 @@ fn contexts_decide_tab() {
     assert_eq!(cmd(run(&mut k, "↩", &rn, t)), "rename.commit");
     // List-only keys do nothing in a text field, so the field keeps ⌘A / ⌘C / ⌫.
     assert_eq!(run(&mut k, "⌘A", &ab, t), Resolution::None);
+    assert_eq!(run(&mut k, "⌘X", &ab, t), Resolution::None);
     assert_eq!(
         run(&mut k, "⌘⌫", &ab, t),
         Resolution::Command(id("addressbar.clear_line"), None)
@@ -322,6 +324,7 @@ fn vim_falls_back_to_standard() {
     let t = Instant::now();
     for (key, want) in [
         ("⌘C", "edit.copy"),
+        ("⌘X", "edit.cut"),
         ("⌘↓", "nav.open"),
         ("F5", "Pending"), // F5 needs DualPane: single pane, no command
         ("⇧⌘N", "file.new_folder"),

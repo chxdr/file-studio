@@ -107,6 +107,8 @@ public enum CommandArg: Equatable, Hashable, Sendable {
     case char(Character)
     /// Ask before doing it.
     case confirm
+    /// The user said yes to the core's question (`confirmTrash`…): do it now.
+    case confirmed
     case text(String)
 }
 
@@ -193,7 +195,7 @@ public enum ShellRequest: Equatable, Sendable {
     case renameDialog(tab: TabID, paths: [String])
     /// Offer "Create Folder"; on yes call `engine.createFolderAndGo`.
     case offerCreateFolder(path: String, nearestExisting: String)
-    /// On yes perform `file.trash` with `.confirm`… see the core docs.
+    /// On yes perform `file.trash` with `.confirmed`.
     case confirmTrash(paths: [String])
     case confirmDeleteImmediately(paths: [String])
     case askPattern(select: Bool)

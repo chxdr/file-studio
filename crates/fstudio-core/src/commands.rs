@@ -1088,9 +1088,11 @@ impl Engine {
             }
             "file.trash" => {
                 let sel = Self::need_selection(&t)?;
-                let confirm = matches!(inv.arg, Some(CommandArg::Confirm))
+                // `Confirmed` is the shell's "yes" to our own question: carry on.
+                let confirmed = matches!(inv.arg, Some(CommandArg::Confirmed));
+                let ask = matches!(inv.arg, Some(CommandArg::Confirm))
                     || self.settings().general.confirm_trash;
-                if confirm {
+                if ask && !confirmed {
                     return Ok(Outcome::shell(ShellRequest::ConfirmTrash {
                         paths: strings(&sel),
                     })
@@ -1106,7 +1108,7 @@ impl Engine {
                         "Delete Immediately is turned off in Settings".into(),
                     ));
                 }
-                if !matches!(inv.arg, Some(CommandArg::Confirm)) {
+                if !matches!(inv.arg, Some(CommandArg::Confirm | CommandArg::Confirmed)) {
                     return Ok(Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
                         paths: strings(&sel),
                     })
