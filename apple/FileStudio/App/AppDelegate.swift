@@ -21,6 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.windowsDidChange = { [weak self] in self?.syncWindows() }
         WindowPreferences.migrateLegacyDefaults(model)
         model.start()
+        // Settings → General → "Run First-Time Setup Again…" opens setup on a file window.
+        SettingsHooks.rerunFirstRunSetup = { [unowned self] in
+            let host = NSApp.windows.first { $0.windowController is CoreWindowIdentifying && $0.isVisible }
+            SetupController.present(model: self.model, on: host)
+        }
         NSApp.mainMenu = MainMenu.build(model: model, target: self)
         keyRouter = KeyRouter(model: model)
         keyRouter.install()

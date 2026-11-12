@@ -109,6 +109,7 @@ final class PaneViewController: NSViewController {
         outline.isHidden = !marked
         header.update(tm, volumes: model.volumes)
         view.setAccessibilityLabel(isDual ? (isActive ? "Active pane, \(tm.title)" : "Pane, \(tm.title)") : tm.title)
+        header.showSubtitle = Core.bool(model.engine, "appearance.path_bar_subtitle") ?? true
     }
 
     /// Re-reads the subtitle and view mode after a listing change.
@@ -242,6 +243,19 @@ final class PaneHeaderView: NSView {
     func setActive(_ on: Bool) { bar.isHidden = !on }
 
     override func updateLayer() {
+    /// The address field in EDIT is 20 pt tall with a border and would sit on
+    /// top of the subtitle, so the subtitle steps aside while editing.
+    func setEditing(_ on: Bool) {
+        editing = on
+        updateSubtitleVisibility()
+    }
+
+    /// Settings → Appearance → "Show the item count and free space".
+    var showSubtitle = true { didSet { updateSubtitleVisibility() } }
+    private var editing = false
+
+    private func updateSubtitleVisibility() { subtitle.isHidden = editing || !showSubtitle }
+
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         bar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
     }
