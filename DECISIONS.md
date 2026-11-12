@@ -114,7 +114,7 @@ Every one of these is also a setting.
 - **Policy:** previews, thumbnails, hashing, copying and folder-size work refuse dataless items or ask first. Sizes show the logical size; "size on disk" is 0 for placeholders.
 - **Rich status** ("downloading", "uploaded") goes through `Platform::cloud_status` (1.6–14 ms per item) for visible items only.
 - **Download Now** uses `startDownloadingUbiquitousItemAtURL`.
-- **Still to test:** whether open/read, Quick Look, and listing a dataless *folder* trigger downloads. That needs a scratch file in iCloud Drive.
+- **Not tested, by choice** (user, 2026-11-12): whether open/read, Quick Look and listing a dataless *folder* trigger downloads. All three are treated as "may download" and gated behind the flag.
 
 ## F-017: Names, Unicode and case (accepted, M0 spike)
 - **APFS behaviour:** names are stored exactly as given but looked up normalisation-insensitively, on both case-sensitive and case-insensitive volumes.
