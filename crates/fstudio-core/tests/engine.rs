@@ -671,3 +671,48 @@ fn hints_and_held_shortcuts() {
     assert!(held.rows.iter().any(|r| r.id.as_str() == "select.all"));
     assert!(h.engine.keymap_conflicts().is_empty());
 }
+
+#[test]
+fn crumb_click_selects_the_child_we_came_from() {
+    let h = harness();
+    mkdirs(&h.p("a/b/c"));
+    mkdirs(&h.p("a/other"));
+    let t = h.window_at("a/b/c");
+    // Going to an ancestor (what a crumb click does) selects the child on the way.
+    t.go(&h.s("a")).unwrap();
+    wait_complete(&t);
+    eventually("b selected", || t.selection().names == ["b"]);
+}
+
+#[test]
+fn drop_moves_on_the_same_volume_and_queues_it() {
+    let h = harness();
+    mkdirs(&h.p("dest"));
+    touch(&h.p("x.txt"));
+    let src = vec![h.p("x.txt")];
+    let none = Mods::default();
+    assert_eq!(
+        h.engine.drop_action(&src, &h.p("dest"), none),
+        DropAction::Move
+    );
+    let copy = Mods {
+        alt: true,
+        ..Mods::default()
+    };
+    assert_eq!(
+        h.engine.drop_action(&src, &h.p("dest"), copy),
+        DropAction::Copy
+    );
+    // Into the folder it is already in, or onto a file: refused.
+    assert_eq!(h.engine.drop_action(&src, &h.p(""), none), DropAction::None);
+    assert_eq!(
+        h.engine.drop_action(&src, &h.p("x.txt"), none),
+        DropAction::None
+    );
+    assert!(h.engine.drop_files(src.clone(), h.p(""), none).is_err());
+    let out = h.engine.drop_files(src, h.p("dest"), none).unwrap();
+    assert_eq!(out.ops.len(), 1);
+    eventually("moved", || {
+        h.p("dest/x.txt").exists() && !h.p("x.txt").exists()
+    });
+}

@@ -156,7 +156,7 @@ struct AttrList {
 #[cfg(target_os = "macos")]
 pub fn vol_attrs(mount: &Path) -> Option<VolAttrs> {
     const ATTR_VOL_INFO: u32 = 0x8000_0000;
-    const ATTR_VOL_NAME: u32 = 0x20;
+    const ATTR_VOL_NAME: u32 = 0x2000;
     const ATTR_VOL_CAPABILITIES: u32 = 0x2_0000;
     const VOL_CAP_INT_CLONE: u32 = 0x0001_0000;
     let c = cpath(mount).ok()?;

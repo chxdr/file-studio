@@ -146,6 +146,24 @@ pub struct FfiMods {
     pub ctrl: bool,
 }
 
+/// What a drop onto a folder does (`Engine::drop_action`).
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiDropAction {
+    None,
+    Copy,
+    Move,
+}
+
+impl From<core::DropAction> for FfiDropAction {
+    fn from(a: core::DropAction) -> Self {
+        match a {
+            core::DropAction::None => Self::None,
+            core::DropAction::Copy => Self::Copy,
+            core::DropAction::Move => Self::Move,
+        }
+    }
+}
+
 /// A key press.
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct FfiKeyChord {
@@ -1257,9 +1275,7 @@ impl From<core::Completions> for FfiCompletions {
                 new_input: e.new_input,
             }),
             ghost_text: c.ghost_text,
-            // `fstudio_path` doesn't export `InputKind` yet (requested); its
-            // Debug name is stable enough until it does.
-            is_bare_word: format!("{:?}", c.kind) == "BareWord",
+            is_bare_word: c.kind == fstudio_path::InputKind::BareWord,
             parent: c.parent.map(|p| ps(&p)),
             segment_start: c.segment_start as u32,
             skipped_slow: c.skipped_slow,

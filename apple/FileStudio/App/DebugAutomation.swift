@@ -17,6 +17,10 @@
 //   click:<x>,<y>         left click (main window content points from the top-left)
 //   dclick:<x>,<y>        double click
 //   rclick:<x>,<y>        logs the context menu a right-click there would show (MENU lines)
+//   action:<selector:>    sends an action up the main window's responder chain (`undo:`), as
+//                         a menu would when the app is active (scripted runs often aren't)
+//   ax[:<x>,<y>]          the accessibility tree (role, label, value) under the view at a point (AX lines)
+//   hover:<x>,<y>         mouseEntered + mouseMoved to the views under the point that track the mouse
 //   scroll:<dx>,<dy>      scroll wheel over the window's centre (pixels)
 //   drag:<x>,<y>,<dx>,<dy>
 //   move:<x>,<y>          mouse-moved events ending at the point (hover, tracking areas)
@@ -86,6 +90,11 @@ enum DebugAutomation {
         case "click": click(arg, count: 1)
         case "dclick": click(arg, count: 2)
         case "rclick": rightClick(arg)
+        case "hover": hover(arg)
+        case "ax": axDump(arg)
+        case "action":
+            let ok = mainWindow?.firstResponder?.tryToPerform(Selector(arg), with: nil) ?? false
+            print("ACTION \(arg) \(ok ? "handled" : "not handled")")
         case "move": moveMouse(arg)
         case "activate": activate(arg)
         case "drag": drag(arg)
@@ -129,7 +138,8 @@ enum DebugAutomation {
     private static func log(_ m: AppModel) {
         print("STATE " + json(["type": "app", "engine": m.engine.implementationName, "windows": m.windows.count,
                                "tabs": m.tabs.count, "ops": m.ops.count, "status": m.statusMessage ?? "",
-                               "keyWindow": m.keyWindowID.map { Int($0) } ?? -1,
+                               "keyWindow": m.keyWindowID.map { Int($0) } ?? -1, "appActive": NSApp.isActive,
+                               "nsKeyWindow": NSApp.keyWindow.map { String(describing: type(of: $0)) } ?? "nil",
                                "firstResponder": mainWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"]))
         for w in m.workspace.windows {
             print("STATE " + json(["type": "window", "id": Int(w.id), "panes": w.panes.count, "activePane": w.activePane,
@@ -251,7 +261,9 @@ enum DebugAutomation {
                                         timestamp: ProcessInfo.processInfo.systemUptime,
                                         windowNumber: w.windowNumber, context: nil, characters: chars,
                                         charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) {
-                NSApp.sendEvent(e)
+                // Through the event queue, like real input: `NSApp.currentEvent`
+                // is then this event while it's handled (menus and timing rely on it).
+                NSApp.postEvent(e, atStart: false)
             }
         }
     }
@@ -260,6 +272,13 @@ enum DebugAutomation {
     private static func typeText(_ text: String) {
         if let tv = (NSApp.keyWindow ?? mainWindow)?.firstResponder as? NSTextView {
             tv.insertText(text, replacementRange: tv.selectedRange())
+            // A real keystroke or paste arrives in an event, and the undo group it
+            // opens closes when that event is done; give scripted text an event too.
+            if let e = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+                NSApp.postEvent(e, atStart: false)
+            }
             return
         }
         for ch in text {
@@ -327,6 +346,42 @@ enum DebugAutomation {
         if ws.indices.contains(i) { ws[i].makeKeyAndOrderFront(nil) }
     }
 
+    /// Tracking areas only see real mouse movement; tell the views under the
+    /// point directly (hover looks in snapshots).
+    private static func hover(_ arg: String) {
+        guard let w = mainWindow, let p = point(arg, in: w), let e = mouse(.mouseMoved, p, w, count: 0) else { return }
+        var v = hitView(p, w)
+        while let cur = v {
+            // Only the app's own views: AppKit's expect real enter/exit events.
+            let name = String(describing: type(of: cur))
+            if !cur.trackingAreas.isEmpty, !name.hasPrefix("NS"), !name.hasPrefix("_") {
+                cur.mouseEntered(with: e)
+                cur.mouseMoved(with: e)
+            }
+            v = cur.superview
+        }
+        print("HOVER \(arg) -> \(hitView(p, w).map { String(describing: type(of: $0)) } ?? "nil")")
+    }
+
+    /// Prints what VoiceOver would read: role, label and value, depth first.
+    private static func axDump(_ arg: String) {
+        guard let w = mainWindow else { return }
+        let root: Any? = arg.isEmpty ? w.contentView : point(arg, in: w).flatMap { hitView($0, w) }
+        func walk(_ e: Any, _ depth: Int) {
+            guard depth < 12, let el = e as? NSAccessibilityProtocol else { return }
+            let o = e as AnyObject
+            let role = (o.accessibilityRole?() ?? nil)?.rawValue ?? "-"
+            let label = (o.accessibilityLabel?() ?? nil) ?? ""
+            let value = (o.accessibilityValue?() ?? nil).map { "\($0)" } ?? ""
+            let ignored = (o as? NSView).map { !$0.isAccessibilityElement() } ?? false
+            if !ignored || !label.isEmpty {
+                print("AX \(String(repeating: "  ", count: depth))\(role) \"\(label)\"\(value.isEmpty ? "" : " = \(value)")")
+            }
+            for c in el.accessibilityChildren() ?? [] { walk(c, depth + 1) }
+        }
+        if let r = root { walk(r, 0) }
+    }
+
     private static func drag(_ arg: String) {
         let n = arg.split(separator: ",").compactMap { Double($0) }
         guard n.count == 4, let w = mainWindow, let p = point("\(n[0]),\(n[1])", in: w) else { return }
@@ -351,6 +406,35 @@ enum DebugAutomation {
 
     // MARK: Snapshots
 
+    /// Draws a child window's content at its place over the parent (with a
+    /// popover-like background, since materials don't render off-screen).
+    private static func renderChild(_ child: NSWindow, of w: NSWindow, into ctx: CGContext, rootSize: NSSize, flipped: Bool) {
+        guard let cv = child.contentView, let layer = cv.layer else { return }
+        let origin = NSPoint(x: child.frame.minX - w.frame.minX, y: child.frame.minY - w.frame.minY)
+        ctx.saveGState()
+        // The parent was drawn flipped when its view is flipped; undo that for the child.
+        if flipped { ctx.translateBy(x: 0, y: rootSize.height); ctx.scaleBy(x: 1, y: -1) }
+        ctx.translateBy(x: origin.x, y: origin.y)
+        let r = CGRect(origin: .zero, size: child.frame.size)
+        var bg = NSColor.windowBackgroundColor.cgColor
+        child.effectiveAppearance.performAsCurrentDrawingAppearance { bg = NSColor.windowBackgroundColor.cgColor }
+        ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 12, color: NSColor.black.withAlphaComponent(0.35).cgColor)
+        ctx.setFillColor(bg)
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: 8, cornerHeight: 8, transform: nil))
+        ctx.fillPath()
+        ctx.setShadow(offset: .zero, blur: 0)
+        if cv.isFlipped && !layer.isGeometryFlipped { ctx.translateBy(x: 0, y: r.height); ctx.scaleBy(x: 1, y: -1) }
+        let backdrops = allLayers(layer).filter {
+            let n = String(describing: type(of: $0))
+            return n.contains("Backdrop") || n.contains("VisualEffect")
+        }
+        let was = backdrops.map(\.isHidden)
+        backdrops.forEach { $0.isHidden = true }
+        layer.render(in: ctx)
+        zip(backdrops, was).forEach { $0.isHidden = $1 }
+        ctx.restoreGState()
+    }
+
     private static func allLayers(_ l: CALayer) -> [CALayer] {
         [l] + (l.sublayers ?? []).flatMap { allLayers($0) }
     }
@@ -358,7 +442,9 @@ enum DebugAutomation {
     /// Renders each visible window of this app (only) to PNG through its own
     /// layer tree (SwiftUI content included; system materials draw flat).
     private static func snap(_ name: String, dir: URL) {
-        for (i, w) in NSApp.windows.filter({ $0.isVisible && $0.frame.width > 200 }).enumerated() {
+        // Child windows (popovers, completion lists) are drawn into their parent's image.
+        let tops = NSApp.windows.filter { $0.isVisible && $0.frame.width > 200 && $0.parent == nil }
+        for (i, w) in tops.enumerated() {
             guard let view = w.contentView?.superview ?? w.contentView else { continue }
             view.layoutSubtreeIfNeeded()
             view.displayIfNeeded()
@@ -388,6 +474,9 @@ enum DebugAutomation {
                 backdrops.forEach { $0.isHidden = true }
                 layer.render(in: ctx)
                 zip(backdrops, was).forEach { $0.isHidden = $1 }
+            }
+            for child in (w.childWindows ?? []) where child.isVisible {
+                renderChild(child, of: w, into: ctx, rootSize: size, flipped: view.isFlipped && !(view.layer?.isGeometryFlipped ?? false))
             }
             guard let img = ctx.makeImage() else { continue }
             let url = dir.appendingPathComponent("\(name)\(i == 0 ? "" : "-w\(i)").png")

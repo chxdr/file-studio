@@ -131,6 +131,11 @@ fn standard_table_section_9() {
         run(&mut k, "/", &Context::list(), t),
         Resolution::Command(id("nav.address_bar"), Some(CommandArg::Char('/')))
     );
+    // So does "~" (⇧`), for a home-relative path.
+    assert_eq!(
+        run(&mut k, "~", &Context::list(), t),
+        Resolution::Command(id("nav.address_bar"), Some(CommandArg::Char('~')))
+    );
 }
 
 #[test]

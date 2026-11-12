@@ -892,6 +892,16 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         try wrap { Outcome(try ffi.createFolderAndGo(tab: tab, path: path)) }
     }
     func setClipboard(_ paths: [String], cut: Bool) { ffi.setClipboard(paths: paths, cut: cut) }
+    func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
+        switch ffi.dropAction(sources: sources, destDir: destDir, mods: mods.ffi) {
+        case .none: .none
+        case .copy: .copy
+        case .move: .move
+        }
+    }
+    func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome {
+        try wrap { Outcome(try ffi.dropFiles(sources: sources, destDir: destDir, mods: mods.ffi)) }
+    }
     func clipboardPaths() -> [String] { ffi.clipboardPaths() }
 
     // Menus
@@ -932,6 +942,11 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         let r = try wrap { try ffi.importZoxide(dbPath: dbPath) }
         return (r.first ?? 0, r.count > 1 ? r[1] : 0)
     }
+    func makeTabCycle() -> TabCycleAPI { RustTabCycle() }
+    func deletePathComponent(_ input: String, cursor: Int) -> (text: String, cursor: Int) {
+        let e = FileStudio.deletePathComponent(input: input, cursor: UInt32(cursor))
+        return (e.text, Int(e.cursor))
+    }
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir] {
         ffi.frecent(query: query, limit: limit).map { FrecentDir(path: $0.path, score: $0.score, lastAccessed: $0.lastAccessed) }
     }
@@ -964,4 +979,19 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     // OS hooks
     func volumesChanged() { ffi.volumesChanged() }
     func appWillQuit() { ffi.appWillQuit() }
+}
+
+/// The core's Tab state machine (`FfiTabCycle`).
+final class RustTabCycle: TabCycleAPI {
+    private let ffi = FfiTabCycle()
+    func press(_ c: Completions, backwards: Bool) -> TabOutcome {
+        switch ffi.press(rows: c.items.map(\.insertText), extension: c.commonPrefixExtension?.newInput,
+                         backwards: backwards) {
+        case .nothing: .nothing
+        case .extend(let t): .extend(newInput: t)
+        case .select(let i, let t): .select(index: Int(i), text: t)
+        }
+    }
+    func reset() { ffi.reset() }
+    var isCycling: Bool { ffi.isCycling() }
 }

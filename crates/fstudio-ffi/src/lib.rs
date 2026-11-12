@@ -28,6 +28,82 @@ pub fn core_version() -> String {
     fstudio_core::version().to_string()
 }
 
+// ───────────────────────── address-bar editing ─────────────────────────
+
+/// What Tab or ⇧Tab does in the address bar (`fstudio_path::TabOutcome`).
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum FfiTabOutcome {
+    /// Nothing to complete.
+    Nothing,
+    /// Set the field to `new_input`, keep the list open, recompute completions.
+    Extend { new_input: String },
+    /// Set the field to `text` and highlight row `index`; don't recompute.
+    Select { index: u32, text: String },
+}
+
+/// The address bar's Tab state machine (one per bar). Call `press` on Tab or
+/// ⇧Tab and `reset` on any other edit.
+#[derive(uniffi::Object, Default)]
+pub struct FfiTabCycle {
+    inner: std::sync::Mutex<fstudio_path::TabCycle>,
+}
+
+#[uniffi::export]
+impl FfiTabCycle {
+    /// A fresh, idle cycle.
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    /// Tab (`backwards == false`) or ⇧Tab. `rows` are the current rows'
+    /// `insert_text`; `extension` the common-prefix extension's `new_input`.
+    pub fn press(
+        &self,
+        rows: Vec<String>,
+        extension: Option<String>,
+        backwards: bool,
+    ) -> FfiTabOutcome {
+        let mut c = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match c.press_rows(&rows, extension.as_deref(), backwards) {
+            fstudio_path::TabOutcome::Nothing => FfiTabOutcome::Nothing,
+            fstudio_path::TabOutcome::Extend { new_input } => FfiTabOutcome::Extend { new_input },
+            fstudio_path::TabOutcome::Select { index, text } => FfiTabOutcome::Select {
+                index: index as u32,
+                text,
+            },
+        }
+    }
+    /// Forgets any cycle in progress (the user typed or moved the cursor).
+    pub fn reset(&self) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).reset();
+    }
+    /// True while Tab is cycling through rows.
+    pub fn is_cycling(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_cycling()
+    }
+}
+
+/// A text edit result: the new text and the cursor (UTF-8 byte offset).
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiTextEdit {
+    pub text: String,
+    pub cursor: u32,
+}
+
+/// ⌥⌫ in the address bar: deletes back one path component before `cursor`
+/// (UTF-8 bytes).
+#[uniffi::export]
+pub fn delete_path_component(input: String, cursor: u32) -> FfiTextEdit {
+    let (text, c) = fstudio_path::delete_path_component(&input, cursor as usize);
+    FfiTextEdit {
+        text,
+        cursor: c as u32,
+    }
+}
+
 // ───────────────────────── callbacks ─────────────────────────
 
 /// Receives core events. Implemented by the shell. Called on one core
@@ -468,6 +544,32 @@ impl FfiEngine {
     /// Creates a missing folder (through the queue) and shows it.
     pub fn create_folder_and_go(&self, tab: u64, path: String) -> R<FfiOutcome> {
         Ok(self.inner.create_folder_and_go(tab_id(tab), &path)?.into())
+    }
+    /// What dropping `sources` onto the folder `dest_dir` with these
+    /// modifiers would do (for the drag cursor). Does `lstat` on each source.
+    pub fn drop_action(
+        &self,
+        sources: Vec<String>,
+        dest_dir: String,
+        mods: FfiMods,
+    ) -> FfiDropAction {
+        let src: Vec<std::path::PathBuf> = sources.into_iter().map(Into::into).collect();
+        self.inner
+            .drop_action(&src, std::path::Path::new(&dest_dir), mods.into())
+            .into()
+    }
+    /// Drops `sources` onto `dest_dir`: queues the copy or move the core decides.
+    pub fn drop_files(
+        &self,
+        sources: Vec<String>,
+        dest_dir: String,
+        mods: FfiMods,
+    ) -> R<FfiOutcome> {
+        let src = sources.into_iter().map(Into::into).collect();
+        Ok(self
+            .inner
+            .drop_files(src, dest_dir.into(), mods.into())?
+            .into())
     }
     /// Files copied in from another app (or cut, pending a move on paste).
     pub fn set_clipboard(&self, paths: Vec<String>, cut: bool) {

@@ -729,6 +729,17 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func deleteWorkspace(id: UInt64) throws 
     
     /**
+     * What dropping `sources` onto the folder `dest_dir` with these
+     * modifiers would do (for the drag cursor). Does `lstat` on each source.
+     */
+    func dropAction(sources: [String], destDir: String, mods: FfiMods)  -> FfiDropAction
+    
+    /**
+     * Drops `sources` onto `dest_dir`: queues the copy or move the core decides.
+     */
+    func dropFiles(sources: [String], destDir: String, mods: FfiMods) throws  -> FfiOutcome
+    
+    /**
      * Queues an operation (drag and drop).
      */
     func enqueue(req: FfiOpRequest) throws  -> Int64
@@ -1205,6 +1216,37 @@ open func deleteWorkspace(id: UInt64)throws   {try rustCallWithError(FfiConverte
         FfiConverterUInt64.lower(id),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * What dropping `sources` onto the folder `dest_dir` with these
+     * modifiers would do (for the drag cursor). Does `lstat` on each source.
+     */
+open func dropAction(sources: [String], destDir: String, mods: FfiMods) -> FfiDropAction  {
+    return try!  FfiConverterTypeFfiDropAction_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_drop_action(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(sources),
+        FfiConverterString.lower(destDir),
+        FfiConverterTypeFfiMods_lower(mods),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Drops `sources` onto `dest_dir`: queues the copy or move the core decides.
+     */
+open func dropFiles(sources: [String], destDir: String, mods: FfiMods)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_drop_files(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(sources),
+        FfiConverterString.lower(destDir),
+        FfiConverterTypeFfiMods_lower(mods),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2798,6 +2840,186 @@ public func FfiConverterTypeFfiTab_lift(_ handle: UInt64) throws -> FfiTab {
 #endif
 public func FfiConverterTypeFfiTab_lower(_ value: FfiTab) -> UInt64 {
     return FfiConverterTypeFfiTab.lower(value)
+}
+
+
+
+
+
+
+/**
+ * The address bar's Tab state machine (one per bar). Call `press` on Tab or
+ * ⇧Tab and `reset` on any other edit.
+ */
+public protocol FfiTabCycleProtocol: AnyObject, Sendable {
+    
+    /**
+     * True while Tab is cycling through rows.
+     */
+    func isCycling()  -> Bool
+    
+    /**
+     * Tab (`backwards == false`) or ⇧Tab. `rows` are the current rows'
+     * `insert_text`; `extension` the common-prefix extension's `new_input`.
+     */
+    func press(rows: [String], `extension`: String?, backwards: Bool)  -> FfiTabOutcome
+    
+    /**
+     * Forgets any cycle in progress (the user typed or moved the cursor).
+     */
+    func reset() 
+    
+}
+/**
+ * The address bar's Tab state machine (one per bar). Call `press` on Tab or
+ * ⇧Tab and `reset` on any other edit.
+ */
+open class FfiTabCycle: FfiTabCycleProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffitabcycle(self.handle, $0) }
+    }
+    /**
+     * A fresh, idle cycle.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_constructor_ffitabcycle_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffitabcycle(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * True while Tab is cycling through rows.
+     */
+open func isCycling() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitabcycle_is_cycling(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Tab (`backwards == false`) or ⇧Tab. `rows` are the current rows'
+     * `insert_text`; `extension` the common-prefix extension's `new_input`.
+     */
+open func press(rows: [String], `extension`: String?, backwards: Bool) -> FfiTabOutcome  {
+    return try!  FfiConverterTypeFfiTabOutcome_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitabcycle_press(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(rows),
+        FfiConverterOptionString.lower(`extension`),
+        FfiConverterBool.lower(backwards),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Forgets any cycle in progress (the user typed or moved the cursor).
+     */
+open func reset()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitabcycle_reset(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTabCycle: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiTabCycle
+
+    public static func lift(_ handle: UInt64) throws -> FfiTabCycle {
+        return FfiTabCycle(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiTabCycle) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTabCycle {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiTabCycle, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTabCycle_lift(_ handle: UInt64) throws -> FfiTabCycle {
+    return try FfiConverterTypeFfiTabCycle.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTabCycle_lower(_ value: FfiTabCycle) -> UInt64 {
+    return FfiConverterTypeFfiTabCycle.lower(value)
 }
 
 
@@ -5690,6 +5912,63 @@ public func FfiConverterTypeFfiTabState_lower(_ value: FfiTabState) -> RustBuffe
 
 
 /**
+ * A text edit result: the new text and the cursor (UTF-8 byte offset).
+ */
+public struct FfiTextEdit: Equatable, Hashable {
+    public var text: String
+    public var cursor: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, cursor: UInt32) {
+        self.text = text
+        self.cursor = cursor
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTextEdit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTextEdit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTextEdit {
+        return
+            try FfiTextEdit(
+                text: FfiConverterString.read(from: &buf), 
+                cursor: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTextEdit, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterUInt32.write(value.cursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextEdit_lift(_ buf: RustBuffer) throws -> FfiTextEdit {
+    return try FfiConverterTypeFfiTextEdit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextEdit_lower(_ value: FfiTextEdit) -> RustBuffer {
+    return FfiConverterTypeFfiTextEdit.lower(value)
+}
+
+
+/**
  * Edit-menu undo/redo labels.
  */
 public struct FfiUndoState: Equatable, Hashable {
@@ -6745,6 +7024,82 @@ public func FfiConverterTypeFfiCursorMove_lift(_ buf: RustBuffer) throws -> FfiC
 #endif
 public func FfiConverterTypeFfiCursorMove_lower(_ value: FfiCursorMove) -> RustBuffer {
     return FfiConverterTypeFfiCursorMove.lower(value)
+}
+
+
+
+/**
+ * What a drop onto a folder does (`Engine::drop_action`).
+ */
+
+public enum FfiDropAction: Equatable, Hashable {
+    
+    case none
+    case copy
+    case move
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDropAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDropAction: FfiConverterRustBuffer {
+    typealias SwiftType = FfiDropAction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDropAction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .none
+        
+        case 2: return .copy
+        
+        case 3: return .move
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiDropAction, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .none:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .copy:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .move:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropAction_lift(_ buf: RustBuffer) throws -> FfiDropAction {
+    return try FfiConverterTypeFfiDropAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDropAction_lower(_ value: FfiDropAction) -> RustBuffer {
+    return FfiConverterTypeFfiDropAction.lower(value)
 }
 
 
@@ -9666,6 +10021,98 @@ public func FfiConverterTypeFfiSystemMenu_lower(_ value: FfiSystemMenu) -> RustB
 
 
 /**
+ * What Tab or ⇧Tab does in the address bar (`fstudio_path::TabOutcome`).
+ */
+
+public enum FfiTabOutcome: Equatable, Hashable {
+    
+    /**
+     * Nothing to complete.
+     */
+    case nothing
+    /**
+     * Set the field to `new_input`, keep the list open, recompute completions.
+     */
+    case extend(newInput: String
+    )
+    /**
+     * Set the field to `text` and highlight row `index`; don't recompute.
+     */
+    case select(index: UInt32, text: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTabOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTabOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTabOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTabOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .nothing
+        
+        case 2: return .extend(newInput: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .select(index: try FfiConverterUInt32.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTabOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .nothing:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .extend(newInput):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(newInput, into: &buf)
+            
+        
+        case let .select(index,text):
+            writeInt(&buf, Int32(3))
+            FfiConverterUInt32.write(index, into: &buf)
+            FfiConverterString.write(text, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTabOutcome_lift(_ buf: RustBuffer) throws -> FfiTabOutcome {
+    return try FfiConverterTypeFfiTabOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTabOutcome_lower(_ value: FfiTabOutcome) -> RustBuffer {
+    return FfiConverterTypeFfiTabOutcome.lower(value)
+}
+
+
+
+/**
  * The terminal Open in Terminal uses.
  */
 
@@ -10931,6 +11378,19 @@ public func coreVersion() -> String  {
     )
 })
 }
+/**
+ * ⌥⌫ in the address bar: deletes back one path component before `cursor`
+ * (UTF-8 bytes).
+ */
+public func deletePathComponent(input: String, cursor: UInt32) -> FfiTextEdit  {
+    return try!  FfiConverterTypeFfiTextEdit_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_delete_path_component(
+        FfiConverterString.lower(input),
+        FfiConverterUInt32.lower(cursor),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -10948,6 +11408,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_core_version() != 21983) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_delete_path_component() != 5798) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {
@@ -11002,6 +11465,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_delete_workspace() != 21528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_action() != 35051) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_files() != 55869) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_enqueue() != 44324) {
@@ -11301,7 +11770,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffitab_view() != 24051) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffitabcycle_is_cycling() != 8092) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitabcycle_press() != 40854) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitabcycle_reset() != 12368) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_constructor_ffiengine_new() != 3887) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_constructor_ffitabcycle_new() != 7503) {
         return InitializationResult.apiChecksumMismatch
     }
 
