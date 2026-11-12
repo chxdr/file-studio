@@ -117,6 +117,23 @@ s7() {
   finish s7
 }
 
+# S8 (extra): the list's real validateDrop/acceptDrop with a stand-in drag.
+# A file landing below keeps f2 at its row: the drop goes into f2. A folder
+# landing above moves f2 down: the drop at that row is refused (it would
+# have gone into f1). A drag leaving the table cancels spring-loading.
+s8() {
+  home
+  mkdir -p "$H/w/f1" "$H/w/f2" "$H/w/f3" "$H/src"
+  echo x > "$H/src/doc.txt"; echo y > "$H/src/doc2.txt"
+  run s8 "wait:1;go:$H/w;wait:1;fdrag:validate:$H/src/doc.txt|f2;touch:$H/w/a-new;wait:0.4;fdrag:accept;wait:0.5;ls:$H/w/f2;fdrag:validate:$H/src/doc2.txt|f2;mkdir:$H/w/e0;wait:0.4;fdrag:accept;wait:0.5;ls:$H/w/f1;fdrag:validate:$H/src/doc2.txt|f3;fdrag:exit;fdrag:spring;wait:1.2;listlog;quit"
+  expect "unchanged row: dropped into f2" "^LS .*/w/f2: doc.txt$"
+  expect "shifted row: refused" "^FDRAG accept row 1 accepted=false"
+  expect "…and nothing went into f1" "^LS .*/w/f1: $"
+  expect "leaving the table disarms spring-loading" "^FDRAG spring armed=false"
+  expect "…so the pane stayed put" "^LIST mode=.* rows=5 "
+  finish s8
+}
+
 for p in "${WANT[@]}"; do
   if declare -F "$p" >/dev/null; then echo "── $p"; "$p"; else echo "no proof named $p"; fi
 done

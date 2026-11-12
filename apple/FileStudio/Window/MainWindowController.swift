@@ -69,6 +69,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         #if DEBUG
         WindowDebugSteps.install()
         SafetyDebugSteps.install()
+        ListDropProbe.install()
         #endif
     }
 
