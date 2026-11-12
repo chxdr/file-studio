@@ -35,7 +35,9 @@ if [ "$BUILD" = 1 ]; then
   xcodebuild -project FileStudio.xcodeproj -scheme "File Studio" -configuration Debug \
     -derivedDataPath build/DerivedData build -quiet 2>&1 | grep -E "error|BUILD FAILED" && exit 1 || true
 fi
-APP="$ROOT/apple/build/DerivedData/Build/Products/Debug/File Studio.app/Contents/MacOS/File Studio"
+# Debug builds are "File Studio Debug" (bundle id app.filestudio.mac.debug), so
+# they never share preferences or data with the release app.
+APP="$ROOT/apple/build/DerivedData/Build/Products/Debug/File Studio Debug.app/Contents/MacOS/File Studio Debug"
 echo "data: $DATA  shots: $SHOTS"
 # NSUserDefaults reads -Key value pairs from the arguments.
 "$APP" ${MOCK[@]+"${MOCK[@]}"} -FSDataDir "$DATA" -FSDebugSnapshotDir "$SHOTS" -FSDebugScript "$SCRIPT" \

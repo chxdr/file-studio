@@ -16,9 +16,14 @@ library, Swift bindings in `FileStudio/Core/Generated`, headers in
 `target/uniffi-headers`). The app links `libfstudio_ffi.a` directly (F-004,
 Import Studio's D-024).
 
+Debug builds are a separate app, **File Studio Debug** (bundle id
+`app.filestudio.mac.debug`, data in `~/Library/Application Support/File
+Studio Debug`), so running them never changes the release app's
+preferences, setup state, window frames or database.
+
 Launch flags:
 - `-FSMockCore`: run on `Mock/MockCore.swift`, no Rust.
-- `-FSDataDir <dir>` (DEBUG): use a throwaway database folder.
+- `-FSDataDir <dir>` (DEBUG only; Release ignores it): use a throwaway database folder.
 - `-FSDebugScript "…" -FSDebugSnapshotDir <dir>` (DEBUG): scripted run, see
   `App/DebugAutomation.swift` for the steps.
 

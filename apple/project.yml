@@ -55,6 +55,16 @@ targets:
         # first), so headers are never stale.
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../target/uniffi-headers"
         OTHER_LDFLAGS: "$(inherited) $(SRCROOT)/../target/aarch64-apple-darwin/release/libfstudio_ffi.a"
+      # Debug builds are a separate app: their own bundle id (so their
+      # UserDefaults, window frames and setup state never reach the release
+      # app's `app.filestudio.mac` domain) and their own name, which also
+      # names their data folder (~/Library/Application Support/File Studio
+      # Debug, see EngineFactory.swift).
+      configs:
+        Debug:
+          PRODUCT_NAME: File Studio Debug
+          PRODUCT_BUNDLE_IDENTIFIER: app.filestudio.mac.debug
+          INFOPLIST_KEY_CFBundleDisplayName: File Studio Debug
     dependencies:
       - target: RustCore
     scheme: {}
