@@ -903,6 +903,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func parseLocation(raw: String, cwd: String)  -> FfiParsedLocation
     
+    /**
+     * The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+     */
+    func pasteboardWritten(changeCount: Int64) 
+    
     func pendingKeys()  -> String?
     
     /**
@@ -985,6 +990,12 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func subfolders(path: String)  -> [FfiCrumb]
     
     func swapPanes(window: UInt64) throws 
+    
+    /**
+     * The system pasteboard's `changeCount` and file paths, before a key or
+     * command runs (S7). See `Engine::sync_pasteboard`.
+     */
+    func syncPasteboard(changeCount: Int64, files: [String]) 
     
     func tab(id: UInt64)  -> FfiTab?
     
@@ -1829,6 +1840,18 @@ open func parseLocation(raw: String, cwd: String) -> FfiParsedLocation  {
 })
 }
     
+    /**
+     * The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+     */
+open func pasteboardWritten(changeCount: Int64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_pasteboard_written(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(changeCount),uniffiCallStatus
+    )
+}
+}
+    
 open func pendingKeys() -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
         uniffiCallStatus in
@@ -2104,6 +2127,20 @@ open func swapPanes(window: UInt64)throws   {try rustCallWithError(FfiConverterT
     uniffi_fstudio_ffi_fn_method_ffiengine_swap_panes(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(window),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The system pasteboard's `changeCount` and file paths, before a key or
+     * command runs (S7). See `Engine::sync_pasteboard`.
+     */
+open func syncPasteboard(changeCount: Int64, files: [String])  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_sync_pasteboard(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(changeCount),
+        FfiConverterSequenceString.lower(files),uniffiCallStatus
     )
 }
 }
@@ -12448,6 +12485,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_parse_location() != 58432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_pasteboard_written() != 61386) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_pending_keys() != 25890) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12521,6 +12561,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_swap_panes() != 52422) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_sync_pasteboard() != 38285) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_tab() != 58293) {

@@ -490,3 +490,108 @@ fn s6_p15_held_keys_repeat_movement_only() {
     h.engine.handle_key(down, ctx(true)).unwrap();
     assert_eq!(t.selection().names, vec!["a4".to_string()]);
 }
+
+// ───────────────────────── S7 ─────────────────────────
+
+/// p14: ⌘C in File Studio, later copy other files in Finder, then ⌥⌘V in
+/// another folder. What is pasted is Finder's files, as a copy; the stale
+/// in-app item is not moved.
+#[test]
+fn s7_p14_paste_uses_the_system_pasteboard_once_it_changed() {
+    let h = harness();
+    mkdirs(&h.p("a"));
+    mkdirs(&h.p("b"));
+    mkdirs(&h.p("finder"));
+    touch(&h.p("a/old-copied.txt"));
+    touch(&h.p("finder/from-finder.txt"));
+    let t = h.window_at("a");
+    h.engine.sync_pasteboard(1, vec![]);
+    t.set_selection(SelectionChange::Names(vec!["old-copied.txt".into()]));
+    let out = run(&h, &t, "edit.copy", None).unwrap();
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::WriteFilePasteboard { .. })
+    ));
+    h.engine.pasteboard_written(2);
+    // Finder copies other files: the pasteboard changes.
+    h.engine
+        .sync_pasteboard(3, vec![h.s("finder/from-finder.txt")]);
+    t.go(&h.s("b")).unwrap();
+    wait_complete(&t);
+    let out = run(&h, &t, "file.move_here", None).unwrap();
+    ok(&h, &out);
+    assert!(h.p("a/old-copied.txt").exists(), "the stale item stays");
+    assert!(!h.p("b/old-copied.txt").exists());
+    assert!(h.p("b/from-finder.txt").exists(), "Finder's file is pasted");
+    assert!(
+        h.p("finder/from-finder.txt").exists(),
+        "…as a copy, even for Paste as Move"
+    );
+}
+
+/// A cut expires when the pasteboard changes; while it doesn't, ⌘V moves.
+#[test]
+fn s7_a_cut_expires_when_the_pasteboard_changes() {
+    let h = harness();
+    mkdirs(&h.p("a"));
+    mkdirs(&h.p("b"));
+    touch(&h.p("a/x.txt"));
+    touch(&h.p("a/y.txt"));
+    let t = h.window_at("a");
+    h.engine.sync_pasteboard(10, vec![]);
+    t.set_selection(SelectionChange::Names(vec!["x.txt".into()]));
+    let out = run(&h, &t, "edit.cut", None).unwrap();
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::WriteFilePasteboard { .. })
+    ));
+    h.engine.pasteboard_written(11);
+    // Something else is copied (text in another app): the cut is over.
+    h.engine.sync_pasteboard(12, vec![]);
+    assert_eq!(h.engine.clipboard(), None);
+    t.go(&h.s("b")).unwrap();
+    wait_complete(&t);
+    let out = run(&h, &t, "edit.paste", None).unwrap();
+    assert!(out.ops.is_empty());
+    assert!(h.p("a/x.txt").exists() && !h.p("b/x.txt").exists());
+    // A cut the pasteboard still holds moves, and says so.
+    t.go(&h.s("a")).unwrap();
+    wait_complete(&t);
+    t.set_selection(SelectionChange::Names(vec!["y.txt".into()]));
+    run(&h, &t, "edit.cut", None).unwrap();
+    h.engine.pasteboard_written(13);
+    h.engine.sync_pasteboard(13, vec![h.s("a/y.txt")]);
+    t.go(&h.s("b")).unwrap();
+    wait_complete(&t);
+    let out = run(&h, &t, "edit.paste", None).unwrap();
+    ok(&h, &out);
+    assert!(matches!(out.shell, Some(ShellRequest::Moved { .. })));
+    assert!(h.p("b/y.txt").exists() && !h.p("a/y.txt").exists());
+}
+
+/// Paste as Move of a protected folder asks first, and the yes shows the toast.
+#[test]
+fn s7_move_here_of_a_protected_folder_asks_and_toasts() {
+    let h = harness();
+    mkdirs(&h.p("Documents"));
+    mkdirs(&h.p("Projects"));
+    let t = h.window_at("");
+    h.engine.sync_pasteboard(1, vec![]);
+    t.set_selection(SelectionChange::Names(vec!["Documents".into()]));
+    run(&h, &t, "edit.copy", None).unwrap();
+    h.engine.pasteboard_written(2);
+    t.go(&h.s("Projects")).unwrap();
+    wait_complete(&t);
+    let out = run(&h, &t, "file.move_here", None).unwrap();
+    let Some(ShellRequest::ConfirmMove { token, .. }) = out.shell else {
+        panic!("expected a question, got {:?}", out.shell);
+    };
+    assert!(h.p("Documents").is_dir());
+    let out = h.engine.confirm(token).unwrap();
+    ok(&h, &out);
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::Moved { ref text }) if text == "Moved “Documents” to “Projects”"
+    ));
+    assert!(h.p("Projects/Documents").is_dir());
+}

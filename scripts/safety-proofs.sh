@@ -102,6 +102,21 @@ s6() {
   finish s6
 }
 
+# S7: ⌘C a file in File Studio, then copy another file "in Finder" (the
+# general pasteboard changes), then ⌥⌘V elsewhere: Finder's file is pasted
+# as a copy; the stale in-app item doesn't move. (This run writes the real
+# general pasteboard, as any ⌘C in the app does.)
+s7() {
+  home
+  mkdir -p "$H/a" "$H/b" "$H/finder"
+  echo o > "$H/a/old-copied.txt"; echo f > "$H/finder/from-finder.txt"
+  run s7 "wait:1;go:$H/a;wait:1;focus:list;select:old-copied.txt;key:cmd+c;wait:0.5;pbfiles:$H/finder/from-finder.txt;go:$H/b;wait:1;focus:list;key:cmd+alt+v;wait:1.5;ls:$H/a;ls:$H/b;ls:$H/finder;quit"
+  expect "the stale item stayed in a" "^LS .*/a: old-copied.txt$"
+  expect "Finder's file was pasted into b" "^LS .*/b: from-finder.txt$"
+  expect "…as a copy" "^LS .*/finder: from-finder.txt$"
+  finish s7
+}
+
 for p in "${WANT[@]}"; do
   if declare -F "$p" >/dev/null; then echo "── $p"; "$p"; else echo "no proof named $p"; fi
 done

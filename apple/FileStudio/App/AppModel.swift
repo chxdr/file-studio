@@ -287,6 +287,7 @@ public final class AppModel {
     /// (and a beep for "not available").
     @discardableResult
     public func perform(_ inv: Invocation, via: Via, window: WindowID? = nil) -> Outcome? {
+        Pasteboard.sync(engine)
         do {
             let out = try engine.perform(inv, via: via)
             handle(out, in: window ?? keyWindowID)
@@ -304,6 +305,7 @@ public final class AppModel {
     /// Sends a key press to the core. Returns false when the core doesn't
     /// want it (let the focused control handle the event).
     public func handleKey(_ chord: KeyChord, context: InputContext, window: WindowID? = nil) -> Bool {
+        Pasteboard.sync(engine)
         guard let out = engine.handleKey(chord, context: context) else { return false }
         handle(out, in: window ?? keyWindowID)
         return true

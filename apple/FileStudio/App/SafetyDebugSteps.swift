@@ -6,6 +6,8 @@
 //                             question as if its button were pressed (S1)
 //   ls:<path>                 prints the folder's names on disk (LS line)
 //   sel                       prints the focused tab's selection (SEL line)
+//   pbfiles:<path>|<path>…    puts file URLs on the general pasteboard, as
+//                             copying them in Finder does (S7)
 //   holdkey:<key>:<n>         sends <key> once, then <n> auto-repeats of it
 //                             (isARepeat), as holding the key does (S6); keys:
 //                             cmd+delete, cmd+d, down, return, f6
@@ -31,6 +33,12 @@ enum SafetyDebugSteps {
             let parts = arg.split(separator: ":").map(String.init)
             guard let spec = parts.first, let n = parts.count > 1 ? Int(parts[1]) : 3 else { return }
             holdKey(spec, repeats: n)
+        }
+        DebugAutomation.register("pbfiles") { arg, _ in
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.writeObjects(arg.split(separator: "|").map { URL(fileURLWithPath: String($0)) as NSURL })
+            print("PASTEBOARD \(pb.changeCount) \(arg)")
         }
         DebugAutomation.register("ls") { arg, _ in
             let path = (arg as NSString).expandingTildeInPath

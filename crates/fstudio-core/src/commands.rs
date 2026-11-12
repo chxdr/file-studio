@@ -618,8 +618,73 @@ impl Engine {
             .iter()
             .filter_map(|p| p.parent().map(Path::to_path_buf))
             .collect();
-        *self.shared.clipboard.lock() = (!items.is_empty()).then_some(Clipboard { items, cut });
+        *self.shared.clipboard.lock() = (!items.is_empty()).then_some(Clipboard {
+            items,
+            cut,
+            written: None,
+        });
         self.redraw_dirs(&dirs);
+    }
+
+    /// The shell reports the system pasteboard (S7): its `changeCount` and
+    /// the file paths on it. Call it before running a key or command when
+    /// the count changed since the last call (cheap to call every time).
+    /// When the pasteboard changed to something File Studio didn't write,
+    /// the core's clipboard is stale: it is dropped, so a cut expires and
+    /// Paste uses what the pasteboard now holds (always as a copy).
+    pub fn sync_pasteboard(&self, change_count: i64, files: Vec<String>) {
+        let files: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+        let changed = {
+            let mut pb = self.shared.pasteboard.lock();
+            let changed = pb.as_ref().is_none_or(|p| p.change_count != change_count);
+            *pb = Some(crate::shared::SystemPasteboard {
+                change_count,
+                files,
+            });
+            changed
+        };
+        if !changed {
+            return;
+        }
+        let stale = self
+            .shared
+            .clipboard
+            .lock()
+            .as_ref()
+            .is_some_and(|c| c.written != Some(change_count));
+        if stale {
+            self.clear_cut_or_copy();
+        }
+    }
+
+    /// The shell wrote the core's clipboard to the system pasteboard
+    /// (`WriteFilePasteboard`), which now has `change_count`. Until the
+    /// pasteboard changes again, Paste uses the core's clipboard (and a cut
+    /// moves).
+    pub fn pasteboard_written(&self, change_count: i64) {
+        let files = {
+            let mut cb = self.shared.clipboard.lock();
+            let Some(c) = cb.as_mut() else { return };
+            c.written = Some(change_count);
+            c.items.clone()
+        };
+        *self.shared.pasteboard.lock() = Some(crate::shared::SystemPasteboard {
+            change_count,
+            files,
+        });
+    }
+
+    /// Drops the core's clipboard (copy or cut) and redraws cut marks.
+    fn clear_cut_or_copy(&self) {
+        let cb = self.shared.clipboard.lock().take();
+        if let Some(cb) = cb {
+            let dirs: Vec<PathBuf> = cb
+                .items
+                .iter()
+                .filter_map(|p| p.parent().map(Path::to_path_buf))
+                .collect();
+            self.redraw_dirs(&dirs);
+        }
     }
 
     /// What is on the core's clipboard: `(paths, cut)`.
@@ -809,23 +874,40 @@ impl Engine {
 
     /// A cut was used up: forget it and redraw its cut marks.
     pub(crate) fn clear_cut(&self) {
-        let cb = self.shared.clipboard.lock().take();
-        if let Some(cb) = cb {
-            let dirs: Vec<PathBuf> = cb
-                .items
-                .iter()
-                .filter_map(|p| p.parent().map(Path::to_path_buf))
-                .collect();
-            self.redraw_dirs(&dirs);
-        }
+        self.clear_cut_or_copy();
     }
 
     /// Paste (or, with `as_move`, Paste as Move). A move of a protected
     /// folder asks first (F-023); what is asked about is exactly what moves.
+    ///
+    /// What is pasted (S7): the core's clipboard while the system pasteboard
+    /// still holds what File Studio wrote there (any change drops it, see
+    /// [`Engine::sync_pasteboard`]); otherwise the files on the system
+    /// pasteboard, always as a copy, even for Paste as Move.
     fn paste_into(&self, t: &Tab, as_move: Option<bool>) -> Result<Outcome> {
-        let Some(cb) = self.shared.clipboard.lock().clone() else {
-            return Ok(Outcome::message("Nothing to paste"));
+        let cb = match self.shared.clipboard.lock().clone() {
+            Some(cb) => cb,
+            None => {
+                let files = self
+                    .shared
+                    .pasteboard
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.files.clone())
+                    .unwrap_or_default();
+                if files.is_empty() {
+                    return Ok(Outcome::message("Nothing to paste"));
+                }
+                Clipboard {
+                    items: files,
+                    cut: false,
+                    written: None,
+                }
+            }
         };
+        let from_core = self.shared.clipboard.lock().as_ref() == Some(&cb);
+        // Files from another app are always copied.
+        let as_move = if from_core { as_move } else { Some(false) };
         let dest = t.location_path();
         let mv = as_move.unwrap_or(cb.cut);
         let names: Vec<String> = cb
@@ -1415,7 +1497,12 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let n = sel.len();
                 self.set_clipboard(strings(&sel), true);
-                Outcome::message(format!(
+                // On the system pasteboard too, so its changeCount ties the
+                // cut to it: copying anything else ends the cut (S7).
+                let mut out = Outcome::shell(ShellRequest::WriteFilePasteboard {
+                    paths: strings(&sel),
+                });
+                out.message = Some(format!(
                     "{} marked to move; paste to move {}",
                     if n == 1 {
                         "1 item".to_string()
@@ -1423,8 +1510,8 @@ impl Engine {
                         format!("{n} items")
                     },
                     if n == 1 { "it" } else { "them" }
-                ))
-                .with_tab(tid)
+                ));
+                out.with_tab(tid)
             }
             "edit.paste" => self.paste_into(&t, None)?,
 

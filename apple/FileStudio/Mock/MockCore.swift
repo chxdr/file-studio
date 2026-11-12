@@ -584,6 +584,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         Outcome(tab: tab, message: "Mock: folders aren't created")
     }
     func setClipboard(_ paths: [String], cut: Bool) { clipboard = paths }
+    func syncPasteboard(changeCount: Int, files: [String]) {}
+    func pasteboardWritten(changeCount: Int) {}
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
         guard !sources.isEmpty, node(destDir)?.isDir == true,
               !sources.contains(where: { destDir == $0 || destDir.hasPrefix($0 + "/") }) else { return .none }

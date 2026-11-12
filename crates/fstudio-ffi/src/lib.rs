@@ -647,6 +647,15 @@ impl FfiEngine {
     pub fn set_clipboard(&self, paths: Vec<String>, cut: bool) {
         self.inner.set_clipboard(paths, cut);
     }
+    /// The system pasteboard's `changeCount` and file paths, before a key or
+    /// command runs (S7). See `Engine::sync_pasteboard`.
+    pub fn sync_pasteboard(&self, change_count: i64, files: Vec<String>) {
+        self.inner.sync_pasteboard(change_count, files);
+    }
+    /// The shell wrote `WriteFilePasteboard`; the pasteboard now has `change_count`.
+    pub fn pasteboard_written(&self, change_count: i64) {
+        self.inner.pasteboard_written(change_count);
+    }
     /// The core clipboard's paths (empty when nothing is copied).
     pub fn clipboard_paths(&self) -> Vec<String> {
         self.inner.clipboard().map(|c| c.0).unwrap_or_default()

@@ -1040,6 +1040,13 @@ public protocol EngineAPI: AnyObject, Sendable {
     func createFolderAndGo(tab: TabID, path: String) throws -> Outcome
     /// Files from another app's pasteboard (or cut, pending a move).
     func setClipboard(_ paths: [String], cut: Bool)
+    /// S7: the system pasteboard's `changeCount` and file paths (call before
+    /// keys and commands when the count changed). A change File Studio didn't
+    /// make drops the core's clipboard (a cut expires); Paste then copies the
+    /// pasteboard's files.
+    func syncPasteboard(changeCount: Int, files: [String])
+    /// S7: the shell wrote `writeFilePasteboard`; the pasteboard now has `changeCount`.
+    func pasteboardWritten(changeCount: Int)
     /// What a drop of `sources` onto the folder `destDir` with these modifiers
     /// would do (drag cursor and highlight). `lstat`s each source.
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction

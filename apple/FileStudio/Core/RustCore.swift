@@ -911,6 +911,8 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         try wrap { Outcome(try ffi.createFolderAndGo(tab: tab, path: path)) }
     }
     func setClipboard(_ paths: [String], cut: Bool) { ffi.setClipboard(paths: paths, cut: cut) }
+    func syncPasteboard(changeCount: Int, files: [String]) { ffi.syncPasteboard(changeCount: Int64(changeCount), files: files) }
+    func pasteboardWritten(changeCount: Int) { ffi.pasteboardWritten(changeCount: Int64(changeCount)) }
     func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
         switch ffi.dropAction(sources: sources, destDir: destDir, mods: mods.ffi) {
         case .none: .none
