@@ -158,7 +158,19 @@ public final class AppModel {
     /// The last "Did you know?" hint (the toast session shows it).
     public private(set) var hint: Hint?
     /// A short status message from the last command ("Copied path").
-    public var statusMessage: String?
+    public var statusMessage: String? {
+        didSet {
+            statusStamp = Date()
+            // Whatever shows it (a pane that isn't active may not), the message
+            // goes after 6 s unless a newer one has replaced it.
+            guard let m = statusMessage else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                MainActor.assumeIsolated { if self?.statusMessage == m { self?.statusMessage = nil } }
+            }
+        }
+    }
+    /// When `statusMessage` was last set.
+    @ObservationIgnored private var statusStamp = Date.distantPast
     /// The unfinished key sequence (`g`).
     public private(set) var pendingKeys: String?
     /// Called when a window should open or close; set by the window layer.
@@ -240,8 +252,11 @@ public final class AppModel {
     func route(_ e: CoreEvent) {
         switch e {
         case .listingChanged(let t, _, let kind): tabs[t]?.listingChanged(kind)
-        case .selectionChanged(let t, let n, let c): tabs[t]?.selectionChanged(count: n, cursor: c)
+        case .selectionChanged(let t, let n, let c):
+            tabs[t]?.selectionChanged(count: n, cursor: c)
+            clearStaleStatus()
         case .tabsChanged:
+            clearStaleStatus()
             workspace = engine.workspaceState()
             syncWorkspace()
         case .opProgress(let list):
@@ -258,6 +273,14 @@ public final class AppModel {
         case .favouritesChanged: favourites = engine.favourites()
         }
         for o in observers { o.fn(e) }
+    }
+
+    /// A status message ("Nothing was moved") goes when the user moves on: a new
+    /// selection or folder. One set a moment ago stays, because the command that
+    /// set it may be what changed the selection. (The status line also fades
+    /// every message after 5 s.)
+    private func clearStaleStatus() {
+        if statusMessage != nil, Date().timeIntervalSince(statusStamp) > 0.6 { statusMessage = nil }
     }
 
     /// Rebuilds the window and tab models from `workspace`, keeping existing ones.
