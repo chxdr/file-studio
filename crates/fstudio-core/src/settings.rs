@@ -33,6 +33,42 @@ pub struct Settings {
     pub hints: ShortcutHints,
     /// Context-menu customisations (F-022).
     pub menus: crate::menus::MenuSettings,
+    /// Look and motion; the shell reads these (`appearance.*`).
+    pub appearance: AppearanceSettings,
+}
+
+/// How much the interface animates, on top of the system's Reduce Motion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Motion {
+    /// Springs and slides.
+    #[default]
+    Full,
+    /// Fades only.
+    Reduced,
+    /// Nothing moves.
+    None,
+}
+
+/// Look and feel the shell draws; the core only stores it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearanceSettings {
+    /// Show the tab bar even with one tab (otherwise only with two or more).
+    pub tab_bar_always: bool,
+    /// Show the folder path under each pane's title.
+    pub path_bar_subtitle: bool,
+    /// Animation level.
+    pub motion: Motion,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            tab_bar_always: false,
+            path_bar_subtitle: true,
+            motion: Motion::Full,
+        }
+    }
 }
 
 /// Start-up and general behaviour.
@@ -354,6 +390,20 @@ mod tests {
         s.validate().unwrap();
         assert_eq!(Settings::from_json(&s.to_json()).unwrap(), s);
         assert!(!s.operations.allow_delete_immediately);
+    }
+
+    #[test]
+    fn appearance_keys() {
+        let s = Settings::default();
+        assert_eq!(
+            s.get_key("appearance.motion"),
+            Some(Value::String("Full".into()))
+        );
+        let t = s.with_key("appearance.motion", "Reduced").unwrap();
+        assert_eq!(t.appearance.motion, Motion::Reduced);
+        let t = s.with_key("appearance.tab_bar_always", "true").unwrap();
+        assert!(t.appearance.tab_bar_always && t.appearance.path_bar_subtitle);
+        assert!(s.with_key("appearance.motion", "\"Wild\"").is_err());
     }
 
     #[test]
