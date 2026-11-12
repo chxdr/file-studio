@@ -643,6 +643,27 @@ impl TabCycle {
     /// prefix if there is one; otherwise (and on later presses) it selects row 1,
     /// then cycles down. ⇧Tab cycles up and wraps.
     pub fn press(&mut self, completions: &Completions, backwards: bool) -> TabOutcome {
+        let rows: Vec<String> = completions
+            .items
+            .iter()
+            .map(|i| i.insert_text.clone())
+            .collect();
+        let ext = completions
+            .common_prefix_extension
+            .as_ref()
+            .map(|e| e.new_input.as_str());
+        self.press_rows(&rows, ext, backwards)
+    }
+
+    /// [`TabCycle::press`] for a shell that holds the completions in its own
+    /// form: `rows` are the rows' `insert_text`, `extension` the common-prefix
+    /// extension's `new_input`.
+    pub fn press_rows(
+        &mut self,
+        rows: &[String],
+        extension: Option<&str>,
+        backwards: bool,
+    ) -> TabOutcome {
         if let Some(cur) = self.index {
             let n = self.rows.len();
             if n == 0 {
@@ -659,24 +680,105 @@ impl TabCycle {
                 text: self.rows[next].clone(),
             };
         }
-        if !backwards && let Some(ext) = &completions.common_prefix_extension {
+        if !backwards && let Some(ext) = extension {
             return TabOutcome::Extend {
-                new_input: ext.new_input.clone(),
+                new_input: ext.to_owned(),
             };
         }
-        if completions.items.is_empty() {
+        if rows.is_empty() {
             return TabOutcome::Nothing;
         }
-        self.rows = completions
-            .items
-            .iter()
-            .map(|i| i.insert_text.clone())
-            .collect();
+        self.rows = rows.to_vec();
         let first = if backwards { self.rows.len() - 1 } else { 0 };
         self.index = Some(first);
         TabOutcome::Select {
             index: first,
             text: self.rows[first].clone(),
         }
+    }
+}
+
+/// ⌥⌫ in the address bar: deletes back one path component before `cursor`
+/// (a UTF-8 byte offset), treating `/` as the boundary. A trailing `/` goes
+/// with the component before it, so `/a/b/` and `/a/b` both become `/a/`.
+/// Returns the new text and cursor. A leading `/` is never deleted unless it
+/// is all that is left.
+pub fn delete_path_component(input: &str, cursor: usize) -> (String, usize) {
+    let mut cursor = cursor.min(input.len());
+    while !input.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    let before = &input[..cursor];
+    let trimmed = before.strip_suffix('/').unwrap_or(before);
+    let start = if trimmed.is_empty() {
+        0
+    } else {
+        trimmed.rfind('/').map(|i| i + 1).unwrap_or(0)
+    };
+    let mut out = String::with_capacity(input.len());
+    out.push_str(&input[..start]);
+    out.push_str(&input[cursor..]);
+    (out, start)
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn delete_component_goes_back_to_the_previous_slash() {
+        assert_eq!(
+            delete_path_component("/Users/me/Pic", 13),
+            ("/Users/me/".into(), 10)
+        );
+        assert_eq!(
+            delete_path_component("/Users/me/", 10),
+            ("/Users/".into(), 7)
+        );
+        assert_eq!(delete_path_component("~/Docs", 6), ("~/".into(), 2));
+        assert_eq!(delete_path_component("gig", 3), (String::new(), 0));
+        assert_eq!(delete_path_component("/", 1), (String::new(), 0));
+        assert_eq!(delete_path_component("/a", 2), ("/".into(), 1));
+        // Text after the cursor stays.
+        assert_eq!(delete_path_component("/a/bc/d", 5), ("/a//d".into(), 3));
+        // Unicode: never splits a character.
+        assert_eq!(delete_path_component("/Café/x", 7), ("/x".into(), 1));
+        assert_eq!(delete_path_component("/Café/", 7), ("/".into(), 1));
+    }
+
+    #[test]
+    fn tab_cycle_from_rows() {
+        let rows = vec!["/a/x/".to_string(), "/a/y/".to_string()];
+        let mut t = TabCycle::new();
+        assert_eq!(
+            t.press_rows(&rows, Some("/a/"), false),
+            TabOutcome::Extend {
+                new_input: "/a/".into()
+            }
+        );
+        assert_eq!(
+            t.press_rows(&rows, None, false),
+            TabOutcome::Select {
+                index: 0,
+                text: "/a/x/".into()
+            }
+        );
+        assert_eq!(
+            t.press_rows(&rows, None, false),
+            TabOutcome::Select {
+                index: 1,
+                text: "/a/y/".into()
+            }
+        );
+        assert_eq!(
+            t.press_rows(&rows, None, true),
+            TabOutcome::Select {
+                index: 0,
+                text: "/a/x/".into()
+            }
+        );
+        t.reset();
+        assert!(!t.is_cycling());
+        assert_eq!(t.press_rows(&[], None, false), TabOutcome::Nothing);
     }
 }

@@ -31,7 +31,7 @@ pub mod zoxide;
 
 pub use complete::{
     Completer, CompleterConfig, Completion, CompletionKind, Completions, InputKind, TabCycle,
-    TabExtension, TabOutcome,
+    TabExtension, TabOutcome, delete_path_component,
 };
 pub use copy::copy_path_as;
 pub use crumbs::{Crumb, CrumbKind, Volume, breadcrumbs, collapse, subfolders};
