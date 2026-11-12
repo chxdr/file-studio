@@ -172,10 +172,22 @@ public final class AppModel {
 
     public init(engine: EngineAPI) {
         self.engine = engine
-        engine.setEventHandler { e in
-            DispatchQueue.main.async { MainActor.assumeIsolated { AppModel.current?.route(e) } }
-        }
+        engine.setEventHandler { e in AppModel.onMain { AppModel.current?.route(e) } }
         AppModel.current = self
+    }
+
+    /// Runs `body` on the main thread, in order, from the main run loop (all
+    /// common modes, so also during menu tracking and modal sheets). Not
+    /// through the main dispatch queue and not as a Swift job: if view code
+    /// in `body` makes AppKit throw an Objective-C exception that AppKit then
+    /// swallows, unwinding through libdispatch's main-queue drain would wedge
+    /// the queue (and every main-actor Task with it), and unwinding through a
+    /// Swift job corrupts the runtime's executor tracking (later `@MainActor`
+    /// checks crash). A run-loop block has neither.
+    nonisolated static func onMain(_ body: @escaping @MainActor () -> Void) {
+        let main = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(main, CFRunLoopMode.commonModes.rawValue) { MainActor.assumeIsolated { body() } }
+        CFRunLoopWakeUp(main)
     }
 
     /// The app's model (one per process).
