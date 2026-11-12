@@ -82,6 +82,7 @@ pub struct Engine {
     pub(crate) model: Mutex<Model>,
     pub(crate) vim: Mutex<VimMode>,
     pub(crate) marks: Mutex<HashMap<char, String>>,
+    pub(crate) favourites: Mutex<Vec<crate::favourites::Favourite>>,
     last_saved: Mutex<String>,
 }
 
@@ -180,6 +181,8 @@ impl Engine {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
 
+        let favourites = crate::favourites::load(&db, &shared.home);
+
         let (dirty_tx, dirty_rx) = crossbeam_channel::bounded::<()>(1);
         shared.set_dirty_channel(dirty_tx);
         let engine = Arc::new_cyclic(|me: &Weak<Engine>| Engine {
@@ -195,6 +198,7 @@ impl Engine {
             model: Mutex::new(Model::default()),
             vim: Mutex::new(vim),
             marks: Mutex::new(marks),
+            favourites: Mutex::new(favourites),
             last_saved: Mutex::new(String::new()),
         });
         let weak = Arc::downgrade(&engine);
@@ -653,6 +657,11 @@ impl Engine {
             self.close_tab(t)?;
         }
         Ok(())
+    }
+
+    /// Is there a closed tab to bring back?
+    pub fn can_reopen_tab(&self) -> bool {
+        !self.model.lock().closed.is_empty()
     }
 
     /// Brings back the most recently closed tab, where it was if possible.

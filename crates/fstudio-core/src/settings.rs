@@ -31,6 +31,8 @@ pub struct Settings {
     pub overlay: ShortcutOverlay,
     /// "Did you know?" hints.
     pub hints: ShortcutHints,
+    /// Context-menu customisations (F-022).
+    pub menus: crate::menus::MenuSettings,
 }
 
 /// Start-up and general behaviour.

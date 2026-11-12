@@ -104,6 +104,8 @@ pub enum ArgKind {
     Index,
     ViewMode,
     Char,
+    /// A short text, such as a Finder tag name.
+    Text,
 }
 
 /// An argument carried with a command.
@@ -118,6 +120,8 @@ pub enum CommandArg {
     Char(char),
     /// Ask before doing it (Vim `x` → Trash).
     Confirm,
+    /// A short text, such as a Finder tag name (`tags.toggle`).
+    Text(String),
 }
 
 /// Everything the registry knows about one command.

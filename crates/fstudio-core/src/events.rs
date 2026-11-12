@@ -149,6 +149,8 @@ pub enum CoreEvent {
     },
     /// Settings changed; re-read [`crate::Engine::settings`].
     SettingsChanged,
+    /// The sidebar favourites changed; re-read [`crate::Engine::favourites`].
+    FavouritesChanged,
 }
 
 /// Receives core events. Implemented by the shell. Called on one pump
@@ -180,6 +182,7 @@ enum Key {
     Undo,
     Volumes,
     Settings,
+    Favourites,
 }
 
 fn key_of(e: &CoreEvent) -> Option<Key> {
@@ -191,6 +194,7 @@ fn key_of(e: &CoreEvent) -> Option<Key> {
         CoreEvent::UndoChanged { .. } => Key::Undo,
         CoreEvent::VolumesChanged { .. } => Key::Volumes,
         CoreEvent::SettingsChanged => Key::Settings,
+        CoreEvent::FavouritesChanged => Key::Favourites,
         _ => return None,
     })
 }

@@ -13,6 +13,7 @@ fn arg_for(h: &H, kind: Option<ArgKind>) -> Option<CommandArg> {
         ArgKind::Index => CommandArg::Index(0),
         ArgKind::ViewMode => CommandArg::ViewMode(ViewMode::List),
         ArgKind::Char => CommandArg::Char('a'),
+        ArgKind::Text => CommandArg::Text("Red".into()),
     })
 }
 
@@ -64,7 +65,7 @@ fn every_command_is_handled_or_returns_a_shell_request() {
         }
         eventually("file listed", || t.listing().index_of("file.txt").is_some());
         // Opening commands want a folder selected; the rest a file.
-        let pick = if id.starts_with("nav.open") {
+        let pick = if id.starts_with("nav.open") || id == "nav.show_package_contents" {
             "sub"
         } else {
             "file.txt"

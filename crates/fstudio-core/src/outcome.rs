@@ -126,6 +126,32 @@ pub enum ShellRequest {
     ToggleSidebar,
     /// Show or hide the inspector.
     ToggleInspector,
+    /// Eject the volume mounted at `path` (`NSWorkspace
+    /// unmountAndEjectDevice`). The shell reports a failure itself; the core
+    /// re-reads volumes when the unmount notification arrives.
+    Eject {
+        /// The volume's mount point.
+        path: String,
+    },
+    /// Show details about the volume mounted at `path`.
+    ShowDriveInfo {
+        /// The volume's mount point.
+        path: String,
+    },
+    /// Ask for a new display name for a favourite, then call
+    /// `Engine::rename_favourite`.
+    AskFavouriteName {
+        /// The favourite's path.
+        path: String,
+        /// Its current name, to start the field with.
+        name: String,
+    },
+    /// Show the Finder tag editor for these items; apply changes with
+    /// `tags.toggle`.
+    EditTags {
+        /// The items.
+        paths: Vec<String>,
+    },
     /// A window was created; open it.
     OpenWindow {
         /// The new window.
