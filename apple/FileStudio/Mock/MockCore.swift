@@ -88,7 +88,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     fileprivate var tabs: [TabID: MockTab] = [:]
     private var workspace = WorkspaceState()
     private var settingsValue = Settings()
-    private var favs: [Favourite] = ["Applications", "Desktop", "Documents", "Downloads", ""].map {
+    // "Old Project" doesn't exist: it shows how a favourite whose folder has gone looks.
+    private var favs: [Favourite] = ["Applications", "Desktop", "Documents", "Downloads", "", "Old Project"].map {
         Favourite(path: $0.isEmpty ? "/Mock" : "/Mock/\($0)", name: $0.isEmpty ? "Mock" : $0)
     }
     fileprivate var frecency: [String: Double] = ["/Mock/Pictures/2026/2026-11-11_gig": 9, "/Mock/Documents": 5,
@@ -295,7 +296,7 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     private static let table: [(id: String, title: String, cat: String, keys: String?)] = [
         ("nav.open", "Open", "Navigation", "⌘↓"), ("nav.up", "Enclosing Folder", "Navigation", "⌘↑"),
         ("nav.back", "Back", "Navigation", "⌘["), ("nav.forward", "Forward", "Navigation", "⌘]"),
-        ("nav.address_bar", "Go to Address Bar", "Navigation", "⌘L"), ("nav.go_home", "Go to Home", "Navigation", "⇧⌘H"),
+        ("nav.address_bar", "Go to Address Bar", "Navigation", "⌘L|/"), ("nav.go_home", "Go to Home", "Navigation", "⇧⌘H"),
         ("select.all", "Select All", "Selection", "⌘A"), ("file.rename", "Rename", "File", "↩"),
         ("file.new_folder", "New Folder", "File", "⇧⌘N"), ("file.trash", "Move to Trash", "File", "⌘⌫"),
         ("file.duplicate", "Duplicate", "File", "⌘D"), ("edit.copy", "Copy", "Edit", "⌘C"),
@@ -307,14 +308,30 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         ("preview.get_info", "Get Info", "Quick Look & Info", "⌘I"),
         ("path.copy_path", "Copy Path", "Paths & Open In", "⌥⌘C"), ("terminal.open", "Open in Terminal", "Paths & Open In", "⇧⌘R"),
         ("app.settings", "Settings…", "Settings", "⌘,"),
+        ("app.keyboard_shortcuts", "Keyboard Shortcuts…", "Settings", nil),
+        ("app.power_tour", "File Studio Power Tour", "Settings", nil),
+        ("favourites.add", "Add to Favourites", "Navigation", "⌃⌘T"),
+        ("addressbar.complete_next", "Complete / Next Suggestion", "Text Fields", "⇥"),
+        ("addressbar.commit", "Go", "Text Fields", "↩"),
+        ("edit.redo", "Redo", "Edit", "⇧⌘Z"),
+        ("filter.clear", "Clear Filter", "Palette & Filter", "⎋"),
+        ("favourites.remove", "Remove from Favourites", "Navigation", nil),
+        ("file.copy_to_other_pane", "Copy to Other Pane", "File", "F5"),
+        ("file.move_to_other_pane", "Move to Other Pane", "File", "F6"),
+        ("pane.switch", "Switch Pane", "Panes", "⇥"),
+        ("edit.cut", "Cut", "Edit", "⌘X"),
+        ("filter.focus", "Filter List", "Palette & Filter", "⌘F"),
+        ("palette.open", "Command Palette…", "Palette & Filter", "⇧⌘P"),
     ]
 
     func commands() -> [CommandInfo] {
         Self.table.map {
-            CommandInfo(id: $0.id, title: $0.title, category: $0.cat, description: $0.title, shortcut: $0.keys,
+            CommandInfo(id: $0.id, title: $0.title, category: $0.cat, description: $0.title,
+                        shortcut: $0.keys?.components(separatedBy: "|").first,
                         showsInMenu: true, showsInPalette: true, customized: false,
                         handling: ["preview.quick_look", "preview.get_info", "path.copy_path", "terminal.open",
-                                   "app.settings", "file.rename", "nav.address_bar"].contains($0.id) ? .shell : .core)
+                                   "app.settings", "app.keyboard_shortcuts", "app.power_tour", "file.rename",
+                                   "nav.address_bar"].contains($0.id) ? .shell : .core)
         }
     }
 
@@ -338,6 +355,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
             default: return nil
             }
         }
+        if m.ctrl, m.cmd, !m.shift, !m.alt, c.key == .char("t") { return Invocation(id: "favourites.add") }
+        if m.ctrl { return nil }
         switch (c.key, m.cmd, m.shift, m.alt) {
         case (.up, true, false, false): return Invocation(id: "nav.up")
         case (.down, true, false, false), (.char("o"), true, false, false): return Invocation(id: "nav.open")
@@ -485,13 +504,39 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         case "terminal.open":
             if case .path(let p) = inv.arg { out.shell = .openTerminal(dir: p) } else { out.shell = .openTerminal(dir: t.location()) }
         case "app.settings": out.shell = .showSettings(section: "")
+        case "app.keyboard_shortcuts": out.shell = .showSettings(section: "shortcuts")
+        case "app.power_tour": out.shell = .showPowerTour
+        case "favourites.add", "favourites.remove":
+            let ps: [String]
+            if case .path(let p) = inv.arg { ps = [p] } else { ps = sel.isEmpty ? [t.location()] : sel }
+            let folders = ps.filter { node($0)?.isDir == true }
+            if inv.id == "favourites.add" {
+                let new = folders.filter { f in !favs.contains { $0.path == f } }
+                for f in new { try addFavourite(f, index: nil) }
+                out.message = folders.isEmpty ? "Only folders can be favourites"
+                    : new.isEmpty ? "Already in Favourites"
+                    : new.count == 1 ? "Added “\((new[0] as NSString).lastPathComponent)” to Favourites"
+                    : "Added \(new.count) folders to Favourites"
+            } else {
+                let gone = ps.filter { p in favs.contains { $0.path == p } }
+                for p in gone { try removeFavourite(p) }
+                out.message = gone.isEmpty ? "Not in Favourites" : "Removed \(gone.count == 1 ? "“\((gone[0] as NSString).lastPathComponent)”" : "\(gone.count) folders") from Favourites"
+            }
+        case "sidebar.rename":
+            if case .path(let p) = inv.arg {
+                out.shell = .askFavouriteName(path: p, name: favs.first { $0.path == p }?.name ?? (p as NSString).lastPathComponent)
+            }
         case "tags.toggle": out.message = "Mock: tags aren't stored"
         case "drive.eject":
             if case .path(let p) = inv.arg { out.shell = .eject(path: p) }
         case "drive.info":
             if case .path(let p) = inv.arg { out.shell = .showDriveInfo(path: p) }
         case "sidebar.remove":
-            if case .path(let p) = inv.arg { try removeFavourite(p) }
+            if case .path(let p) = inv.arg {
+                let name = favs.first { $0.path == p }?.name ?? (p as NSString).lastPathComponent
+                try removeFavourite(p)
+                out.message = "Removed “\(name)” from Favourites"
+            }
         case "nav.open_new_tab":
             if case .path(let p) = inv.arg, let l = locate(t.id) {
                 out.tab = try openTab(inPane: workspace.windows[l.w].panes[l.p].id, path: p, index: nil).id
@@ -513,16 +558,19 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func heldShortcuts(_ mods: Mods, context: InputContext) -> HeldShortcuts? {
         guard mods.cmd else { return nil }
         return HeldShortcuts(title: "⌘ Command", rows: Self.table.compactMap { r in
-            guard let k = r.keys, k.hasPrefix("⌘"), k.count == 2 else { return nil }
+            guard let k = r.keys?.components(separatedBy: "|").first, k.hasPrefix("⌘"), k.count == 2 else { return nil }
             return ShortcutRow(command: r.id, keys: String(k.dropFirst()), label: r.title, category: r.cat)
         })
     }
     func hintFor(command: String, via: Via) -> Hint? {
-        guard via == .mouse, let r = Self.table.first(where: { $0.id == command }), let k = r.keys else { return nil }
+        guard via == .mouse, let r = Self.table.first(where: { $0.id == command }),
+              let k = r.keys?.components(separatedBy: "|").first else { return nil }
         return Hint(command: command, keys: k, label: r.title)
     }
     func vimMode() -> VimMode { .off }
-    func commandKeys(_ command: String) -> [String] { Self.table.first { $0.id == command }?.keys.map { [$0] } ?? [] }
+    func commandKeys(_ command: String) -> [String] {
+        Self.table.first { $0.id == command }?.keys?.components(separatedBy: "|") ?? []
+    }
     func setCommandKey(_ command: String, primary: Bool, keys: String?) throws {}
     func resetCommandKeys(_ command: String?) throws {}
     func keymapConflicts() -> [String] { [] }
@@ -544,9 +592,36 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome {
         let a = dropAction(sources: sources, destDir: destDir, mods: mods)
         guard a != .none else { throw CoreError(.notAvailable, "the items can't be dropped there") }
-        return Outcome(ops: [startOp(a == .copy ? .copy : .move, a == .copy ? "Copy" : "Move",
-                                     files: UInt64(sources.count), bytes: 9_000_000)])
+        let name = { (p: String) in (p as NSString).lastPathComponent }
+        // F-023, roughly: the mock's standard folders ask first.
+        if a == .move, let hit = sources.first(where: { Self.protectedMock.contains($0) }) {
+            pendingMoves += 1
+            pendingMove[pendingMoves] = (sources, destDir)
+            return Outcome(shell: .confirmMove(token: pendingMoves, title: "Move “\(name(hit))” into “\(name(destDir))”?",
+                                               detail: "It’s one of your standard folders.", paths: sources))
+        }
+        var out = Outcome(ops: [startOp(a == .copy ? .copy : .move, a == .copy ? "Copy" : "Move",
+                                        files: UInt64(sources.count), bytes: 9_000_000)])
+        if a == .move {
+            out.shell = .moved(text: sources.count == 1 ? "Moved “\(name(sources[0]))” to “\(name(destDir))”"
+                               : "Moved \(sources.count) items to “\(name(destDir))”")
+        }
+        return out
     }
+
+    private static let protectedMock: Set<String> = ["/Mock", "/Mock/Applications", "/Mock/Desktop", "/Mock/Documents",
+                                                     "/Mock/Downloads", "/Mock/Pictures"]
+    private var pendingMoves: UInt64 = 0
+    private var pendingMove: [UInt64: ([String], String)] = [:]
+
+    func confirmMove(_ token: UInt64) throws -> Outcome {
+        guard let (sources, dest) = pendingMove.removeValue(forKey: token) else {
+            throw CoreError(.notFound, "pending move \(token)")
+        }
+        return Outcome(shell: .moved(text: "Moved “\((sources[0] as NSString).lastPathComponent)” to “\((dest as NSString).lastPathComponent)”"),
+                       ops: [startOp(.move, "Move", files: UInt64(sources.count), bytes: 9_000_000)])
+    }
+    func cancelMove(_ token: UInt64) { pendingMove[token] = nil }
     func clipboardPaths() -> [String] { clipboard }
 
     // MARK: Menus
@@ -576,6 +651,14 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                 cmd("path.copy_home_relative", "Relative to ~", tab: tab, arg: arg),
             ])
         }
+        /// Add to or Remove from Favourites, by whether every folder is one already.
+        func favItem(_ folders: [String], tab: TabID?, arg: CommandArg?) -> [MenuItem] {
+            let dirs = folders.filter { node($0)?.isDir == true }
+            guard !dirs.isEmpty else { return [] }
+            let pinned = dirs.allSatisfy { d in favs.contains { $0.path == d } }
+            return [pinned ? cmd("favourites.remove", "Remove from Favourites", tab: tab, arg: arg)
+                           : cmd("favourites.add", "Add to Favourites", tab: tab, arg: arg)]
+        }
         switch target {
         case .file(let t, let p), .folder(let t, let p), .package(let t, let p):
             return [cmd("nav.open", "Open", tab: t), .system(.openWith, title: "Open With", paths: [p]), .separator,
@@ -588,12 +671,13 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                                              invocation: Invocation(id: "tags.toggle", arg: .text("Red"), tab: t))),
                     ]),
                     .separator, cmd("file.reveal_in_finder", "Reveal in Finder", tab: t),
-                    cmd("terminal.open", "Open in Terminal", tab: t), .system(.share, title: "Share", paths: [p]),
-                    .separator, cmd("file.trash", "Move to Trash", tab: t)]
+                    cmd("terminal.open", "Open in Terminal", tab: t)] + favItem([p], tab: t, arg: .path(p))
+                + [.system(.share, title: "Share", paths: [p]), .separator, cmd("file.trash", "Move to Trash", tab: t)]
         case .multi(let t, let ps):
             return [cmd("nav.open", "Open", tab: t), cmd("preview.quick_look", "Quick Look \(ps.count) Items", tab: t),
                     .separator, cmd("edit.copy", "Copy", tab: t), cmd("edit.paste", "Paste", tab: t, enabled: canPaste),
-                    .separator, cmd("file.trash", "Move \(ps.count) Items to Trash", tab: t)]
+                    .separator] + favItem(ps, tab: t, arg: nil)
+                + [.separator, cmd("file.trash", "Move \(ps.count) Items to Trash", tab: t)]
         case .emptySpace(let t):
             let v = tabs[t]?.view() ?? ViewState()
             return [cmd("file.new_folder", "New Folder", tab: t), cmd("edit.paste", "Paste", tab: t, enabled: canPaste),
@@ -607,18 +691,24 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                     cmd("select.all", "Select All", tab: t), cmd("terminal.open", "Open in Terminal", tab: t)]
         case .crumb(let t, let p):
             return [cmd("nav.open", "Open", tab: t, arg: .path(p)), .separator, copyPath(t, .path(p)), .separator,
-                    cmd("terminal.open", "Open in Terminal", tab: t, arg: .path(p))]
+                    cmd("terminal.open", "Open in Terminal", tab: t, arg: .path(p))] + favItem([p], tab: t, arg: .path(p))
         case .sidebarItem(let p, let k):
             var items = [cmd("nav.open", "Open", tab: nil, arg: .path(p)), cmd("path.copy_path", "Copy Path", tab: nil, arg: .path(p)),
                          MenuItem.separator]
-            items.append(k == .favourite ? cmd("sidebar.remove", "Remove from Sidebar", tab: nil, arg: .path(p))
-                         : cmd("drive.info", "Show Drive Info", tab: nil, arg: .path(p)))
+            if k == .favourite {
+                items += [cmd("sidebar.remove", "Remove from Favourites", tab: nil, arg: .path(p)),
+                          cmd("sidebar.rename", "Rename Favourite…", tab: nil, arg: .path(p))]
+            } else {
+                items.append(cmd("drive.info", "Show Drive Info", tab: nil, arg: .path(p)))
+            }
             if k == .volume, volumes().first(where: { $0.mountPath == p })?.isRemovable == true {
                 items.append(cmd("drive.eject", "Eject", tab: nil, arg: .path(p)))
             }
             return items
         case .tab(let t):
-            return [cmd("tab.new", "New Tab", tab: t), .separator, cmd("tab.close", "Close Tab", tab: t)]
+            let loc = tabs[t]?.location() ?? "/Mock"
+            return [cmd("tab.new", "New Tab", tab: t), .separator, cmd("tab.close", "Close Tab", tab: t), .separator]
+                + favItem([loc], tab: t, arg: .path(loc))
         }
     }
     func menuEntries(_ kind: MenuKind) -> [MenuEntry] {
@@ -833,8 +923,11 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
          Volume(name: "CARD", mountPath: "/Volumes/CARD", isRemovable: true, totalBytes: 128_000_000_000,
                 freeBytes: 30_000_000_000)]
     }
-    func favourites() -> [Favourite] { favs }
+    func favourites() -> [Favourite] {
+        favs.map { var f = $0; f.missing = node(f.path)?.isDir != true; return f }
+    }
     func addFavourite(_ path: String, index: UInt32?) throws {
+        guard node(path)?.isDir == true else { throw CoreError(.notAvailable, "Only folders can be favourites") }
         guard !favs.contains(where: { $0.path == path }) else { return }
         favs.insert(Favourite(path: path, name: (path as NSString).lastPathComponent), at: min(Int(index ?? UInt32(favs.count)), favs.count))
         emit(.favouritesChanged)

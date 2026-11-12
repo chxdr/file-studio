@@ -454,6 +454,17 @@ private struct DonePage: View {
             Text("Hold ⌘ for a moment to see what you can press. Everything here is in Settings.")
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .opacity(shown ? 1 : 0)
+            // The optional power tour (also in Help › File Studio Power Tour).
+            Button {
+                SetupController.finish(model: model)
+                DispatchQueue.main.async { MainActor.assumeIsolated { TourController.present(model: model) } }
+            } label: {
+                Label("Take the 1-minute tour", systemImage: "play.circle.fill")
+            }
+            .controlSize(.large)
+            .padding(.top, 4)
+            .opacity(shown ? 1 : 0)
+            .help("Eight cards on the power-user tools and their keys. Also in Help › File Studio Power Tour.")
             Spacer()
         }
         .frame(maxWidth: .infinity)

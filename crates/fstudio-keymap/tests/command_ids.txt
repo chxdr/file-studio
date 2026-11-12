@@ -107,6 +107,8 @@ path.copy_file_url
 path.copy_quoted
 terminal.open
 file.reveal_in_finder
+favourites.add
+favourites.remove
 sidebar.remove
 sidebar.rename
 drive.eject
@@ -117,6 +119,7 @@ filter.clear
 search.global
 app.settings
 app.keyboard_shortcuts
+app.power_tour
 addressbar.commit
 addressbar.commit_other_pane
 addressbar.cancel

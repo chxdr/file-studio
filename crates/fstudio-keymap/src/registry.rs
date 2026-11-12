@@ -281,7 +281,9 @@ fn table() -> Vec<B> {
         c("path.copy_quoted", "Copy Path, Quoted", Path, "Copy the path in single quotes"),
         c("terminal.open", "Open in Terminal", Path, "Open Terminal in this folder").s("⇧⌘R"),
         c("file.reveal_in_finder", "Reveal in Finder", Path, "Show the selection in Finder").s("⌥⌘R"),
-        c("sidebar.remove", "Remove from Sidebar", Navigation, "Remove a favourite from the sidebar").arg(ArgKind::Path).nomenu().nohint(),
+        c("favourites.add", "Add to Favourites", Navigation, "Pin the selected folders, or this folder, to the sidebar").s("⌃⌘T").arg(ArgKind::Path),
+        c("favourites.remove", "Remove from Favourites", Navigation, "Unpin the selected folders, or this folder, from the sidebar").arg(ArgKind::Path),
+        c("sidebar.remove", "Remove from Favourites", Navigation, "Remove a favourite from the sidebar").arg(ArgKind::Path).hidden(),
         c("sidebar.rename", "Rename Favourite…", Navigation, "Give a sidebar favourite another name").arg(ArgKind::Path).nomenu().nohint(),
         c("drive.eject", "Eject", Navigation, "Eject a drive, card or disk image").arg(ArgKind::Path).nomenu().nohint(),
         c("drive.info", "Show Drive Info", Navigation, "Show details about a drive").arg(ArgKind::Path).nomenu().nohint(),
@@ -293,6 +295,7 @@ fn table() -> Vec<B> {
         // ── Settings ──
         c("app.settings", "Settings…", Settings, "Open Settings").global().s("⌘,"),
         c("app.keyboard_shortcuts", "Keyboard Shortcuts…", Settings, "Open Settings at the shortcut editor").global(),
+        c("app.power_tour", "File Studio Power Tour", Settings, "A one-minute tour of the power-user tools and their keys").global(),
         // ── Text fields (never in menus) ──
         c("addressbar.commit", "Go", TextFields, "Go to the typed or highlighted path").ctx(ab.clone()).s("↩").hidden(),
         c("addressbar.commit_other_pane", "Go in Other Pane", TextFields, "Go to the path in the other pane").ctx(ab.clone()).s("⌘↩").hidden(),

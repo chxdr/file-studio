@@ -47,6 +47,7 @@ pub mod menus;
 mod miller;
 mod outcome;
 mod probe;
+mod protect;
 mod settings;
 mod shared;
 mod sys;
@@ -75,6 +76,7 @@ pub use menus::{
 };
 pub use outcome::{Outcome, ShellRequest};
 pub use probe::{FsCoreProbe, FsDirSource};
+pub use protect::default_protected_folders;
 pub use settings::{
     AppearanceSettings, FolderMemory, GeneralSettings, Motion, OperationsSettings, PathBarSettings,
     RowDensity, SETTINGS_VERSION, Settings, TerminalApp, ViewSettings,

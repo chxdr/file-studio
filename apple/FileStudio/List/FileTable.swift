@@ -99,6 +99,9 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
     private var band: RubberBand?
     private var springTimer: Timer?
     private var springRow = -1
+    /// The folder the last validated drop highlighted (F-023: the drop goes
+    /// exactly there, or nowhere).
+    private var highlightedDrop: String?
     private var loadingTimer: Timer?
 
     init(model: AppModel, kind: CellKind) {
@@ -622,13 +625,16 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
         return (eng.dropEffect(sources: paths, dest: dest, mods: Self.mods(flags)), dest)
     }
 
-    /// Drops `paths` at `row` (also used by the `drop:` debug step).
+    /// Drops `paths` at `row` (also used by the `drop:` debug step). The core
+    /// decides; a move of a protected folder comes back as a confirmation and
+    /// every move as a "Moved … Undo" toast (F-023).
     @discardableResult
     func performDrop(_ paths: [String], row: Int, flags: NSEvent.ModifierFlags) -> Bool {
-        guard let dest = dropDestination(row: row), let eng = model.engine as? ListEngineAPI else { return false }
+        guard let dest = dropDestination(row: row) else { return false }
         do {
-            let op = try eng.dropItems(sources: paths, dest: dest, mods: Self.mods(flags))
-            print("DROP queued op \(op) into \(dest)")
+            let out = try model.engine.dropFiles(sources: paths, destDir: dest, mods: Self.mods(flags))
+            print("DROP into \(dest): ops \(out.ops)\(out.shell.map { " shell \($0.kind)" } ?? "")")
+            model.handle(out, in: model.keyWindowID)
             return true
         } catch {
             model.statusMessage = (error as? CoreError)?.message ?? error.localizedDescription
@@ -643,13 +649,20 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
 
     func tableView(_ tv: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
+        // F-023: sidebar rows are references; dropping one here never moves or copies it.
+        if SidebarViewController.isSidebarDrag(info) {
+            highlightedDrop = nil
+            armSpring(-1)
+            return []
+        }
         let paths = Self.paths(info)
         var target = row
         if op == .above || row >= shownCount || self.row(row)?.kind != .folder {
             target = -1
             tv.setDropRow(-1, dropOperation: .on)
         }
-        let (effect, _) = dropEffect(paths, row: target, flags: NSEvent.modifierFlags)
+        let (effect, dest) = dropEffect(paths, row: target, flags: NSEvent.modifierFlags)
+        highlightedDrop = effect == .none ? nil : dest
         armSpring(effect == .none ? -1 : target)
         switch effect {
         case .copy: return .copy
@@ -661,7 +674,17 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
     func tableView(_ tv: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
                    dropOperation: NSTableView.DropOperation) -> Bool {
         springTimer?.invalidate(); springRow = -1
+        if SidebarViewController.isSidebarDrag(info) { return false }
         let target = row >= 0 && self.row(row)?.kind == .folder ? row : -1
+        // The drop goes exactly where the highlight was: if the rows changed
+        // under the pointer (a spring-loaded folder opened, the folder
+        // refreshed), the row index may now name another folder. Refuse.
+        let highlighted = highlightedDrop
+        highlightedDrop = nil
+        guard let dest = dropDestination(row: target), dest == highlighted else {
+            model.statusMessage = "The folder under the pointer changed, so nothing was dropped"
+            return false
+        }
         return performDrop(Self.paths(info), row: target, flags: NSEvent.modifierFlags)
     }
 

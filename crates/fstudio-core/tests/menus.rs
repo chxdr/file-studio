@@ -68,8 +68,15 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
         .into_iter()
         .chain(tail)
         .collect(),
-        MenuKind::Folder => folder_head(false).into_iter().chain(tail).collect(),
-        MenuKind::Package => folder_head(true).into_iter().chain(tail).collect(),
+        MenuKind::Folder | MenuKind::Package => {
+            let mut v: Vec<&str> = folder_head(kind == MenuKind::Package)
+                .into_iter()
+                .chain(tail)
+                .collect();
+            let at = v.iter().position(|e| *e == "file.open_in_editor").unwrap() + 1;
+            v.splice(at..at, ["favourites.add", "favourites.remove"]);
+            v
+        }
         MenuKind::Multi => vec![
             "nav.open",
             "preview.quick_look",
@@ -86,6 +93,9 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             "file.copy_to_other_pane",
             "file.move_to_other_pane",
             "menu.copy_path",
+            SEP,
+            "favourites.add",
+            "favourites.remove",
             SEP,
             "menu.tags",
             "system.share",
@@ -120,7 +130,8 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             SEP,
             "terminal.open",
             "file.reveal_in_finder",
-            "addressbar.add_favourite",
+            "favourites.add",
+            "favourites.remove",
             "preview.get_info",
         ],
         MenuKind::SidebarItem => vec![
@@ -146,6 +157,8 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             "tab.close_others",
             SEP,
             "path.copy_path",
+            "favourites.add",
+            "favourites.remove",
             "workspace.save",
         ],
     }
@@ -384,10 +397,11 @@ fn crumb_items_act_on_the_segment_not_the_selection() {
     let cp = find(&items, "path.copy_path").unwrap();
     let out = h.engine.perform(cp.invocation, Via::Menu).unwrap();
     assert_eq!(out.shell, Some(ShellRequest::CopyText { text: h.s("dir") }));
-    let fav = find(&items, "addressbar.add_favourite").unwrap();
+    assert!(find(&items, "favourites.remove").is_none());
+    let fav = find(&items, "favourites.add").unwrap();
     h.engine.perform(fav.invocation, Via::Menu).unwrap();
     assert!(h.engine.is_favourite(&h.s("dir")));
-    // Already a favourite: the item is hidden.
+    // Already a favourite: Add is hidden and Remove shows instead.
     let items = menu(
         &h,
         MenuTarget::Crumb {
@@ -395,7 +409,8 @@ fn crumb_items_act_on_the_segment_not_the_selection() {
             path: h.s("dir"),
         },
     );
-    assert!(find(&items, "addressbar.add_favourite").is_none());
+    assert!(find(&items, "favourites.add").is_none());
+    assert!(find(&items, "favourites.remove").is_some());
     let open = find(&items, "nav.open").unwrap();
     h.engine.perform(open.invocation, Via::Menu).unwrap();
     assert_eq!(t.location(), h.s("dir"));

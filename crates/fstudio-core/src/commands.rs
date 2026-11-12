@@ -382,6 +382,7 @@ impl Engine {
             | "filter.commit"
             | "app.settings"
             | "app.keyboard_shortcuts"
+            | "app.power_tour"
             | "edit.copy"
             | "tags.edit"
             | "sidebar.rename"
@@ -449,31 +450,85 @@ impl Engine {
         Ok(v)
     }
 
+    /// `favourites.add` (⌃⌘T) and `favourites.remove`: the path argument
+    /// (a context menu's folder, crumb or tab), else the selected folders,
+    /// else the tab's own folder. Only folders are added; files in the
+    /// selection are skipped.
+    fn favourites_command(&self, id: &str, inv: &CommandInvocation) -> Result<Outcome> {
+        let paths: Vec<PathBuf> = match &inv.arg {
+            Some(CommandArg::Path(p)) => vec![p.clone()],
+            _ => {
+                let t = self.target(inv.tab)?;
+                let sel = t.selected_pathbufs();
+                if sel.is_empty() {
+                    vec![t.location_path()]
+                } else {
+                    sel
+                }
+            }
+        };
+        let name_of = |p: &Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| s(p))
+        };
+        if id == "favourites.add" {
+            let folders: Vec<&PathBuf> = paths.iter().filter(|p| p.is_dir()).collect();
+            if folders.is_empty() {
+                return Ok(Outcome::message("Only folders can be favourites"));
+            }
+            let mut added = Vec::new();
+            for p in &folders {
+                if self.add_favourite_reporting(&s(p), None)? {
+                    added.push(name_of(p));
+                }
+            }
+            return Ok(Outcome::message(match (added.len(), folders.len()) {
+                (0, 1) => format!("“{}” is already in Favourites", name_of(folders[0])),
+                (0, _) => "They’re already in Favourites".to_string(),
+                (1, _) => format!("Added “{}” to Favourites", added[0]),
+                (n, _) => format!("Added {n} folders to Favourites"),
+            }));
+        }
+        let mut removed = Vec::new();
+        for p in &paths {
+            if let Some(f) = self.favourite_for(&s(p)) {
+                self.remove_favourite(&f.path)?;
+                removed.push(f.name);
+            }
+        }
+        Ok(Outcome::message(match removed.len() {
+            0 if paths.len() == 1 => format!("“{}” isn’t in Favourites", name_of(&paths[0])),
+            0 => "None of them are in Favourites".to_string(),
+            1 => format!("Removed “{}” from Favourites", removed[0]),
+            n => format!("Removed {n} folders from Favourites"),
+        }))
+    }
+
     fn sidebar_command(&self, id: &str, arg: Option<&CommandArg>) -> Result<Outcome> {
         let Some(CommandArg::Path(p)) = arg else {
             return Err(CoreError::NotAvailable("no sidebar item given".into()));
         };
         let path = s(p);
         Ok(match id {
-            "sidebar.remove" => {
-                if self.is_favourite(&path) {
-                    self.remove_favourite(&path)?;
-                    Outcome::message("Removed from the sidebar")
-                } else {
-                    Outcome::message("That folder isn't in the sidebar")
+            "sidebar.remove" => match self.favourite_for(&path) {
+                Some(f) => {
+                    self.remove_favourite(&f.path)?;
+                    Outcome::message(format!("Removed “{}” from Favourites", f.name))
                 }
-            }
+                None => Outcome::message("That folder isn’t in Favourites"),
+            },
             "sidebar.rename" => {
-                let name = self
-                    .favourites()
-                    .into_iter()
-                    .find(|f| f.path == path)
-                    .map(|f| f.name)
-                    .unwrap_or_else(|| {
-                        p.file_name()
+                let (path, name) = match self.favourite_for(&path) {
+                    Some(f) => (f.path, f.name),
+                    None => {
+                        let name = p
+                            .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default()
-                    });
+                            .unwrap_or_default();
+                        (path, name)
+                    }
+                };
                 Outcome::shell(ShellRequest::AskFavouriteName { path, name })
             }
             _ => {
@@ -659,9 +714,63 @@ impl Engine {
                 ));
             }
             DropAction::Copy => OpRequest::Copy { sources, dest_dir },
-            DropAction::Move => OpRequest::Move { sources, dest_dir },
+            DropAction::Move => {
+                let req = OpRequest::Move {
+                    sources: sources.clone(),
+                    dest_dir: dest_dir.clone(),
+                };
+                if let Some(ask) = self.guard_move(&sources, &dest_dir, || {
+                    crate::protect::PendingMove::Request(req.clone())
+                }) {
+                    return Ok(ask);
+                }
+                let mut out = Outcome::op(self.enqueue(req)?);
+                out.shell = Some(ShellRequest::Moved {
+                    text: crate::protect::moved_text(&sources, &dest_dir),
+                });
+                return Ok(out);
+            }
         };
         Ok(Outcome::op(self.enqueue(req)?))
+    }
+
+    /// F-023 for commands that move (F6, paste, Paste as Move, New Folder
+    /// with Selection): unless the user already confirmed, a protected item
+    /// stops the command and asks; on yes the command runs again with
+    /// `Confirmed`.
+    fn guard_command(
+        &self,
+        inv: &CommandInvocation,
+        sources: &[PathBuf],
+        dest: &Path,
+    ) -> Option<Outcome> {
+        if matches!(inv.arg, Some(CommandArg::Confirmed)) {
+            return None;
+        }
+        self.guard_move(sources, dest, || {
+            let mut again = inv.clone();
+            again.arg = Some(CommandArg::Confirmed);
+            crate::protect::PendingMove::Command(again)
+        })
+    }
+
+    /// The paste guard: only a cut (or Paste as Move) moves.
+    fn guard_paste(
+        &self,
+        inv: &CommandInvocation,
+        t: &Tab,
+        as_move: Option<bool>,
+    ) -> Option<Outcome> {
+        let cb = self.shared.clipboard.lock().clone()?;
+        if !as_move.unwrap_or(cb.cut) {
+            return None;
+        }
+        let dest = t.location_path();
+        if cb.items.iter().all(|p| p.parent() == Some(dest.as_path())) {
+            return None;
+        }
+        self.guard_command(inv, &cb.items, &dest)
+            .map(|o| o.with_tab(t.id()))
     }
 
     fn paste_into(&self, t: &Tab, as_move: Option<bool>) -> Result<Outcome> {
@@ -697,6 +806,7 @@ impl Engine {
                 dest_dir: dest,
             }
         };
+        let moved = mv.then(|| crate::protect::moved_text(&cb.items, &t.location_path()));
         let id = self.enqueue(req)?;
         if mv {
             // A cut is used up by its paste; nothing was deleted before now.
@@ -709,7 +819,9 @@ impl Engine {
             self.redraw_dirs(&dirs);
         }
         t.select_when_present(names);
-        Ok(Outcome::op(id).with_tab(t.id()))
+        let mut out = Outcome::op(id).with_tab(t.id());
+        out.shell = moved.map(|text| ShellRequest::Moved { text });
+        Ok(out)
     }
 
     fn copy_paths(
@@ -838,9 +950,8 @@ impl Engine {
                 || id.starts_with("palette.")
                 || id.starts_with("rename.") =>
             {
-                if let (Some(CommandArg::Path(p)), "addressbar.add_favourite") = (&inv.arg, id) {
-                    self.add_favourite(&s(p), None)?;
-                    return Ok(Outcome::message("Added to Favourites"));
+                if let (Some(CommandArg::Path(_)), "addressbar.add_favourite") = (&inv.arg, id) {
+                    return self.favourites_command("favourites.add", inv);
                 }
                 if let Some(CommandArg::Path(p)) = &inv.arg {
                     let t = self.target(inv.tab)?;
@@ -858,6 +969,8 @@ impl Engine {
                 }));
             }
             "filter.commit" => return Ok(Outcome::shell(ShellRequest::FocusList)),
+            "favourites.add" | "favourites.remove" => return self.favourites_command(id, inv),
+            "app.power_tour" => return Ok(Outcome::shell(ShellRequest::ShowPowerTour)),
             "sidebar.remove" | "sidebar.rename" | "drive.eject" | "drive.info" => {
                 return self.sidebar_command(id, inv.arg.as_ref());
             }
@@ -1103,6 +1216,9 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let name = Self::free_name(&t, NEW_FOLDER_WITH_ITEMS);
                 let parent = t.location_path();
+                if let Some(ask) = self.guard_command(inv, &sel, &parent.join(&name)) {
+                    return Ok(ask.with_tab(tid));
+                }
                 let ops = self.ops();
                 let first = ops.enqueue(OpRequest::NewFolder {
                     parent: parent.clone(),
@@ -1168,6 +1284,13 @@ impl Engine {
                 let sel = Self::need_selection(&t)?;
                 let o = self.other(&t)?;
                 let dest_dir = o.location_path();
+                if id == "file.move_to_other_pane"
+                    && let Some(ask) = self.guard_command(inv, &sel, &dest_dir)
+                {
+                    return Ok(ask.with_tab(tid));
+                }
+                let moved = (id == "file.move_to_other_pane")
+                    .then(|| crate::protect::moved_text(&sel, &dest_dir));
                 let names: Vec<String> = sel
                     .iter()
                     .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -1186,9 +1309,16 @@ impl Engine {
                 };
                 let op = self.enqueue(req)?;
                 o.select_when_present(names);
-                Outcome::op(op).with_tab(tid)
+                let mut out = Outcome::op(op).with_tab(tid);
+                out.shell = moved.map(|text| ShellRequest::Moved { text });
+                out
             }
-            "file.move_here" => self.paste_into(&t, Some(true))?,
+            "file.move_here" => {
+                if let Some(ask) = self.guard_paste(inv, &t, Some(true)) {
+                    return Ok(ask);
+                }
+                self.paste_into(&t, Some(true))?
+            }
             "file.open_with" => Outcome::shell(ShellRequest::OpenWith {
                 paths: strings(&Self::need_selection(&t)?),
             })
@@ -1231,7 +1361,12 @@ impl Engine {
                 ))
                 .with_tab(tid)
             }
-            "edit.paste" => self.paste_into(&t, None)?,
+            "edit.paste" => {
+                if let Some(ask) = self.guard_paste(inv, &t, None) {
+                    return Ok(ask);
+                }
+                self.paste_into(&t, None)?
+            }
 
             // ── view ──
             "view.set_mode" => {

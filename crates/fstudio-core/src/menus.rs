@@ -357,6 +357,10 @@ const FILE_TAIL: &[&str] = &[
     "file.delete_immediately",
 ];
 
+/// Add to / Remove from Favourites: only one of the two shows, by whether
+/// the folder is already a favourite.
+const FAVOURITES: [&str; 2] = ["favourites.add", "favourites.remove"];
+
 /// The default entries of a menu, exactly as `docs/CONTEXT-MENUS.md` lists them.
 pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = Vec::new();
@@ -390,6 +394,11 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
                 SEPARATOR,
             ]);
             v.extend(FILE_TAIL);
+            let at = v
+                .iter()
+                .position(|e| *e == "file.open_in_editor")
+                .map_or(v.len(), |i| i + 1);
+            v.splice(at..at, FAVOURITES);
         }
         MenuKind::Multi => v.extend([
             "nav.open",
@@ -407,6 +416,9 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
             "file.copy_to_other_pane",
             "file.move_to_other_pane",
             COPY_PATH,
+            SEPARATOR,
+            "favourites.add",
+            "favourites.remove",
             SEPARATOR,
             TAGS,
             SHARE,
@@ -441,7 +453,8 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
             SEPARATOR,
             "terminal.open",
             "file.reveal_in_finder",
-            "addressbar.add_favourite",
+            "favourites.add",
+            "favourites.remove",
             "preview.get_info",
         ]),
         MenuKind::SidebarItem => v.extend([
@@ -467,6 +480,8 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
             "tab.close_others",
             SEPARATOR,
             "path.copy_path",
+            "favourites.add",
+            "favourites.remove",
             "workspace.save",
         ]),
     }
@@ -598,6 +613,8 @@ struct Ctx {
     view: Option<ViewState>,
     sidebar: Option<SidebarItemKind>,
     removable: bool,
+    /// The target folder is a favourite (for several items: every folder
+    /// among them is).
     favourite: bool,
     can_reopen: bool,
     tabs_in_pane: usize,
@@ -804,10 +821,29 @@ impl Engine {
                     .any(|v| v.mount_path == *path && v.is_removable),
                 self.is_favourite(path),
             ),
+            MenuTarget::Folder { path, .. } | MenuTarget::Package { path, .. } => {
+                (false, self.is_favourite(path))
+            }
+            MenuTarget::Multi { paths, .. } => (
+                false,
+                paths
+                    .iter()
+                    .filter(|p| Path::new(p).is_dir())
+                    .all(|p| self.is_favourite(p)),
+            ),
+            MenuTarget::Tab { .. } => (
+                false,
+                tab.as_ref()
+                    .is_some_and(|t| self.is_favourite(&t.location_path().to_string_lossy())),
+            ),
             _ => (false, false),
         };
         let any_folder = match kind {
-            MenuKind::Folder | MenuKind::Package | MenuKind::Crumb | MenuKind::SidebarItem => true,
+            MenuKind::Folder
+            | MenuKind::Package
+            | MenuKind::Crumb
+            | MenuKind::SidebarItem
+            | MenuKind::Tab => true,
             MenuKind::Multi => paths.iter().any(|p| p.is_dir()),
             _ => false,
         };
@@ -880,7 +916,10 @@ impl Engine {
             MenuKind::Folder | MenuKind::Package if id == "terminal.open" => {
                 first.map(CommandArg::Path)
             }
-            MenuKind::Tab if id.starts_with("path.") => ctx
+            MenuKind::Folder | MenuKind::Package if id.starts_with("favourites.") => {
+                first.map(CommandArg::Path)
+            }
+            MenuKind::Tab if id.starts_with("path.") || id.starts_with("favourites.") => ctx
                 .tab
                 .as_ref()
                 .map(|t| CommandArg::Path(t.location_path())),
@@ -911,6 +950,8 @@ impl Engine {
             "drive.eject" => shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.removable),
             "drive.info" => shown(ctx.sidebar == Some(SidebarItemKind::Volume)),
             "addressbar.add_favourite" => shown(!ctx.favourite),
+            "favourites.add" => shown(ctx.any_folder && !ctx.favourite),
+            "favourites.remove" => shown(ctx.any_folder && ctx.favourite),
             "tab.reopen_closed" => shown(ctx.can_reopen),
             "tab.close_others" => shown(ctx.tabs_in_pane > 1),
             "view.show_hidden" => check(view.show_hidden),
@@ -1050,6 +1091,8 @@ fn explicit_ok(id: &str) -> bool {
             | "preview.quick_look"
             | "terminal.open"
             | "addressbar.add_favourite"
+            | "favourites.add"
+            | "favourites.remove"
             | "sidebar.remove"
             | "sidebar.rename"
             | "drive.eject"

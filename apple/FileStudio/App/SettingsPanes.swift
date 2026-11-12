@@ -261,12 +261,7 @@ struct SettingsAdvancedPane: View {
     /// Mirrors `EngineFactory`'s choice of folder.
     static func dataFolder(_ model: AppModel) -> String? {
         guard model.engine.implementationName != "Mock" else { return nil }
-        var dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("File Studio", isDirectory: true)
-        #if DEBUG
-        if let d = UserDefaults.standard.string(forKey: "FSDataDir") { dir = URL(fileURLWithPath: d) }
-        #endif
-        return dir.path
+        return appDataFolder().path
     }
 
     var body: some View {

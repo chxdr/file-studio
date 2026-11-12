@@ -4,7 +4,11 @@
 // filter field at the bottom (QSpace).
 //
 // - Favourites come from the core's store: drag to reorder
-//   (`moveFavourite`), drop folders to add (`addFavourite`).
+//   (`moveFavourite`), drop folders from the list, Finder or another app to
+//   pin them at the drop position (`addFavourite`), drag one out of the
+//   sidebar (poof) or press ⌫ on it to unpin it (`sidebar.remove`), and
+//   right-click › Remove from Favourites / Rename Favourite…. A favourite
+//   whose folder has gone shows dimmed; clicking it offers Remove.
 // - Recent Folders come from frecency (`engine.frecent`).
 // - Locations are the core's volumes with free space; removable ones get an
 //   eject button, which performs `drive.eject`; the core answers with
@@ -71,13 +75,31 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var collapsed = Set<String>()
     private var syncingSelection = false
     private var lastLocation: String?
-    private static let favouriteType = NSPasteboard.PasteboardType("app.filestudio.sidebar-favourite")
+    /// The drag type of a favourite being reordered or dragged out.
+    static let favouriteType = NSPasteboard.PasteboardType("app.filestudio.sidebar-favourite")
+    /// The drag type of any other sidebar row (a recent folder, a volume): it
+    /// can only be pinned by dropping it in Favourites.
+    static let itemType = NSPasteboard.PasteboardType("app.filestudio.sidebar-item")
+    /// Every type a sidebar drag carries. Drop targets elsewhere refuse these.
+    static let privateTypes: [NSPasteboard.PasteboardType] = [favouriteType, itemType]
+
+    /// Is this drag from the sidebar (F-023)? Drop targets that move or copy
+    /// files call this and refuse such drags, whatever else the pasteboard
+    /// holds.
+    static func isSidebarDrag(_ info: NSDraggingInfo) -> Bool {
+        info.draggingSource is SidebarOutlineView
+            || info.draggingPasteboard.availableType(from: privateTypes) != nil
+    }
 
     init(model: AppModel, window: WindowModel) {
         self.model = model
         self.windowModel = window
         super.init(nibName: nil, bundle: nil)
         SidebarServices.install(model)
+        #if DEBUG
+        SidebarDebugSteps.install()
+        SidebarDragProbe.install()
+        #endif
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -98,12 +120,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.delegate = self
         outline.target = self
         outline.action = #selector(clicked)
-        outline.registerForDraggedTypes([Self.favouriteType, .fileURL])
-        outline.setDraggingSourceOperationMask([.move, .copy, .link], forLocal: true)
-        outline.setDraggingSourceOperationMask([.copy, .link], forLocal: false)
+        // F-023: sidebar drags are references, never file operations. They
+        // carry only our private types (no file URL), so no drop target that
+        // moves or copies files (the list, crumbs, Finder) ever accepts them.
+        outline.registerForDraggedTypes([Self.favouriteType, Self.itemType, .fileURL])
+        outline.setDraggingSourceOperationMask([.move, .link], forLocal: true)
+        outline.setDraggingSourceOperationMask([], forLocal: false)
         outline.setAccessibilityLabel("Sidebar")
         outline.menuProvider = { [weak self] row in self?.menu(row: row) }
         outline.onMiddleClick = { [weak self] row in self?.openInNewTab(row: row) }
+        outline.onDelete = { [weak self] in self?.removeSelectedFavourite() ?? false }
+        outline.isFavouriteDrag = { pb in pb.string(forType: SidebarViewController.favouriteType) != nil }
         scroll.documentView = outline
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -211,6 +238,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private func go(_ n: SidebarNode) {
+        if case .favourite(let f) = n.kind, f.missing {
+            offerRemoveMissing(f)
+            return
+        }
         guard let path = n.path, let t = focusedTab else { return }
         do {
             model.handle(try t.api.go(path), in: windowModel.id)
@@ -224,6 +255,38 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let n = outline.item(atRow: row) as? SidebarNode, let p = n.path else { return }
         model.perform(Invocation(id: "nav.open_new_tab", arg: .path(p), tab: windowModel.activeTabID), via: .mouse,
                       window: windowModel.id)
+    }
+
+    // MARK: Removing favourites
+
+    /// ⌫ (or ⌘⌫) on a selected favourite unpins it. The folder is untouched.
+    /// Returns false when the selected row isn't a favourite (the key goes on).
+    func removeSelectedFavourite() -> Bool {
+        guard outline.selectedRow >= 0, let n = outline.item(atRow: outline.selectedRow) as? SidebarNode,
+              case .favourite(let f) = n.kind else { return false }
+        removeFavourite(f.path, via: .keyboard)
+        return true
+    }
+
+    /// Unpins a favourite through the core (`sidebar.remove`), which says what happened.
+    func removeFavourite(_ path: String, via: Via) {
+        model.perform(Invocation(id: "sidebar.remove", arg: .path(path), tab: windowModel.activeTabID), via: via,
+                      window: windowModel.id)
+    }
+
+    /// A favourite whose folder has gone: say so, and offer to remove it.
+    private func offerRemoveMissing(_ f: Favourite) {
+        syncSelection()
+        let a = NSAlert()
+        a.alertStyle = .informational
+        a.messageText = "“\(f.name)” can’t be found."
+        a.informativeText = "The folder may have been moved, renamed or deleted, or it’s on a drive that isn’t connected.\n\(f.path)"
+        a.addButton(withTitle: "Remove from Favourites")
+        a.addButton(withTitle: "Cancel")
+        let done: (NSApplication.ModalResponse) -> Void = { [weak self] r in
+            if r == .alertFirstButtonReturn { self?.removeFavourite(f.path, via: .mouse) }
+        }
+        if let w = view.window { a.beginSheetModal(for: w, completionHandler: done) } else { done(a.runModal()) }
     }
 
     // MARK: Context menus (F-022)
@@ -311,13 +374,49 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ ov: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let n = item as? SidebarNode, let path = n.path else { return nil }
+        // Only our own types, never a file URL (F-023): dropping a sidebar row
+        // on a folder, a crumb, a pane or Finder must not move or copy it.
+        // A favourite reorders (or, dragged out, unpins with a poof); any
+        // other row can only be pinned.
         let pb = NSPasteboardItem()
-        if case .favourite = n.kind { pb.setString(path, forType: Self.favouriteType) }
-        pb.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
+        if case .favourite = n.kind {
+            pb.setString(path, forType: Self.favouriteType)
+        } else {
+            pb.setString(path, forType: Self.itemType)
+        }
         return pb
     }
 
+    /// A favourite dragged out of the sidebar and let go anywhere that didn't
+    /// take it is unpinned, with the poof (Finder's sidebar).
+    func outlineView(_ ov: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                     operation: NSDragOperation) {
+        guard operation == [], let path = session.draggingPasteboard.string(forType: Self.favouriteType),
+              !isOverSidebar(screenPoint) else { return }
+        dragOut(path, at: screenPoint)
+    }
+
+    /// Is a screen point over the sidebar (where a let-go favourite stays)?
+    func isOverSidebar(_ screenPoint: NSPoint) -> Bool {
+        guard let w = view.window else { return false }
+        let r = w.convertToScreen(view.convert(view.bounds, to: nil))
+        return r.contains(screenPoint)
+    }
+
+    /// Unpins a dragged-out favourite and plays the poof where it was let go.
+    func dragOut(_ path: String, at screenPoint: NSPoint) {
+        Poof.show(at: screenPoint)
+        removeFavourite(path, via: .mouse)
+    }
+
     private var favSection: SidebarNode? { roots.first { $0.id == "sec:fav" } }
+    /// The gap the last validated drop was retargeted to.
+    private var lastDropIndex = 0
+
+    #if DEBUG
+    /// Accepts a probe drop where `validateDrop` retargeted it, as NSOutlineView would.
+    func debugAcceptRetargetedDrop(_ info: NSDraggingInfo) -> Bool { acceptDrop(info.draggingPasteboard, at: lastDropIndex) }
+    #endif
 
     func outlineView(_ ov: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
                      proposedChildIndex index: Int) -> NSDragOperation {
@@ -333,12 +432,29 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if at < 0 { at = fav.children.count }
         ov.setDropItem(fav, dropChildIndex: at)
+        lastDropIndex = at
         if pb.string(forType: Self.favouriteType) != nil { return .move }
+        if pb.string(forType: Self.itemType) != nil { return .link }
         return folderURLs(pb).isEmpty ? [] : .link
     }
 
     func outlineView(_ ov: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
-        let pb = info.draggingPasteboard
+        acceptDrop(info.draggingPasteboard, at: index)
+    }
+
+    /// A drop on Favourites at `index` (a gap between favourites): a favourite
+    /// moves there, folders are pinned there. Debug automation calls this with
+    /// a pasteboard of its own.
+    func acceptDrop(_ pb: NSPasteboard, at index: Int) -> Bool {
+        // Every branch only touches the favourites store; nothing here may
+        // ever queue a file operation (F-023).
+        if let path = pb.string(forType: Self.itemType) {
+            do { try model.engine.addFavourite(path, index: UInt32(max(index, 0))) } catch {
+                model.statusMessage = error.localizedDescription
+                return false
+            }
+            return true
+        }
         do {
             if let path = pb.string(forType: Self.favouriteType) {
                 guard let from = model.favourites.firstIndex(where: { $0.path == path }) else { return false }
@@ -346,22 +462,36 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 if to != from { try model.engine.moveFavourite(path, to: UInt32(max(to, 0))) }
                 return true
             }
+            // The core decides what can be pinned (folders only, one per folder).
+            let urls = fileURLs(pb)
+            guard !urls.isEmpty else { return false }
+            let before = model.engine.favourites().count
             var at = UInt32(max(index, 0))
-            for url in folderURLs(pb) {
-                try model.engine.addFavourite(url.path, index: at)
-                at += 1
+            var refused: String?
+            for url in urls {
+                do {
+                    try model.engine.addFavourite(url.path, index: at)
+                    at += 1
+                } catch { refused = error.localizedDescription }
             }
-            return true
+            let added = model.engine.favourites().count - before
+            if added == 0 { model.statusMessage = refused ?? "Already in Favourites" }
+            return added > 0
         } catch {
             model.statusMessage = error.localizedDescription
             return false
         }
     }
 
-    /// Folder URLs on a pasteboard (files can't be favourites).
+    /// File URLs on a pasteboard.
+    private func fileURLs(_ pb: NSPasteboard) -> [URL] {
+        pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    /// Folder URLs on a pasteboard: while dragging, only folders show the
+    /// drop line (files can't be favourites; the core checks again on drop).
     private func folderURLs(_ pb: NSPasteboard) -> [URL] {
-        let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        fileURLs(pb).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
     }
 
     // MARK: Debug
@@ -377,12 +507,38 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return false
     }
 
+    /// Selects a row by its folder (debug automation), as an arrow key would
+    /// leave it, without navigating.
+    func debugSelect(path: String) -> Bool {
+        for i in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: i) as? SidebarNode, n.path == path {
+                syncingSelection = true
+                outline.selectRowIndexes([i], byExtendingSelection: false)
+                syncingSelection = false
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The menu a right-click on a row would show (debug automation fires items from it).
+    func debugMenu(path: String) -> NSMenu? {
+        for i in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: i) as? SidebarNode, n.path == path { return menu(row: i) }
+        }
+        return nil
+    }
+
     /// Every visible row as text (debug automation: snapshots draw the material blank).
     var debugRows: [String] {
         (0..<outline.numberOfRows).compactMap { i in
             guard let n = outline.item(atRow: i) as? SidebarNode else { return nil }
             if n.isSection { return "# " + n.title }
             var s = (outline.selectedRow == i ? "▸ " : "  ") + n.title
+            if case .favourite(let f) = n.kind {
+                if f.missing { s += " [missing]" }
+                if f.renamed { s += " (\(f.path))" }
+            }
             if case .volume(let v) = n.kind {
                 s += " — \(PaneText.bytes(v.freeBytes)) free" + (v.isRemovable ? " [eject]" : "")
             }
@@ -448,6 +604,7 @@ final class SidebarCell: NSTableCellView {
     func show(_ n: SidebarNode, model: AppModel) {
         self.model = model
         name.stringValue = n.title
+        name.textColor = .labelColor
         detail.isHidden = true
         eject.isHidden = true
         ejectPath = nil
@@ -455,7 +612,13 @@ final class SidebarCell: NSTableCellView {
         toolTip = n.path
         switch n.kind {
         case .favourite(let f):
-            icon.image = NSImage(systemSymbolName: Self.symbol(for: f.path, home: model.engine.home()), accessibilityDescription: nil)
+            icon.image = NSImage(systemSymbolName: f.missing ? "questionmark.folder"
+                                 : Self.symbol(for: f.path, home: model.engine.home()), accessibilityDescription: nil)
+            if f.missing {
+                icon.contentTintColor = .tertiaryLabelColor
+                name.textColor = .tertiaryLabelColor
+                toolTip = "“\(f.name)” can’t be found (\(f.path)). Click or right-click to remove it."
+            }
         case .recent:
             icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
         case .volume(let v):
@@ -480,6 +643,13 @@ final class SidebarCell: NSTableCellView {
             break
         }
         setAccessibilityLabel(detail.isHidden ? n.title : "\(n.title), \(detail.stringValue) available")
+        if case .favourite(let f) = n.kind {
+            setAccessibilityLabel(f.missing ? "\(n.title), missing" : n.title)
+            setAccessibilityHelp(f.missing ? "The folder can’t be found. Press Delete to remove it from Favourites."
+                                 : "Favourite. Press Delete to remove it from Favourites.")
+        } else {
+            setAccessibilityHelp(nil)
+        }
     }
 
     /// Finder-like symbols for well-known folders.
@@ -515,6 +685,10 @@ final class SidebarCell: NSTableCellView {
 final class SidebarOutlineView: NSOutlineView {
     var menuProvider: ((Int) -> NSMenu?)?
     var onMiddleClick: ((Int) -> Void)?
+    /// ⌫ / ⌘⌫ on the selected row; true when it removed a favourite.
+    var onDelete: (() -> Bool)?
+    /// Is this drag one of our favourites (dragged out, it unpins)?
+    var isFavouriteDrag: ((NSPasteboard) -> Bool)?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let row = self.row(at: convert(event.locationInWindow, from: nil))
@@ -527,7 +701,21 @@ final class SidebarOutlineView: NSOutlineView {
             if event.modifierFlags.contains(.shift) { window?.selectPreviousKeyView(self) } else { window?.selectNextKeyView(self) }
             return
         }
+        // ⌫ and ⌦, alone or with ⌘ (Finder's sidebar uses ⌘⌫ as well).
+        let mods = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        if event.keyCode == 51 || event.keyCode == 117, mods == [] || mods == .command, onDelete?() == true { return }
         super.keyDown(with: event)
+    }
+
+    /// Outside the sidebar a dragged favourite shows the poof cursor, and a
+    /// let-go doesn't slide back.
+    override func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        super.draggingSession(session, movedTo: screenPoint)
+        guard isFavouriteDrag?(session.draggingPasteboard) == true, let sv = enclosingScrollView?.superview,
+              let w = window else { return }
+        let outside = !w.convertToScreen(sv.convert(sv.bounds, to: nil)).contains(screenPoint)
+        session.animatesToStartingPositionsOnCancelOrFail = !outside
+        (outside ? NSCursor.disappearingItem : NSCursor.arrow).set()
     }
 
     override func otherMouseDown(with event: NSEvent) {
@@ -549,6 +737,62 @@ final class SidebarServices {
             eject(path, model: model)
             return true
         }
+        model.registerShellHandler(for: "askFavouriteName") { req, ctx in
+            guard case .askFavouriteName(let path, let name) = req else { return false }
+            askName(path: path, name: name, model: model, on: hostWindow(ctx.window))
+            return true
+        }
+    }
+
+    /// The field in the open Rename Favourite sheet (debug automation types into it).
+    private(set) static var renameField: NSTextField?
+    private static var renameAlert: NSAlert?
+
+    /// Rename Favourite…: asks for a display name (empty goes back to the
+    /// folder's own name), then `renameFavourite`. The folder isn't renamed.
+    /// The main window to put a sheet on: the request's window, else the key one, else any.
+    static func hostWindow(_ id: WindowID?) -> NSWindow? {
+        let mains = NSApp.windows.filter { $0.windowController is CoreWindowIdentifying && $0.isVisible }
+        if let id, let w = mains.first(where: { ($0.windowController as? CoreWindowIdentifying)?.coreWindowID == id }) {
+            return w
+        }
+        return mains.first { $0.isKeyWindow } ?? mains.first
+    }
+
+    static func askName(path: String, name: String, model: AppModel, on host: NSWindow?) {
+        let a = NSAlert()
+        a.messageText = "Rename Favourite"
+        a.informativeText = "The name shown in the sidebar. The folder itself keeps its name.\nLeave it empty to use the folder’s name."
+        let field = NSTextField(string: name)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        field.placeholderString = (path as NSString).lastPathComponent
+        field.setAccessibilityLabel("Favourite name")
+        a.accessoryView = field
+        a.addButton(withTitle: "Rename")
+        a.addButton(withTitle: "Cancel")
+        renameField = field
+        renameAlert = a
+        let done: (NSApplication.ModalResponse) -> Void = { r in
+            renameField = nil
+            renameAlert = nil
+            guard r == .alertFirstButtonReturn else { return }
+            do { try model.engine.renameFavourite(path, name: field.stringValue) } catch {
+                model.statusMessage = error.localizedDescription
+            }
+        }
+        if let w = host {
+            a.beginSheetModal(for: w, completionHandler: done)
+            a.window.initialFirstResponder = field
+            a.window.makeFirstResponder(field)
+        } else {
+            done(a.runModal())
+        }
+    }
+
+    /// Ends the open Rename Favourite sheet as if a button were pressed (debug automation).
+    static func endRename(ok: Bool) {
+        guard let a = renameAlert, let parent = a.window.sheetParent else { return }
+        parent.endSheet(a.window, returnCode: ok ? .alertFirstButtonReturn : .alertSecondButtonReturn)
     }
 
     /// Unmounts and ejects off the main thread (it can take seconds), then

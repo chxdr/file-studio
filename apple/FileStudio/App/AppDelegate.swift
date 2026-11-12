@@ -65,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .showSettings(let section) = req { self?.showSettings(section: SettingsTab(section: section)) }
             return true
         }
+        TourController.install(model)
+        MoveSafety.install(model)
     }
 
     func showSettings(section: SettingsTab? = nil) { SettingsWindow.show(model: model, section: section) }

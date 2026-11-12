@@ -223,6 +223,10 @@ pub struct OperationsSettings {
     pub ops_per_volume: u32,
     /// Undo steps kept (1–1000).
     pub undo_limit: u32,
+    /// Folders whose move always asks first (F-023); `~` is the home folder.
+    /// Volume roots and folders open in tabs are always protected too, and
+    /// the confirmation itself can't be turned off.
+    pub protected_folders: Vec<String>,
 }
 
 impl Default for OperationsSettings {
@@ -234,6 +238,7 @@ impl Default for OperationsSettings {
             file_workers: 4,
             ops_per_volume: 1,
             undo_limit: 100,
+            protected_folders: crate::protect::default_protected_folders(),
         }
     }
 }

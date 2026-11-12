@@ -564,6 +564,16 @@ pub enum FfiShellRequest {
     ShowSettings {
         section: String,
     },
+    ConfirmMove {
+        token: u64,
+        title: String,
+        detail: String,
+        paths: Vec<String>,
+    },
+    Moved {
+        text: String,
+    },
+    ShowPowerTour,
     ToggleSidebar,
     ToggleInspector,
     Eject {
@@ -621,6 +631,19 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::ShowPalette => Self::ShowPalette,
             S::ShowQuickOpen => Self::ShowQuickOpen,
             S::ShowSettings { section } => Self::ShowSettings { section },
+            S::ConfirmMove {
+                token,
+                title,
+                detail,
+                paths,
+            } => Self::ConfirmMove {
+                token,
+                title,
+                detail,
+                paths,
+            },
+            S::Moved { text } => Self::Moved { text },
+            S::ShowPowerTour => Self::ShowPowerTour,
             S::ToggleSidebar => Self::ToggleSidebar,
             S::ToggleInspector => Self::ToggleInspector,
             S::Eject { path } => Self::Eject { path },
@@ -1672,6 +1695,8 @@ pub struct FfiFavourite {
     pub path: String,
     pub name: String,
     pub renamed: bool,
+    /// The folder has gone: show the row dimmed and offer Remove.
+    pub missing: bool,
 }
 
 impl From<core::Favourite> for FfiFavourite {
@@ -1680,6 +1705,7 @@ impl From<core::Favourite> for FfiFavourite {
             path: f.path,
             name: f.name,
             renamed: f.renamed,
+            missing: f.missing,
         }
     }
 }

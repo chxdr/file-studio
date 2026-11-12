@@ -209,6 +209,13 @@ public enum ShellRequest: Equatable, Sendable {
     case showPalette
     case showQuickOpen
     case showSettings(section: String)
+    /// Moving these items needs a yes (F-023). Ask with Cancel as the default,
+    /// then `engine.confirmMove(token)` or `engine.cancelMove(token)`.
+    case confirmMove(token: UInt64, title: String, detail: String, paths: [String])
+    /// A move was queued: show `text` for ~6 s with Undo (`edit.undo`).
+    case moved(text: String)
+    /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
+    case showPowerTour
     case toggleSidebar
     case toggleInspector
     case eject(path: String)
@@ -246,6 +253,9 @@ public enum ShellRequest: Equatable, Sendable {
         case .showPalette: "showPalette"
         case .showQuickOpen: "showQuickOpen"
         case .showSettings: "showSettings"
+        case .confirmMove: "confirmMove"
+        case .moved: "moved"
+        case .showPowerTour: "showPowerTour"
         case .toggleSidebar: "toggleSidebar"
         case .toggleInspector: "toggleInspector"
         case .eject: "eject"
@@ -725,8 +735,12 @@ public struct Favourite: Equatable, Sendable, Identifiable {
     public var name: String
     /// The user gave it its own name.
     public var renamed: Bool
+    /// The folder has gone: show the row dimmed and offer Remove.
+    public var missing: Bool
     public var id: String { path }
-    public init(path: String, name: String, renamed: Bool = false) { self.path = path; self.name = name; self.renamed = renamed }
+    public init(path: String, name: String, renamed: Bool = false, missing: Bool = false) {
+        self.path = path; self.name = name; self.renamed = renamed; self.missing = missing
+    }
 }
 
 // MARK: - Context menus (F-022)
@@ -1082,6 +1096,10 @@ public protocol EngineAPI: AnyObject, Sendable {
     func removeFavourite(_ path: String) throws
     func renameFavourite(_ path: String, name: String) throws
     func moveFavourite(_ path: String, to index: UInt32) throws
+    /// F-023: the user said Move to `ShellRequest.confirmMove`.
+    func confirmMove(_ token: UInt64) throws -> Outcome
+    /// F-023: the user cancelled `ShellRequest.confirmMove`.
+    func cancelMove(_ token: UInt64)
 
     // OS hooks
     /// A volume was mounted or unmounted (Platform/VolumeWatcher).
