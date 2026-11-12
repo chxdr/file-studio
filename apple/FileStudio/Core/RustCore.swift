@@ -173,6 +173,42 @@ extension Outcome {
     }
 }
 
+// MARK: - Packed rows
+
+/// Decodes `FfiTab::rows_packed` (little endian; layout documented in Rust).
+func unpackRows(_ data: Data) -> [Row] {
+    data.withUnsafeBytes { (b: UnsafeRawBufferPointer) -> [Row] in
+        var at = 0
+        func u32() -> UInt32 { defer { at += 4 }; return UInt32(littleEndian: b.loadUnaligned(fromByteOffset: at, as: UInt32.self)) }
+        func u64() -> UInt64 { defer { at += 8 }; return UInt64(littleEndian: b.loadUnaligned(fromByteOffset: at, as: UInt64.self)) }
+        func u8() -> UInt8 { defer { at += 1 }; return b[at] }
+        func str() -> String {
+            let n = Int(u32())
+            defer { at += n }
+            return String(decoding: UnsafeRawBufferPointer(rebasing: b[at..<at + n]), as: UTF8.self)
+        }
+        guard b.count >= 4 else { return [] }
+        let n = Int(u32())
+        var out: [Row] = []
+        out.reserveCapacity(n)
+        let kinds: [RowKind] = [.folder, .package, .file, .symlink, .other]
+        for _ in 0..<n {
+            let index = u32()
+            let kind = kinds[min(Int(u8()), 4)]
+            let f = u8()
+            let size = u64()
+            let modified = Int64(bitPattern: u64())
+            let name = str(), icon = str(), kindText = str(), sizeText = str(), modifiedText = str()
+            out.append(Row(index: index, name: name, kind: kind, iconKey: icon, kindText: kindText, size: size,
+                           sizeText: sizeText, modifiedNs: modified, modifiedText: modifiedText,
+                           isHidden: f & 1 != 0, isDataless: f & 2 != 0, isPackage: f & 4 != 0,
+                           isSymlink: f & 8 != 0, isSelected: f & 16 != 0, isCursor: f & 32 != 0,
+                           isCutPending: f & 64 != 0))
+        }
+        return out
+    }
+}
+
 // MARK: - Conversions: listing, view, selection, workspace
 
 extension Row {
@@ -715,7 +751,9 @@ final class RustTab: TabAPI, @unchecked Sendable {
     func location() -> String { ffi.location() }
     func state() -> TabState { TabState(ffi.state()) }
     func listingInfo() -> ListingInfo { ListingInfo(ffi.listingInfo()) }
-    func rows(start: UInt32, count: UInt32) -> [Row] { ffi.rows(start: start, count: count).map(Row.init) }
+    /// Uses the packed path: the generated record lifting costs ~10× the
+    /// Rust side for 60 rows (see `FfiTab::rows_packed` for the layout).
+    func rows(start: UInt32, count: UInt32) -> [Row] { unpackRows(ffi.rowsPacked(start: start, count: count)) }
     func indexOf(name: String) -> UInt32? { ffi.indexOf(name: name) }
     func pathAt(_ row: UInt32) -> String? { ffi.pathAt(i: row) }
     func go(_ to: String) throws -> Outcome { try wrap { Outcome(try ffi.go(to: to)) } }

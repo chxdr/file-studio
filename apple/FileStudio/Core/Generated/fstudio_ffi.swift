@@ -650,6 +650,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -2279,6 +2297,23 @@ public protocol FfiTabProtocol: AnyObject, Sendable {
      */
     func rows(start: UInt32, count: UInt32)  -> [FfiRow]
     
+    /**
+     * The same rows as [`FfiTab::rows`], packed into one byte buffer, for
+     * shells whose generated record lifting is slow (Swift: ~150 µs for 60
+     * records against ~15 µs for this). Little endian:
+     *
+     * ```text
+     * u32 count
+     * per row: u32 index, u8 kind (0 folder, 1 package, 2 file, 3 symlink, 4 other),
+     * u8 flags (1 hidden, 2 dataless, 4 package, 8 symlink, 16 selected,
+     * 32 cursor, 64 cut pending),
+     * u64 size, i64 modified_ns,
+     * 5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
+     * size_text, modified_text
+     * ```
+     */
+    func rowsPacked(start: UInt32, count: UInt32)  -> Data
+    
     func scrollAnchor()  -> FfiScrollAnchor?
     
     func selectPattern(pattern: String, select: Bool) 
@@ -2549,6 +2584,32 @@ open func rows(start: UInt32, count: UInt32) -> [FfiRow]  {
     return try!  FfiConverterSequenceTypeFfiRow.lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffitab_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The same rows as [`FfiTab::rows`], packed into one byte buffer, for
+     * shells whose generated record lifting is slow (Swift: ~150 µs for 60
+     * records against ~15 µs for this). Little endian:
+     *
+     * ```text
+     * u32 count
+     * per row: u32 index, u8 kind (0 folder, 1 package, 2 file, 3 symlink, 4 other),
+     * u8 flags (1 hidden, 2 dataless, 4 package, 8 symlink, 16 selected,
+     * 32 cursor, 64 cut pending),
+     * u64 size, i64 modified_ns,
+     * 5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
+     * size_text, modified_text
+     * ```
+     */
+open func rowsPacked(start: UInt32, count: UInt32) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitab_rows_packed(
             self.uniffiCloneHandle(),
         FfiConverterUInt32.lower(start),
         FfiConverterUInt32.lower(count),uniffiCallStatus
@@ -11186,6 +11247,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_rows() != 29485) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_rows_packed() != 41782) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_scroll_anchor() != 914) {

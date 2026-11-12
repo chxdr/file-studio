@@ -128,12 +128,20 @@ enum DebugAutomation {
         _ = t.api.rows(start: 0, count: 60)
         let iterations = 2000
         let clock = ContinuousClock()
+        func us(_ d: Duration) -> Double {
+            (Double(d.components.seconds) * 1e6 + Double(d.components.attoseconds) / 1e12) / Double(iterations)
+        }
         let d = clock.measure {
             for k in 0..<iterations { _ = t.api.rows(start: UInt32((k * 37) % n), count: 60) }
         }
-        let us = Double(d.components.attoseconds) / 1e12 / Double(iterations) + Double(d.components.seconds) * 1e6 / Double(iterations)
         print(String(format: "BENCH rows(start, 60) from Swift: %.1f µs per call (%d rows in folder, %d calls)",
-                     us, Int(t.listing.count), iterations))
+                     us(d), Int(t.listing.count), iterations))
+        if let rt = t.api as? RustTab {
+            let raw = clock.measure {
+                for k in 0..<iterations { _ = rt.ffi.rows(start: UInt32((k * 37) % n), count: 60) }
+            }
+            print(String(format: "BENCH   generated record lifting instead (ffi.rows): %.1f µs", us(raw)))
+        }
     }
 
     // MARK: Keys

@@ -87,6 +87,22 @@ impl FfiTab {
             .map(Into::into)
             .collect()
     }
+    /// The same rows as [`FfiTab::rows`], packed into one byte buffer, for
+    /// shells whose generated record lifting is slow (Swift: ~150 µs for 60
+    /// records against ~15 µs for this). Little endian:
+    ///
+    /// ```text
+    /// u32 count
+    /// per row: u32 index, u8 kind (0 folder, 1 package, 2 file, 3 symlink, 4 other),
+    ///          u8 flags (1 hidden, 2 dataless, 4 package, 8 symlink, 16 selected,
+    ///                    32 cursor, 64 cut pending),
+    ///          u64 size, i64 modified_ns,
+    ///          5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
+    ///                                                size_text, modified_text
+    /// ```
+    pub fn rows_packed(&self, start: u32, count: u32) -> Vec<u8> {
+        pack_rows(&self.inner.rows(start, count))
+    }
     /// The row of the entry with exactly this name.
     pub fn index_of(&self, name: String) -> Option<u32> {
         self.inner.listing().index_of(&name)
@@ -180,6 +196,48 @@ impl FfiTab {
     pub fn complete(&self, input: String, cursor: u32) -> FfiCompletions {
         self.inner.complete(&input, cursor).into()
     }
+}
+
+/// Packs rows in the layout documented on [`FfiTab::rows_packed`].
+fn pack_rows(rows: &[core::RowInfo]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(16 + rows.len() * 96);
+    b.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    for r in rows {
+        b.extend_from_slice(&r.index.to_le_bytes());
+        b.push(match r.kind {
+            core::RowKind::Folder => 0,
+            core::RowKind::Package => 1,
+            core::RowKind::File => 2,
+            core::RowKind::Symlink => 3,
+            core::RowKind::Other => 4,
+        });
+        let flags = [
+            r.is_hidden,
+            r.is_dataless,
+            r.is_package,
+            r.is_symlink,
+            r.is_selected,
+            r.is_cursor,
+            r.is_cut_pending,
+        ]
+        .iter()
+        .enumerate()
+        .fold(0u8, |f, (i, on)| if *on { f | (1 << i) } else { f });
+        b.push(flags);
+        b.extend_from_slice(&r.size.to_le_bytes());
+        b.extend_from_slice(&r.modified_ns.to_le_bytes());
+        for s in [
+            &r.name,
+            &r.icon_key,
+            &r.kind_text,
+            &r.size_text,
+            &r.modified_text,
+        ] {
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+    }
+    b
 }
 
 // ───────────────────────── engine ─────────────────────────
@@ -658,6 +716,56 @@ mod tests {
         (e, sink)
     }
 
+    /// A reference decoder for `rows_packed` (the Swift one mirrors it).
+    fn unpack(b: &[u8]) -> Vec<FfiRow> {
+        let mut at = 0usize;
+        let mut take = |n: usize| {
+            let s = &b[at..at + n];
+            at += n;
+            s
+        };
+        let n = u32::from_le_bytes(take(4).try_into().unwrap());
+        (0..n)
+            .map(|_| {
+                let index = u32::from_le_bytes(take(4).try_into().unwrap());
+                let kind = [
+                    FfiRowKind::Folder,
+                    FfiRowKind::Package,
+                    FfiRowKind::File,
+                    FfiRowKind::Symlink,
+                    FfiRowKind::Other,
+                ][take(1)[0] as usize];
+                let f = take(1)[0];
+                let size = u64::from_le_bytes(take(8).try_into().unwrap());
+                let modified_ns = i64::from_le_bytes(take(8).try_into().unwrap());
+                let mut s = || {
+                    let len = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
+                    String::from_utf8(take(len).to_vec()).unwrap()
+                };
+                let (name, icon_key, kind_text, size_text, modified_text) =
+                    (s(), s(), s(), s(), s());
+                FfiRow {
+                    index,
+                    name,
+                    kind,
+                    icon_key,
+                    kind_text,
+                    size,
+                    size_text,
+                    modified_ns,
+                    modified_text,
+                    is_hidden: f & 1 != 0,
+                    is_dataless: f & 2 != 0,
+                    is_package: f & 4 != 0,
+                    is_symlink: f & 8 != 0,
+                    is_selected: f & 16 != 0,
+                    is_cursor: f & 32 != 0,
+                    is_cut_pending: f & 64 != 0,
+                }
+            })
+            .collect()
+    }
+
     fn wait_sorted(t: &FfiTab) {
         let start = std::time::Instant::now();
         while t.listing_info().state != FfiListingState::Complete {
@@ -682,6 +790,8 @@ mod tests {
         let rows = t.rows(0, 60);
         assert_eq!(rows.len(), 60);
         assert_eq!(rows[0].name, "Café", "folders first, name as on disk");
+        let packed = t.rows_packed(0, 60);
+        assert_eq!(unpack(&packed), rows, "packed rows match the records");
         // Keys and commands.
         let out = e
             .handle_key(

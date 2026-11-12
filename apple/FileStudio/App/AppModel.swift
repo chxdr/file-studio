@@ -184,6 +184,7 @@ public final class AppModel {
     /// Restores the session and loads sidebar data. Call once at launch.
     public func start() {
         settings = engine.settings()
+        engine.volumesChanged()   // read volumes once, so crumbs show volume names
         workspace = engine.restoreSession()
         volumes = engine.volumes()
         favourites = engine.favourites()
