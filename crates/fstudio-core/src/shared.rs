@@ -265,6 +265,11 @@ impl WatchRouter {
         }
     }
 
+    /// The canonical folders being watched now (tools and tests).
+    pub(crate) fn watched(&self) -> Vec<PathBuf> {
+        self.state.lock().dirs.keys().cloned().collect()
+    }
+
     /// Forgets a closed tab.
     pub(crate) fn unregister(&self, tab: TabId) {
         let paths = {

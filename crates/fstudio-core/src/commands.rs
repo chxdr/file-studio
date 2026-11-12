@@ -157,6 +157,9 @@ impl Engine {
     /// Decides what a key press means and does it. `None` means "not ours":
     /// let the focused control handle the key (typing in a text field).
     pub fn handle_key(&self, chord: KeyChord, ctx: InputContext) -> Option<Outcome> {
+        if let Some(o) = self.column_key(&chord, &ctx) {
+            return Some(o);
+        }
         let kctx = self.key_context(&ctx);
         let res = self.keymap.lock().resolve(chord, &kctx, Instant::now());
         self.run_resolution(res, ctx)

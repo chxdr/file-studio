@@ -207,6 +207,14 @@ func unpackRows(_ data: Data) -> [Row] {
                            isSymlink: f & 8 != 0, isSelected: f & 16 != 0, isCursor: f & 32 != 0,
                            isCutPending: f & 64 != 0))
         }
+        // ui-list additions: the trailer (created date, extension) per row.
+        if at < b.count {
+            for i in 0..<n {
+                out[i].createdNs = Int64(bitPattern: u64())
+                out[i].createdText = str()
+                out[i].extText = str()
+            }
+        }
         return out
     }
 }
@@ -226,6 +234,7 @@ extension Row {
                   sizeText: r.sizeText, modifiedNs: r.modifiedNs, modifiedText: r.modifiedText,
                   isHidden: r.isHidden, isDataless: r.isDataless, isPackage: r.isPackage, isSymlink: r.isSymlink,
                   isSelected: r.isSelected, isCursor: r.isCursor, isCutPending: r.isCutPending)
+        createdNs = r.createdNs; createdText = r.createdText; extText = r.extText
     }
 }
 
@@ -278,12 +287,13 @@ extension SortBy {
 extension ViewState {
     var ffi: FfiViewState {
         FfiViewState(mode: mode.ffi, sort: sort.ffi, ascending: ascending, foldersFirst: foldersFirst,
-                     showHidden: showHidden, packagesAsFiles: packagesAsFiles)
+                     showHidden: showHidden, packagesAsFiles: packagesAsFiles, columns: columns.map(\.ffi))
     }
     init(_ f: FfiViewState) {
         self.init()
         mode = ViewMode(f.mode); sort = SortBy(f.sort); ascending = f.ascending; foldersFirst = f.foldersFirst
         showHidden = f.showHidden; packagesAsFiles = f.packagesAsFiles
+        columns = f.columns.map(ColumnSpec.init)
     }
 }
 
@@ -669,7 +679,7 @@ extension Settings {
         view = View(mode: ViewMode(v.mode), sort: SortBy(v.sort), ascending: v.ascending,
                     foldersFirst: v.foldersFirst, showHidden: v.showHidden, packagesAsFiles: v.packagesAsFiles,
                     folderMemory: v.folderMemory, hour24: v.hour24,
-                    density: RowDensity(v.density))
+                    density: RowDensity(v.density), columns: v.columns.map(ColumnSpec.init))
         pathBar = PathBar(completionLimit: s.pathBar.completionLimit, completeHidden: s.pathBar.completeHidden,
                           frecencyExcluded: s.pathBar.frecencyExcluded, maxCrumbs: s.pathBar.maxCrumbs)
         let o = s.operations
@@ -696,7 +706,7 @@ extension Settings {
             view: FfiViewSettings(
                 mode: view.mode.ffi, sort: view.sort.ffi, ascending: view.ascending, foldersFirst: view.foldersFirst,
                 showHidden: view.showHidden, packagesAsFiles: view.packagesAsFiles, folderMemory: view.folderMemory,
-                hour24: view.hour24, density: view.density.ffi),
+                hour24: view.hour24, density: view.density.ffi, columns: view.columns.map(\.ffi)),
             pathBar: FfiPathBarSettings(completionLimit: pathBar.completionLimit, completeHidden: pathBar.completeHidden,
                                         frecencyExcluded: pathBar.frecencyExcluded, maxCrumbs: pathBar.maxCrumbs),
             operations: FfiOperationsSettings(
@@ -994,4 +1004,71 @@ final class RustTabCycle: TabCycleAPI {
     }
     func reset() { ffi.reset() }
     var isCycling: Bool { ffi.isCycling() }
+}
+
+// MARK: - ui-list additions
+
+extension ColumnSpec {
+    init(_ f: FfiColumnSpec) {
+        let id: ColumnID = switch f.id {
+        case .name: .name
+        case .size: .size
+        case .modified: .modified
+        case .created: .created
+        case .kind: .kind
+        case .extension: .ext
+        }
+        self.init(id: id, width: f.width)
+    }
+    var ffi: FfiColumnSpec {
+        let i: FfiColumnId = switch id {
+        case .name: .name
+        case .size: .size
+        case .modified: .modified
+        case .created: .created
+        case .kind: .kind
+        case .ext: .extension
+        }
+        return FfiColumnSpec(id: i, width: width)
+    }
+}
+
+/// A tab-less listing (column view) over `FfiListing`.
+final class RustListing: ListingAPI, @unchecked Sendable {
+    let ffi: FfiListing
+    let id: TabID
+    init(_ l: FfiListing) { ffi = l; id = l.id() }
+    func dir() -> String { ffi.dir() }
+    func listingInfo() -> ListingInfo { ListingInfo(ffi.listingInfo()) }
+    func rows(start: UInt32, count: UInt32) -> [Row] { unpackRows(ffi.rowsPacked(start: start, count: count)) }
+    func indexOf(name: String) -> UInt32? { ffi.indexOf(name: name) }
+    func pathAt(_ row: UInt32) -> String? { ffi.pathAt(i: row) }
+    func selection() -> Selection { Selection(ffi.selection()) }
+    func setSelection(_ change: SelectionChange) { ffi.setSelection(change: change.ffi) }
+    func selectedPaths() -> [String] { ffi.selectedPaths() }
+    func setVisibleRange(start: UInt32, count: UInt32) { ffi.setVisibleRange(start: start, count: count) }
+    func refresh() { ffi.refresh() }
+    func menuTarget(owner: TabID, row: UInt32?) -> MenuTarget { MenuTarget(ffi.menuTargetAt(owner: owner, row: row)) }
+}
+
+extension RustEngine: ListEngineAPI {
+    func openListing(path: String, showHidden: Bool) -> ListingAPI {
+        RustListing(ffi.openListing(path: path, showHidden: showHidden))
+    }
+    func columnSelect(tab: TabID, dir: String, name: String?) throws -> Outcome {
+        try wrap { Outcome(try ffi.columnSelect(tab: tab, dir: dir, name: name)) }
+    }
+    func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect {
+        switch ffi.dropEffect(sources: sources, dest: dest, mods: mods.ffi) {
+        case .copy: .copy
+        case .move: .move
+        case .none: .none
+        }
+    }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
+        try wrap { try ffi.dropItems(sources: sources, dest: dest, mods: mods.ffi) }
+    }
+    func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
+        try wrap { Outcome(try ffi.sortByColumn(tab: tab, column: ColumnSpec(id: column, width: 0).ffi.id)) }
+    }
 }

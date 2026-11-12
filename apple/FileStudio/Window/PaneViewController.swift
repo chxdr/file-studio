@@ -143,11 +143,9 @@ final class PaneViewController: NSViewController {
         wanted.show(tm)
     }
 
-    /// The column view, when it adopts `PaneContent`.
-    private var columnsContent: PaneContent? {
-        if columns == nil { columns = ColumnsPlaceholderView() }
-        return (columns as AnyObject?) as? PaneContent
-    }
+    /// The list view switches itself into column (Miller) view by the tab's
+    /// view mode (List/ListPlaceholderView), so the pane always shows the list.
+    private var columnsContent: PaneContent? { nil }
 
     /// The view that takes keyboard focus for this pane.
     var focusView: NSView {

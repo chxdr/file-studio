@@ -11,3 +11,15 @@ pub(crate) fn utc_offset_secs(unix_secs: i64) -> i32 {
     let r = unsafe { libc::localtime_r(&t, &mut tm) };
     if r.is_null() { 0 } else { tm.tm_gmtoff as i32 }
 }
+
+/// True when this process may create entries in `dir` (`access(W_OK)`, which
+/// also reports read-only mounts as `EROFS`). Metadata only; never reads content.
+pub(crate) fn dir_writable(dir: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is a valid NUL-terminated string that outlives the call;
+    // `access` only reads it.
+    unsafe { libc::access(c.as_ptr(), libc::W_OK | libc::X_OK) == 0 }
+}

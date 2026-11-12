@@ -175,6 +175,9 @@ impl FfiTab {
     ///          u64 size, i64 modified_ns,
     ///          5 × (u32 byte length, UTF-8 bytes): name, icon_key, kind_text,
     ///                                                size_text, modified_text
+    /// then a trailer (added later; older readers can stop before it):
+    /// per row, in the same order: i64 created_ns,
+    ///          2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
     /// ```
     pub fn rows_packed(&self, start: u32, count: u32) -> Vec<u8> {
         pack_rows(&self.inner.rows(start, count))
@@ -313,7 +316,76 @@ fn pack_rows(rows: &[core::RowInfo]) -> Vec<u8> {
             b.extend_from_slice(s.as_bytes());
         }
     }
+    // ui-list additions: the trailer.
+    for r in rows {
+        b.extend_from_slice(&r.created_ns.to_le_bytes());
+        for s in [&r.created_text, &r.ext_text] {
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+    }
     b
+}
+
+// ───────────────────────── ui-list additions: listing handle ─────────────────────────
+
+/// A folder listed without a tab (a column of the column view), with its own
+/// selection. Its events carry [`FfiListing::id`] in the `tab` field.
+/// Releasing it stops the listing and unwatches the folder.
+#[derive(uniffi::Object)]
+pub struct FfiListing {
+    inner: Arc<core::ListingHandle>,
+}
+
+#[uniffi::export]
+impl FfiListing {
+    /// The id its events carry.
+    pub fn id(&self) -> u64 {
+        self.inner.id().0
+    }
+    /// The folder listed.
+    pub fn dir(&self) -> String {
+        self.inner.dir()
+    }
+    pub fn listing_info(&self) -> FfiListingInfo {
+        FfiListingInfo::from(&*self.inner.listing())
+    }
+    pub fn rows(&self, start: u32, count: u32) -> Vec<FfiRow> {
+        self.inner
+            .rows(start, count)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+    /// Packed like [`FfiTab::rows_packed`].
+    pub fn rows_packed(&self, start: u32, count: u32) -> Vec<u8> {
+        pack_rows(&self.inner.rows(start, count))
+    }
+    pub fn index_of(&self, name: String) -> Option<u32> {
+        self.inner.listing().index_of(&name)
+    }
+    pub fn path_at(&self, i: u32) -> Option<String> {
+        self.inner.listing().path_at(i)
+    }
+    pub fn selection(&self) -> FfiSelection {
+        self.inner.selection().into()
+    }
+    pub fn set_selection(&self, change: FfiSelectionChange) {
+        self.inner.set_selection(change.into());
+    }
+    pub fn selected_paths(&self) -> Vec<String> {
+        self.inner.selected_paths()
+    }
+    pub fn set_visible_range(&self, start: u32, count: u32) {
+        self.inner.set_visible_range(start, count);
+    }
+    pub fn refresh(&self) {
+        self.inner.refresh();
+    }
+    /// The right-click target (Finder's rule); menu commands act through `owner`.
+    pub fn menu_target_at(&self, owner: u64, row: Option<u32>) -> FfiMenuTarget {
+        self.inner.menu_target_at(TabId(owner), row).into()
+    }
 }
 
 // ───────────────────────── engine ─────────────────────────
@@ -789,6 +861,38 @@ impl FfiEngine {
     }
 }
 
+// ───────────────────────── ui-list additions: engine ─────────────────────────
+
+#[uniffi::export]
+impl FfiEngine {
+    /// Lists a folder without a tab (column view). See [`FfiListing`].
+    pub fn open_listing(&self, path: String, show_hidden: bool) -> Arc<FfiListing> {
+        Arc::new(FfiListing {
+            inner: self.inner.open_listing(&path, show_hidden),
+        })
+    }
+    /// A click in another column of the column view: the tab goes to `dir`
+    /// and selects `name` (or nothing).
+    pub fn column_select(&self, tab: u64, dir: String, name: Option<String>) -> R<FfiOutcome> {
+        Ok(self
+            .inner
+            .column_select(TabId(tab), &dir, name.as_deref())?
+            .into())
+    }
+    /// What dropping `sources` onto the folder `dest` does (metadata only).
+    pub fn drop_effect(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> FfiDropEffect {
+        self.inner.drop_effect(&sources, &dest, mods.into()).into()
+    }
+    /// A click on a list-view column header (sorts, or flips the direction).
+    pub fn sort_by_column(&self, tab: u64, column: FfiColumnId) -> R<FfiOutcome> {
+        Ok(self.inner.sort_by_column(TabId(tab), column.into())?.into())
+    }
+    /// Decides the drop and queues the copy or move.
+    pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<i64> {
+        Ok(self.inner.drop_items(&sources, &dest, mods.into())?.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,7 +931,7 @@ mod tests {
             s
         };
         let n = u32::from_le_bytes(take(4).try_into().unwrap());
-        (0..n)
+        let mut rows: Vec<FfiRow> = (0..n)
             .map(|_| {
                 let index = u32::from_le_bytes(take(4).try_into().unwrap());
                 let kind = [
@@ -863,9 +967,23 @@ mod tests {
                     is_selected: f & 16 != 0,
                     is_cursor: f & 32 != 0,
                     is_cut_pending: f & 64 != 0,
+                    created_ns: 0,
+                    created_text: String::new(),
+                    ext_text: String::new(),
                 }
             })
-            .collect()
+            .collect();
+        for r in &mut rows {
+            r.created_ns = i64::from_le_bytes(take(8).try_into().unwrap());
+            let mut s = || {
+                let len = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
+                String::from_utf8(take(len).to_vec()).unwrap()
+            };
+            r.created_text = s();
+            r.ext_text = s();
+        }
+        assert_eq!(at, b.len(), "nothing left over");
+        rows
     }
 
     fn wait_sorted(t: &FfiTab) {

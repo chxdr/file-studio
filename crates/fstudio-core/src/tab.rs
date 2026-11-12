@@ -182,6 +182,8 @@ struct Inner {
     /// Watcher changes that arrived while the folder was still being read.
     queued: Vec<Change>,
     closed: bool,
+    /// The next navigation keeps the current view mode (column view browsing).
+    keep_mode: bool,
 }
 
 /// One tab. Every method is quick and never blocks on disk, except where noted.
@@ -190,6 +192,9 @@ pub struct Tab {
     me: Weak<Tab>,
     shared: Arc<Shared>,
     st: Mutex<Inner>,
+    /// A tab-less listing (`ListingHandle`): not in the workspace, so it never
+    /// emits `TabsChanged`, marks the session dirty or records view memory.
+    detached: bool,
 }
 
 impl std::fmt::Debug for Tab {
@@ -204,6 +209,11 @@ fn to_s(p: &Path) -> String {
 
 impl Tab {
     pub(crate) fn create(shared: Arc<Shared>, state: TabState) -> Arc<Tab> {
+        Self::create_with(shared, state, false)
+    }
+
+    /// Creates a tab, or a detached listing (see [`crate::ListingHandle`]).
+    pub(crate) fn create_with(shared: Arc<Shared>, state: TabState, detached: bool) -> Arc<Tab> {
         let id = if state.id.0 == 0 {
             TabId(shared.ids.next())
         } else {
@@ -216,6 +226,7 @@ impl Tab {
             id,
             me: me.clone(),
             shared,
+            detached,
             st: Mutex::new(Inner {
                 canonical: location.clone(),
                 listing: Arc::new(listing::empty(&location, opts, 0)),
@@ -235,6 +246,7 @@ impl Tab {
                 type_ahead: None,
                 queued: Vec::new(),
                 closed: false,
+                keep_mode: false,
             }),
         });
         let pending = (!state.selected.is_empty() || state.cursor.is_some())
@@ -379,6 +391,16 @@ impl Tab {
         self.start(dir, Hist::Push, select, true, false);
     }
 
+    /// Like [`Tab::navigate`], keeping the view mode (column view browsing).
+    pub(crate) fn navigate_keeping_mode(
+        &self,
+        dir: PathBuf,
+        select: Option<(Vec<String>, Option<String>)>,
+    ) {
+        self.st.lock().keep_mode = true;
+        self.navigate(dir, select);
+    }
+
     /// Goes back in history.
     pub fn back(&self) -> Result<Outcome> {
         let (to, from) = {
@@ -465,6 +487,9 @@ impl Tab {
                 let defaults = ViewState::from_settings(&self.shared.settings.read().view);
                 let mut v = self.shared.folder_view(&dir).unwrap_or(defaults);
                 v.show_hidden = show_hidden;
+                if std::mem::take(&mut st.keep_mode) {
+                    v.mode = st.view.mode;
+                }
                 st.view = v;
                 st.filter.clear();
                 st.scroll = None;
@@ -500,8 +525,10 @@ impl Tab {
             }
             (st.generation, opts)
         };
-        self.shared.emit(CoreEvent::TabsChanged);
-        self.shared.mark_dirty();
+        if !self.detached {
+            self.shared.emit(CoreEvent::TabsChanged);
+            self.shared.mark_dirty();
+        }
         let tab = self.arc();
         let spawned = std::thread::Builder::new()
             .name("fstudio-lister".into())
@@ -784,11 +811,12 @@ impl Tab {
             let r = st.view.sort != v.sort
                 || st.view.ascending != v.ascending
                 || st.view.folders_first != v.folders_first
-                || st.view.mode != v.mode;
+                || st.view.mode != v.mode
+                || st.view.columns != v.columns;
             st.view = v.clone();
             r.then(|| st.location.clone())
         };
-        if let Some(dir) = remember {
+        if let Some(dir) = remember.filter(|_| !self.detached) {
             self.shared.remember_view(&dir, &v);
         }
         self.shared.mark_dirty();

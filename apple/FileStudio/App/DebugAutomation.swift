@@ -32,6 +32,7 @@
 //   menus                 the main menu's items with key equivalents (MAINMENU lines)
 //   bench:rows            times TabAPI.rows(start:, 60) from Swift (BENCH line)
 //   appearance:dark|light|system   forces the app's appearance (for light/dark snapshots)
+//   …and the steps views register in `extraSteps` (List/ListDebug.swift: bench:scroll, drop:, …)
 //   quit
 // UI sessions add their own steps with `DebugAutomation.register("name") { arg, model in … }`.
 //   (more steps for the ops UI, toasts and Settings: Views/DebugSteps.swift)
@@ -42,6 +43,8 @@ import AppKit
 @MainActor
 enum DebugAutomation {
     /// Steps added by the UI sessions (`name:arg`), so they don't edit this file.
+    /// Async steps, by name, registered by the views that own them (they finish before the next step).
+    static var extraSteps: [String: @MainActor (String) async -> Void] = [:]
     private static var custom: [String: @MainActor (String, AppModel) -> Void] = [:]
 
     /// Adds a script step. Register before the script runs (at window creation, say).
@@ -81,6 +84,18 @@ enum DebugAutomation {
         let op = parts.first ?? "", arg = parts.count > 1 ? parts[1] : ""
         print("STEP \(step)")
         fflush(stdout)
+        // Async steps registered by views (List/ListDebug.swift: bench:scroll, drop:, …)
+        // run to completion before the next step. They're measurements, not event
+        // injection, so running them in a Task doesn't reintroduce the crash `after`
+        // avoids.
+        if op != "bench" || arg != "rows", let fn = extraSteps[op] {
+            Task { @MainActor in
+                await fn(arg)
+                fflush(stdout)
+                after(0.15) { runStep(i + 1, steps, model, dir) }
+            }
+            return
+        }
         // Schedule the next step first, so a step that raises doesn't stop the script.
         after(op == "wait" ? Double(arg) ?? 1 : 0.15) { runStep(i + 1, steps, model, dir) }
         switch op {

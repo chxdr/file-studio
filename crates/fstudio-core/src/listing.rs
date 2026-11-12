@@ -137,6 +137,14 @@ pub struct RowInfo {
     pub is_cursor: bool,
     /// Cut and waiting for Paste (draw dimmed).
     pub is_cut_pending: bool,
+    /// Creation time, ns since the epoch (the modification time when the
+    /// filesystem keeps no creation time).
+    pub created_ns: i64,
+    /// The Date Created column, formatted like `modified_text`.
+    pub created_text: String,
+    /// The Extension column: the extension as on disk ("png"), empty for
+    /// folders and names without one; packages show theirs ("app").
+    pub ext_text: String,
 }
 
 /// Formatting inputs fixed for one `rows` call.
@@ -239,6 +247,13 @@ pub(crate) fn build_rows(
                 is_selected: selected(i),
                 is_cursor: cursor == Some(i),
                 is_cut_pending: !cut.is_empty() && cut.contains(&e.name),
+                created_ns: e.btime_ns.unwrap_or(e.mtime_ns),
+                created_text: format_date(e.btime_ns.unwrap_or(e.mtime_ns), f.clock, &f.dates),
+                ext_text: if folder {
+                    String::new()
+                } else {
+                    e.extension().to_string()
+                },
             }
         })
         .collect()

@@ -373,6 +373,7 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     }
 
     func handleKey(_ chord: KeyChord, context: InputContext) -> Outcome? {
+        if let o = columnKey(chord, context: context) { return o }  // ui-list addition
         if let inv = keyCommand(chord, focus: context.focus) {
             var inv = inv
             inv.tab = context.tab
@@ -942,7 +943,7 @@ final class MockTab: TabAPI, @unchecked Sendable {
             guard let k = nodeAt(i) else { return nil }
             let ext = (k.name as NSString).pathExtension.lowercased()
             let kind: RowKind = k.isPackage ? .package : k.isDir ? .folder : .file
-            return Row(index: UInt32(i), name: k.name, kind: kind,
+            var r = Row(index: UInt32(i), name: k.name, kind: kind,
                        iconKey: k.isPackage ? "package.\(ext)" : k.isDir ? "folder" : ext.isEmpty ? "file" : "file.\(ext)",
                        kindText: k.isPackage ? "Application" : k.isDir ? "Folder" : ext.isEmpty ? "Document" : "\(ext.uppercased()) file",
                        size: k.size, sizeText: k.isDir ? "--" : bf.string(fromByteCount: Int64(k.size)),
@@ -951,6 +952,11 @@ final class MockTab: TabAPI, @unchecked Sendable {
                        isHidden: k.name.hasPrefix("."), isDataless: k.isDataless, isPackage: k.isPackage,
                        isSelected: selected.contains(UInt32(i)), isCursor: cursor == UInt32(i),
                        isCutPending: cut.contains(loc + "/" + k.name))
+            // ui-list additions
+            r.createdNs = k.mtimeNs - 86_400_000_000_000
+            r.createdText = df.string(from: Date(timeIntervalSince1970: Double(r.createdNs) / 1e9))
+            r.extText = k.isDir && !k.isPackage ? "" : (k.name as NSString).pathExtension
+            return r
         }
     }
     func indexOf(name: String) -> UInt32? {
@@ -1073,4 +1079,84 @@ final class MockTabCycle: TabCycleAPI {
     }
     func reset() { rows = []; index = nil }
     var isCycling: Bool { index != nil }
+}
+
+// MARK: - ui-list additions
+
+/// A tab-less listing: a private MockTab that isn't in the workspace.
+final class MockListing: ListingAPI, @unchecked Sendable {
+    fileprivate let tab: MockTab
+    var id: TabID { tab.id }
+    fileprivate init(tab: MockTab) { self.tab = tab }
+    func dir() -> String { tab.location() }
+    func listingInfo() -> ListingInfo { tab.listingInfo() }
+    func rows(start: UInt32, count: UInt32) -> [Row] { tab.rows(start: start, count: count) }
+    func indexOf(name: String) -> UInt32? { tab.indexOf(name: name) }
+    func pathAt(_ row: UInt32) -> String? { tab.pathAt(row) }
+    func selection() -> Selection { tab.selection() }
+    func setSelection(_ change: SelectionChange) { tab.setSelection(change) }
+    func selectedPaths() -> [String] { tab.selectedPaths() }
+    func setVisibleRange(start: UInt32, count: UInt32) {}
+    func refresh() { tab.refresh() }
+    func menuTarget(owner: TabID, row: UInt32?) -> MenuTarget {
+        guard let row, row < tab.listingInfo().count else { tab.setSelection(.none); return .emptySpace(tab: owner) }
+        if !tab.selection().rows.contains(row) { tab.setSelection(.only(row)) }
+        let paths = tab.selectedPaths()
+        if paths.count > 1 { return .multi(tab: owner, paths: paths) }
+        let r = tab.rows(start: row, count: 1).first
+        return r?.kind == .package ? .package(tab: owner, path: paths[0])
+            : r?.kind == .folder ? .folder(tab: owner, path: paths[0]) : .file(tab: owner, path: paths[0])
+    }
+}
+
+extension MockEngine: ListEngineAPI {
+    func openListing(path: String, showHidden: Bool) -> ListingAPI {
+        let t = MockTab(engine: self, id: newID(), location: path)
+        var v = ViewState(); v.showHidden = showHidden
+        t.setView(v)
+        return MockListing(tab: t)
+    }
+    func columnSelect(tab: TabID, dir: String, name: String?) throws -> Outcome {
+        guard let t = tabs[tab] else { throw CoreError(.notFound, "tab \(tab)") }
+        if t.location() != dir { t.navigate(dir) }
+        if let name, let i = t.indexOf(name: name) { t.setSelection(.only(i)) } else { t.setSelection(.none) }
+        return Outcome(tab: tab)
+    }
+    func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect {
+        guard !sources.isEmpty, let d = node(dest), d.isDir, !d.isPackage else { return .none }
+        if sources.contains(where: { dest == $0 || dest.hasPrefix($0 + "/") }) { return .none }
+        if mods.alt { return .copy }
+        if sources.allSatisfy({ ($0 as NSString).deletingLastPathComponent == dest }) { return .none }
+        if mods.cmd { return .move }
+        return sources.allSatisfy { $0.hasPrefix("/Mock/") } ? .move : .copy
+    }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
+        switch dropEffect(sources: sources, dest: dest, mods: mods) {
+        case .copy: return try enqueue(.copy(sources: sources, destDir: dest))
+        case .move: return try enqueue(.move(sources: sources, destDir: dest))
+        case .none: throw CoreError(.notAvailable, "These items can't be dropped here")
+        }
+    }
+    func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
+        guard let t = tabs[tab] else { throw CoreError(.notFound, "tab \(tab)") }
+        var v = t.view()
+        if v.sort == column.sortBy { v.ascending.toggle() } else {
+            v.sort = column.sortBy
+            v.ascending = ![.size, .modified, .created].contains(column)
+        }
+        t.setView(v)
+        return Outcome(tab: tab)
+    }
+    /// ←/→ in column view (the core's rule, imitated).
+    fileprivate func columnKey(_ chord: KeyChord, context: InputContext) -> Outcome? {
+        guard context.focus == .list, chord.mods.isEmpty, chord.key == .left || chord.key == .right,
+              let t = (context.tab.flatMap { tabs[$0] } ?? activeTab() as? MockTab), t.view().mode == .columns
+        else { return nil }
+        if chord.key == .left {
+            _ = try? t.up()
+        } else if let c = t.selection().cursor, let r = t.rows(start: c, count: 1).first, r.kind == .folder {
+            t.navigate(t.location() + "/" + r.name)
+        }
+        return Outcome(tab: t.id)
+    }
 }
