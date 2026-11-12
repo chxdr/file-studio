@@ -323,8 +323,20 @@ dependencies = [
 name = "fstudio-core"
 version = "0.0.1"
 dependencies = [
+ "crossbeam-channel",
  "fstudio-db",
+ "fstudio-fs",
+ "fstudio-keymap",
  "fstudio-model",
+ "fstudio-ops",
+ "fstudio-path",
+ "fstudio-view",
+ "libc",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

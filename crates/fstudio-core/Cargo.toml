@@ -9,6 +9,20 @@ publish.workspace = true
 [dependencies]
 fstudio-model.workspace = true
 fstudio-db.workspace = true
+fstudio-fs.workspace = true
+fstudio-view.workspace = true
+fstudio-path.workspace = true
+fstudio-keymap.workspace = true
+fstudio-ops.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
