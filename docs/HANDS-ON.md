@@ -299,28 +299,60 @@ Notes:
 - Tab for pane switching must yield to a text field: inside the address bar, Tab is completion (§8).
 - Discoverability: ship Marta's bottom F-key bar as an optional strip, a palette that prints each action's key, and the shortcut overlay already planned in M2.
 
-## 10. What to build or check next
+## 10. Visual design: ForkLift (main reference) and QSpace
+
+The user likes ForkLift's look most and QSpace Pro's second. Measurements are read off 1x window screenshots (window size equals point size), so row and bar heights are accurate to about ±1 pt; **font sizes and materials are estimates**, not read from the apps. ForkLift was captured with a single tab, so **tab styling and the queue/progress UI were not seen** (its right-hand inspector has three icon tabs: info, transfers, warnings, which is where progress lives).
+
+![ForkLift chrome](hands-on/forklift-chrome.jpg) ![ForkLift toolbar](hands-on/forklift-toolbar.jpg)
+
+### ForkLift 4 (dark theme "ForkLift")
+
+| Element | What it looks like |
+|---|---|
+| Title bar / toolbar | **One unified band, ~52 pt**, no separate title bar. Traffic lights sit in the sidebar's top; the folder name is the window title, immediately right of a back/forward pill. Remaining controls are grouped in capsules: view-mode segmented control (icons / list / columns), a group menu, star and connect, refresh/copy/new-folder/trash, then a ~270 pt search field. About 14 controls in all, quiet monochrome glyphs, none labelled. |
+| Path / breadcrumb | In each pane's **header (~36 pt)**: a 28 pt drive or home glyph, then the breadcrumb on one line (13 pt, `›` separators, middle segments abbreviated) with a dimmer 11 to 12 pt subtitle underneath (`12 items, 241.5 GB available`). Not a field; no capsule or border. |
+| Active pane | A **~3 pt accent bar (orange) across the top of the active pane's header**. Nothing else changes; no outline, no dimming of the other pane. |
+| Divider | 1 pt hairline between panes, no visible splitter handle. |
+| Sidebar | **~200 pt** wide, items on a **32 pt** pitch, rounded-rect grey selection, 11 pt dim section headers (Devices, Recent Folders, Tags, Favorites), tinted orange icons for places, coloured dots for tags, drive free-space in secondary text. |
+| Rows | **22 pt pitch**, 16 pt icons, ~13 pt system text, no zebra striping, hover/selection as a soft grey fill. Column header ~28 pt, sort chevron on the active column. Size and date columns in secondary colour. |
+| Inspector | Optional ~300 pt right panel with collapsible "General / Permissions" sections. |
+| Materials | Looks **flat and opaque** (dark grey, content slightly lighter than the sidebar); I saw no visible blur or glass. Accent is **ForkLift's own orange** from its built-in theme (chosen in the welcome dialog), not the system accent. Folder icons are custom magenta. |
+
+### QSpace Pro 7 (where it differs, and what is worth borrowing)
+
+![QSpace chrome](hands-on/qspace-chrome.jpg)
+
+- **Denser and busier:** rows are ~20 pt with zebra striping, ~12 pt text, toolbar ~50 pt with around 15 glyphs in several groups plus a layout popup ("Default") and a Buy button; opens as **four** panes.
+- **Active pane:** a **violet 2 pt rounded outline around the whole pane**, path bar included. At four panes this reads much better than ForkLift's single bar.
+- **Path bar:** a **rounded capsule (~30 pt) inside each pane** with back/forward arrows on the left and search plus ⋯ on the right. It looks like a field, so it invites a click, and that matches the edit-on-click behaviour (§1).
+- **Sidebar:** ~187 pt, darker than the content, grouped (Bookmarks, iCloud, Servers, Locations, Finder Tags, Workspace) with a filter field at the bottom.
+- Borrow: the capsule path bar with its inline affordances, the whole-pane active outline, the sidebar filter. Avoid: zebra striping and the toolbar glyph count.
+
+### What to adopt for File Studio (concrete defaults)
+
+| Item | Spec |
+|---|---|
+| Window chrome | Native unified toolbar (`NSToolbar`, `.unified`), ~52 pt, no separate title bar; sidebar runs full height with traffic lights over it. At most 10 default controls, glyph-only with tooltips and a label-on-hover option. |
+| Pane header | 36 pt: 28 pt location glyph + the **address bar** (13 pt) + 11 pt secondary subtitle (`N items, X GB available`). In REST the breadcrumb is drawn like ForkLift (flat, no border); on hover/focus it gains QSpace's capsule outline (~30 pt) to signal it is editable. |
+| Active pane | A 2 pt accent-colour outline on the whole pane plus a 3 pt accent bar on the header (both subtle; the outline is the strong cue). Inactive pane text stays full strength. |
+| Divider | 1 pt hairline, 8 pt invisible drag target, double-click to equalise. |
+| Rows | **List: 22 pt** (Compact 20 pt, Comfortable 26 pt). Icons 16 pt. No zebra by default (setting). Column header 28 pt. |
+| Type styles | Names: system `body` 13 pt. Size/date/kind: 12 pt, secondary colour, **monospaced digits**, right-aligned for sizes. Sidebar items 13 pt, section headers 11 pt semibold, secondary. Pane subtitle 11 pt. Address bar 13 pt, last segment medium weight. |
+| Sidebar | 200 pt default (min 160), 28 to 32 pt rows, 11 pt section headers, system `.sidebar` material, tinted symbol icons using the **system accent**, filter field at the bottom (QSpace). |
+| Materials | Toolbar and sidebar: system materials (`.sidebar` / unified toolbar, which provide glass on macOS 26 for free by using native controls). File lists and panes: **opaque `.contentBackground`**; do not put vibrancy behind rows. Inspector: `.underWindowBackground`/sidebar. Transient surfaces (completion list, command palette, menus): `.popover` or `.hudWindow`. |
+| Accent colour | `controlAccentColor` everywhere (selection, active pane, progress). ForkLift's fixed orange is the cautionary tale: it ignores the user's macOS choice. Folder icons are the system ones. |
+| Queue / progress | Not observed in ForkLift; plan from this session: a transfers tab in the inspector plus a toolbar progress ring (M2 queue UI). |
+
+## 11. What to build or check next
 
 1. Fuzz the address bar parser with the inputs in §8 (Marta crash class).
 2. Decide the first-run default: type-to-select (recommended) vs filter.
 3. Verify chevron menus, drop-on-segment, and QSpace/ForkLift rebinding in a follow-up pass if they matter for M2 (they were not verifiable in this session).
 4. Real clipboard paste (⌘V) for QSpace, ForkLift and Nimble: if their paste differs from typing, update the §3 table.
 
-## 11. Installed during this session
+## 12. Installed during this session, and removed
 
-All via Homebrew casks, `--appdir=~/Applications`; nothing uninstalled:
+Installed via Homebrew casks with `--appdir=~/Applications`: QSpace Pro 7.0.4, ForkLift 4.7.7, Marta 0.8.2, Nimble Commander 1.9.0 (4329). The user then asked for everything to be removed, so all four apps were quit and uninstalled (`brew uninstall --cask --zap`; ForkLift's uninstall step needed `sudo` for a helper path that did not exist, so its app, Caskroom entry and zap paths were deleted by hand), their `~/Library` data removed, and the scratch test tree deleted.
 
-| App | Version | Path |
-|---|---|---|
-| QSpace Pro | 7.0.4 | `~/Applications/QSpace Pro.app` |
-| ForkLift | 4.7.7 | `~/Applications/ForkLift.app` |
-| Marta | 0.8.2 | `~/Applications/Marta.app` |
-| Nimble Commander | 1.9.0 (4329) | `~/Applications/Nimble Commander.app` |
-
-Uninstall commands (not run):
-
-```bash
-brew uninstall --cask marta nimble-commander forklift qspace-pro
-# optional: also remove their settings and caches
-brew uninstall --zap --cask marta nimble-commander forklift qspace-pro
-```
+Left behind: empty sandbox container folders that macOS protects from deletion without Full Disk Access (not removable from here):
+`~/Library/Containers/com.jinghaoshe.qspace.pro.FinderExtension`, `~/Library/Containers/com.jinghaoshe.qspace.pro.StashShelfShareExtension`, `~/Library/Group Containers/group.com.jinghaoshe.qspace.pro.shared`, `~/Library/Group Containers/J3CP9BBBN6.com.binarynights.ForkLift`. Delete them in Finder if you want them gone. brew also moved a `~/QSpace` folder (QSpace's own) to the Trash.
