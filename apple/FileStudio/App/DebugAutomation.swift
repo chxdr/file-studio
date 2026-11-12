@@ -17,6 +17,7 @@
 //   rclick:<x>,<y>        logs the context menu a right-click there would show (MENU lines)
 //   action:<selector:>    sends an action up the main window's responder chain (`undo:`), as
 //                         a menu would when the app is active (scripted runs often aren't)
+//   ax[:<x>,<y>]          the accessibility tree (role, label, value) under the view at a point (AX lines)
 //   hover:<x>,<y>         mouseEntered + mouseMoved to the views under the point that track the mouse
 //   scroll:<dx>,<dy>      scroll wheel over the window's centre (pixels)
 //   drag:<x>,<y>,<dx>,<dy>
@@ -54,6 +55,7 @@ enum DebugAutomation {
                 case "dclick": click(arg, count: 2)
                 case "rclick": rightClick(arg)
                 case "hover": hover(arg)
+                case "ax": axDump(arg)
                 case "action":
                     let ok = mainWindow?.firstResponder?.tryToPerform(Selector(arg), with: nil) ?? false
                     print("ACTION \(arg) \(ok ? "handled" : "not handled")")
@@ -297,6 +299,25 @@ enum DebugAutomation {
             v = cur.superview
         }
         print("HOVER \(arg) -> \(hitView(p, w).map { String(describing: type(of: $0)) } ?? "nil")")
+    }
+
+    /// Prints what VoiceOver would read: role, label and value, depth first.
+    private static func axDump(_ arg: String) {
+        guard let w = mainWindow else { return }
+        let root: Any? = arg.isEmpty ? w.contentView : point(arg, in: w).flatMap { hitView($0, w) }
+        func walk(_ e: Any, _ depth: Int) {
+            guard depth < 12, let el = e as? NSAccessibilityProtocol else { return }
+            let o = e as AnyObject
+            let role = (o.accessibilityRole?() ?? nil)?.rawValue ?? "-"
+            let label = (o.accessibilityLabel?() ?? nil) ?? ""
+            let value = (o.accessibilityValue?() ?? nil).map { "\($0)" } ?? ""
+            let ignored = (o as? NSView).map { !$0.isAccessibilityElement() } ?? false
+            if !ignored || !label.isEmpty {
+                print("AX \(String(repeating: "  ", count: depth))\(role) \"\(label)\"\(value.isEmpty ? "" : " = \(value)")")
+            }
+            for c in el.accessibilityChildren() ?? [] { walk(c, depth + 1) }
+        }
+        if let r = root { walk(r, 0) }
     }
 
     private static func drag(_ arg: String) {
