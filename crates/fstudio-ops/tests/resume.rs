@@ -237,3 +237,41 @@ fn crash_at_each_step_then_resume() {
         }
     }
 }
+
+/// An op interrupted by a crash can be cancelled without resuming it: our
+/// partials go, the sources stay, and it leaves `interrupted()`.
+#[test]
+fn cancel_interrupted_op_without_resuming() {
+    let c = case(2);
+    let status = spawn(&c, true, true, Some("AfterCopy:victim"))
+        .wait()
+        .unwrap();
+    assert!(!status.success(), "the child should have crashed");
+    assert!(
+        !partials(&c.img.mount).is_empty(),
+        "the crash should leave a partial"
+    );
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let q = OpQueue::open(
+        fstudio_db::Db::open(&c.e.db_path).unwrap(),
+        OpsConfig::default(),
+        Arc::new(DirTrasher::new(&c.e.trash).unwrap()),
+        Arc::new(tx),
+    )
+    .unwrap();
+    let int = q.interrupted().unwrap();
+    assert_eq!(int.len(), 1, "{int:?}");
+    let id = int[0].id;
+    q.cancel(id).unwrap();
+    assert!(q.interrupted().unwrap().is_empty());
+    assert!(partials(&c.img.mount).is_empty(), "partials removed");
+    // A move that never finished keeps every source file.
+    assert_eq!(tree(&c.src), c.before, "sources untouched");
+    let finished = rx.try_iter().any(|e| {
+        matches!(e, OpEvent::OpFinished { op, report } if op == id && report.state == OpState::Cancelled)
+    });
+    assert!(finished, "an OpFinished(Cancelled) event is sent");
+    // Nothing to resume or cancel any more.
+    assert!(q.resume(id).is_err());
+    assert!(matches!(q.cancel(id), Err(OpsError::NoSuchOp(_))));
+}
