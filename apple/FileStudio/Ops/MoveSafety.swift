@@ -2,7 +2,7 @@
 // folders; incident 2026-11-12). The core decides; this only shows:
 // - `ShellRequest.confirmMove`: a sheet, "Move “Downloads” into “Import
 //   Studio”?", with Cancel as the default button (Return and Esc both
-//   cancel); Move calls `engine.confirmMove(token)`.
+//   cancel); Move calls `engine.confirm(token)`.
 // - `ShellRequest.moved`: a toast, "Moved “X” to “Y”", for about six seconds
 //   with Undo (`edit.undo`, as ⌘Z).
 
@@ -65,11 +65,11 @@ enum MoveSafety {
         let done: (NSApplication.ModalResponse) -> Void = { r in
             openAlert = nil
             if r == .alertSecondButtonReturn {
-                do { model.handle(try model.engine.confirmMove(token), in: window) } catch {
+                do { model.handle(try model.engine.confirm(token), in: window) } catch {
                     model.statusMessage = error.localizedDescription
                 }
             } else {
-                model.engine.cancelMove(token)
+                model.engine.cancelConfirmation(token)
                 model.statusMessage = "Nothing was moved"
             }
         }

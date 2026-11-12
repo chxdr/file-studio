@@ -690,6 +690,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func breadcrumbs(path: String)  -> [FfiCrumb]
     
     /**
+     * The user said no to a question carrying `token`.
+     */
+    func cancelConfirmation(token: UInt64) 
+    
+    /**
      * The user cancelled `ShellRequest::ConfirmMove`.
      */
     func cancelMove(token: UInt64) 
@@ -721,6 +726,13 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func commands()  -> [FfiCommandInfo]
     
     func complete(input: String, cursor: UInt32, cwd: String)  -> FfiCompletions
+    
+    /**
+     * The user said yes to a question carrying `token` (`ConfirmTrash`,
+     * `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+     * the question named, if they are unchanged.
+     */
+    func confirm(token: UInt64) throws  -> FfiOutcome
     
     /**
      * The user said Move to `ShellRequest::ConfirmMove`.
@@ -1121,6 +1133,18 @@ open func breadcrumbs(path: String) -> [FfiCrumb]  {
 }
     
     /**
+     * The user said no to a question carrying `token`.
+     */
+open func cancelConfirmation(token: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_cancel_confirmation(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * The user cancelled `ShellRequest::ConfirmMove`.
      */
 open func cancelMove(token: UInt64)  {try! rustCall() {
@@ -1225,6 +1249,21 @@ open func complete(input: String, cursor: UInt32, cwd: String) -> FfiCompletions
         FfiConverterString.lower(input),
         FfiConverterUInt32.lower(cursor),
         FfiConverterString.lower(cwd),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The user said yes to a question carrying `token` (`ConfirmTrash`,
+     * `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+     * the question named, if they are unchanged.
+     */
+open func confirm(token: UInt64)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_confirm(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(token),uniffiCallStatus
     )
 })
 }
@@ -10179,9 +10218,9 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case offerCreateFolder(path: String, nearestExisting: String
     )
-    case confirmTrash(paths: [String]
+    case confirmTrash(token: UInt64, paths: [String]
     )
-    case confirmDeleteImmediately(paths: [String]
+    case confirmDeleteImmediately(token: UInt64, paths: [String]
     )
     case askPattern(select: Bool
     )
@@ -10273,10 +10312,10 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 12: return .offerCreateFolder(path: try FfiConverterString.read(from: &buf), nearestExisting: try FfiConverterString.read(from: &buf)
         )
         
-        case 13: return .confirmTrash(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 13: return .confirmTrash(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 14: return .confirmDeleteImmediately(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 14: return .confirmDeleteImmediately(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
         case 15: return .askPattern(select: try FfiConverterBool.read(from: &buf)
@@ -10404,13 +10443,15 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(nearestExisting, into: &buf)
             
         
-        case let .confirmTrash(paths):
+        case let .confirmTrash(token,paths):
             writeInt(&buf, Int32(13))
+            FfiConverterUInt64.write(token, into: &buf)
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
-        case let .confirmDeleteImmediately(paths):
+        case let .confirmDeleteImmediately(token,paths):
             writeInt(&buf, Int32(14))
+            FfiConverterUInt64.write(token, into: &buf)
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
@@ -12217,6 +12258,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_breadcrumbs() != 32063) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_confirmation() != 37408) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_move() != 45113) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12245,6 +12289,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_complete() != 1014) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_confirm() != 49088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_confirm_move() != 20767) {

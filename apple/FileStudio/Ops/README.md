@@ -13,7 +13,8 @@
   Apply to all (A), Compare (⌘Y, Quick Look), "3 of 12". The core decides what
   each choice does.
 - `ConfirmSheets`: `.confirmTrash` / `.confirmDeleteImmediately` questions; on
-  yes the command is performed again with `.confirmed`.
+  yes `engine.confirm(token)` acts on exactly the items the question named
+  (safety audit S1), on no `engine.cancelConfirmation(token)`.
 - `OpsModel` (`OpsModel.of(model)`): queue order, per-file errors,
   interrupted ops, pending conflicts, `statusText` ("Copying… 42 %").
 

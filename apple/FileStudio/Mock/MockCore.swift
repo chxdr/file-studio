@@ -622,6 +622,8 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                        ops: [startOp(.move, "Move", files: UInt64(sources.count), bytes: 9_000_000)])
     }
     func cancelMove(_ token: UInt64) { pendingMove[token] = nil }
+    func confirm(_ token: UInt64) throws -> Outcome { try confirmMove(token) }
+    func cancelConfirmation(_ token: UInt64) { cancelMove(token) }
     func clipboardPaths() -> [String] { clipboard }
 
     // MARK: Menus

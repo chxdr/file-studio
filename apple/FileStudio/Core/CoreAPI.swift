@@ -195,9 +195,11 @@ public enum ShellRequest: Equatable, Sendable {
     case renameDialog(tab: TabID, paths: [String])
     /// Offer "Create Folder"; on yes call `engine.createFolderAndGo`.
     case offerCreateFolder(path: String, nearestExisting: String)
-    /// On yes perform `file.trash` with `.confirmed`.
-    case confirmTrash(paths: [String])
-    case confirmDeleteImmediately(paths: [String])
+    /// Ask before trashing `paths`; on yes `engine.confirm(token)`, on no
+    /// `engine.cancelConfirmation(token)`. Only these items are acted on (S1).
+    case confirmTrash(token: UInt64, paths: [String])
+    /// Ask before deleting `paths` for good; answered like `confirmTrash`.
+    case confirmDeleteImmediately(token: UInt64, paths: [String])
     case askPattern(select: Bool)
     case askWorkspaceName
     case manageWorkspaces
@@ -1096,6 +1098,11 @@ public protocol EngineAPI: AnyObject, Sendable {
     func removeFavourite(_ path: String) throws
     func renameFavourite(_ path: String, name: String) throws
     func moveFavourite(_ path: String, to index: UInt32) throws
+    /// S1: the user said yes to a question carrying `token` (trash, delete,
+    /// protected move…). The core acts only on what the question named.
+    func confirm(_ token: UInt64) throws -> Outcome
+    /// S1: the user said no to a question carrying `token`.
+    func cancelConfirmation(_ token: UInt64)
     /// F-023: the user said Move to `ShellRequest.confirmMove`.
     func confirmMove(_ token: UInt64) throws -> Outcome
     /// F-023: the user cancelled `ShellRequest.confirmMove`.

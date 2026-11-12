@@ -540,9 +540,11 @@ pub enum FfiShellRequest {
         nearest_existing: String,
     },
     ConfirmTrash {
+        token: u64,
         paths: Vec<String>,
     },
     ConfirmDeleteImmediately {
+        token: u64,
         paths: Vec<String>,
     },
     AskPattern {
@@ -619,8 +621,10 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 path,
                 nearest_existing,
             },
-            S::ConfirmTrash { paths } => Self::ConfirmTrash { paths },
-            S::ConfirmDeleteImmediately { paths } => Self::ConfirmDeleteImmediately { paths },
+            S::ConfirmTrash { token, paths } => Self::ConfirmTrash { token, paths },
+            S::ConfirmDeleteImmediately { token, paths } => {
+                Self::ConfirmDeleteImmediately { token, paths }
+            }
             S::AskPattern { select } => Self::AskPattern { select },
             S::AskWorkspaceName => Self::AskWorkspaceName,
             S::ManageWorkspaces => Self::ManageWorkspaces,

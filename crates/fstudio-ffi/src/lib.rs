@@ -845,7 +845,18 @@ impl FfiEngine {
         Ok(self.inner.move_favourite(&path, index)?)
     }
 
-    // ── protected moves (F-023) ──
+    // ── questions (S1) and protected moves (F-023) ──
+
+    /// The user said yes to a question carrying `token` (`ConfirmTrash`,
+    /// `ConfirmDeleteImmediately`, `ConfirmMove`…). Acts only on the items
+    /// the question named, if they are unchanged.
+    pub fn confirm(&self, token: u64) -> R<FfiOutcome> {
+        Ok(self.inner.confirm(token)?.into())
+    }
+    /// The user said no to a question carrying `token`.
+    pub fn cancel_confirmation(&self, token: u64) {
+        self.inner.cancel_confirmation(token)
+    }
 
     /// The user said Move to `ShellRequest::ConfirmMove`.
     pub fn confirm_move(&self, token: u64) -> R<FfiOutcome> {

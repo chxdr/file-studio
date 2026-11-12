@@ -83,8 +83,8 @@ pub struct Engine {
     pub(crate) vim: Mutex<VimMode>,
     pub(crate) marks: Mutex<HashMap<char, String>>,
     pub(crate) favourites: Mutex<Vec<crate::favourites::Favourite>>,
-    /// Moves of protected folders waiting for the user's yes (F-023).
-    pub(crate) pending_moves: Mutex<crate::protect::Pending>,
+    /// Questions waiting for the user's yes, by token (S1, F-023).
+    pub(crate) pending: Mutex<crate::confirm::Pending>,
     last_saved: Mutex<String>,
 }
 
@@ -201,7 +201,7 @@ impl Engine {
             vim: Mutex::new(vim),
             marks: Mutex::new(marks),
             favourites: Mutex::new(favourites),
-            pending_moves: Mutex::new(crate::protect::Pending::default()),
+            pending: Mutex::new(crate::confirm::Pending::default()),
             last_saved: Mutex::new(String::new()),
         });
         let weak = Arc::downgrade(&engine);

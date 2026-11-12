@@ -142,8 +142,8 @@ extension ShellRequest {
         case .beginRename(let t, let n): self = .beginRename(tab: t, name: n)
         case .renameDialog(let t, let p): self = .renameDialog(tab: t, paths: p)
         case .offerCreateFolder(let p, let n): self = .offerCreateFolder(path: p, nearestExisting: n)
-        case .confirmTrash(let p): self = .confirmTrash(paths: p)
-        case .confirmDeleteImmediately(let p): self = .confirmDeleteImmediately(paths: p)
+        case .confirmTrash(let t, let p): self = .confirmTrash(token: t, paths: p)
+        case .confirmDeleteImmediately(let t, let p): self = .confirmDeleteImmediately(token: t, paths: p)
         case .askPattern(let s): self = .askPattern(select: s)
         case .askWorkspaceName: self = .askWorkspaceName
         case .manageWorkspaces: self = .manageWorkspaces
@@ -987,6 +987,8 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     func addFavourite(_ path: String, index: UInt32?) throws { try wrap { try ffi.addFavourite(path: path, index: index) } }
     func removeFavourite(_ path: String) throws { try wrap { try ffi.removeFavourite(path: path) } }
     func renameFavourite(_ path: String, name: String) throws { try wrap { try ffi.renameFavourite(path: path, name: name) } }
+    func confirm(_ token: UInt64) throws -> Outcome { try wrap { Outcome(try ffi.confirm(token: token)) } }
+    func cancelConfirmation(_ token: UInt64) { ffi.cancelConfirmation(token: token) }
     func confirmMove(_ token: UInt64) throws -> Outcome { try wrap { Outcome(try ffi.confirmMove(token: token)) } }
     func cancelMove(_ token: UInt64) { ffi.cancelMove(token: token) }
     func moveFavourite(_ path: String, to index: UInt32) throws { try wrap { try ffi.moveFavourite(path: path, index: index) } }

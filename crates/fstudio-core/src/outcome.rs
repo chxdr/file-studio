@@ -77,13 +77,21 @@ pub enum ShellRequest {
         /// The deepest folder that does exist.
         nearest_existing: String,
     },
-    /// Ask before moving to the Trash; on yes perform `file.trash` again with `Confirmed`.
+    /// Ask before moving `paths` to the Trash; on yes call
+    /// `Engine::confirm(token)`, on no `Engine::cancel_confirmation(token)`.
+    /// Only these items are trashed, and only if they are unchanged (S1).
     ConfirmTrash {
+        /// The one-shot token for this question.
+        token: u64,
         /// The items.
         paths: Vec<String>,
     },
-    /// Ask before deleting for good; on yes perform `file.delete_immediately` with `Confirmed`.
+    /// Ask before deleting `paths` for good; on yes call
+    /// `Engine::confirm(token)`, on no `Engine::cancel_confirmation(token)`.
+    /// Only these items are deleted, and only if they are unchanged (S1).
     ConfirmDeleteImmediately {
+        /// The one-shot token for this question.
+        token: u64,
         /// The items.
         paths: Vec<String>,
     },
@@ -124,7 +132,7 @@ pub enum ShellRequest {
     },
     /// Moving these items needs the user's yes (F-023: a protected folder is
     /// among them). Ask with Cancel as the default button, then call
-    /// `Engine::confirm_move(token)` or `Engine::cancel_move(token)`.
+    /// `Engine::confirm(token)` or `Engine::cancel_confirmation(token)`.
     ConfirmMove {
         /// The pending move.
         token: u64,
