@@ -8,7 +8,16 @@ publish.workspace = true
 
 [dependencies]
 fstudio-model.workspace = true
+nucleo-matcher = "0.3.1"
+fstudio-db.workspace = true
 thiserror.workspace = true
+parking_lot.workspace = true
+unicode-normalization.workspace = true
+libc.workspace = true
+crossbeam-channel.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
