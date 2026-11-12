@@ -150,3 +150,16 @@ Every one of these is also a setting.
 - **List rows:** 22 pt (Compact 20, Comfortable 26), 16 pt icons, no zebra stripes; secondary columns at 12 pt with monospaced digits.
 - **Sidebar:** 200 pt wide, system `.sidebar` material, with a filter field at the bottom.
 - **Materials:** file lists are opaque content backgrounds, and glass appears only in native chrome and transient surfaces.
+
+## F-020: Ops amendments from the M1 implementation (accepted, M1; amends F-007, F-008, F-015)
+- **Removal lives in one file (amends F-007).** Every removal of a user-visible path is in `fstudio-ops/src/remove.rs`, and `tests/safety_grep.rs` enforces it. It has four entry points:
+  - `delete_immediately`, which needs a `DeleteGate` that exists only when the setting is on
+  - `remove_partial`, which refuses any name that isn't one of our temporary names
+  - `remove_moved_source`, which needs a `Placed` proof and refuses if the source changed since it was copied
+  - `remove_moved_source_dir`, which only removes empty folders (`rmdir`)
+- **Trash is implemented in Rust (amends F-008)** via `objc2-foundation` (`NSFileManager trashItemAtURL:`), so Finder's Put Back works and the CLI can trash too. The `Trasher` trait stays, so tests and the Linux shell can plug in their own.
+- **Temporary names carry the journal item id:** `.<name>.<item>.fstudio-partial`. Copying `File` and `file` in parallel onto a case-insensitive volume made the plain names collide.
+- **The `copyfile` status callback must stop on `COPYFILE_ERR` (amends F-015).** Returning "continue" retries forever; it hung on a full disk. The spike code has the same bug and must not be copied.
+- **Scheduling is per volume pair** (source device, destination device), so a card-to-SSD copy doesn't block an SSD-to-SSD copy.
+- **Durability:** moves full-sync each file before placing it, and the folder after the rename. Plain copies sync only when `fsync_copies` is on. Verified copies use our own copy loop, which reads the source once, hashes it while copying and writes the destination uncached. Per-file full syncs made verified small-file copies about 50× slower.
+- **Untested:** the real system Trash (`SystemTrasher`), iCloud placeholders and a real external drive.

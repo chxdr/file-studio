@@ -12,7 +12,16 @@ Project licence: **GPL-3.0-or-later**. Every dependency must be GPLv3-compatible
 | parking_lot | 0.12 | db | MIT OR Apache-2.0 |
 | uniffi | 0.32 | ffi | MPL-2.0 |
 | tempfile (dev) | 3 | tests | MIT OR Apache-2.0 |
+| libc | 0.2 | fs, path, ops (sys modules) | MIT OR Apache-2.0 |
+| crossbeam-channel | 0.5 | fs, path, ops | MIT OR Apache-2.0 |
+| rayon | 1 | fs, view | MIT OR Apache-2.0 |
+| unicode-normalization | 0.1 | view, path | MIT OR Apache-2.0 |
+| plist | 1 | fs (Finder tags) | MIT |
+| core-foundation / -sys | 0.10 / 0.8 | fs (FSEvents) | MIT OR Apache-2.0 |
+| nucleo-matcher | 0.3 | path (fuzzy completion) | MPL-2.0 |
+| xxhash-rust (xxh3) | 0.8 | ops (verify) | BSL-1.0 |
+| objc2 / objc2-foundation / objc2-encode | 0.6 / 0.3 / 4.1 | ops (Trash) | MIT |
 
-Planned (listed in the root `Cargo.toml` as workspace dependencies, not used yet): libc, crossbeam-channel, rayon, unicode-normalization, xxhash-rust (BSL-1.0), clap, anyhow, dirs. Each is added to the table above when a crate starts using it.
+Planned (listed in the root `Cargo.toml` as workspace dependencies, not used yet): clap, anyhow, dirs. `cargo deny check licenses` passes as of the M1 merge.
 
 Spikes (`spikes/`, not shipped): see `docs/SPIKES.md` for the licence list, which adds notify (CC0-1.0) and core-foundation (MIT/Apache-2.0).
