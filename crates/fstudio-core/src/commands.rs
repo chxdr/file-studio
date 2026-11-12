@@ -1336,7 +1336,10 @@ impl Engine {
             "pane.toggle_dual" => {
                 let w = self.window_of(tid)?;
                 let dual = self.toggle_dual(w)?;
-                Outcome::message(if dual { "Dual pane" } else { "Single pane" }).with_tab(tid)
+                {
+                    let _ = dual; // the toolbar button and status line show the layout
+                    Outcome::none().with_tab(tid)
+                }
             }
             "pane.switch" => {
                 let o = self.other(&t)?;

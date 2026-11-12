@@ -406,7 +406,7 @@ impl Tab {
         let (to, from) = {
             let mut st = self.st.lock();
             let Some(to) = st.back.pop() else {
-                return Ok(Outcome::message("Nothing to go back to"));
+                return Ok(Outcome::none()); // as Finder: nothing happens
             };
             let cur = st.location.clone();
             st.forward.push(cur.clone());
@@ -422,7 +422,7 @@ impl Tab {
         let to = {
             let mut st = self.st.lock();
             let Some(to) = st.forward.pop() else {
-                return Ok(Outcome::message("Nothing to go forward to"));
+                return Ok(Outcome::none());
             };
             let cur = st.location.clone();
             st.back.push(cur);
@@ -436,7 +436,7 @@ impl Tab {
     pub fn up(&self) -> Result<Outcome> {
         let cur = self.location_path();
         let Some(parent) = cur.parent().map(Path::to_path_buf) else {
-            return Ok(Outcome::message("Already at the top"));
+            return Ok(Outcome::none());
         };
         let name = cur.file_name().map(|n| n.to_string_lossy().into_owned());
         self.shared.frecency.visit(&parent);

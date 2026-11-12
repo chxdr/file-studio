@@ -341,7 +341,7 @@ impl Engine {
             Err(e) => return Err(e.into()),
         };
         Ok(if ids.is_empty() {
-            Outcome::message("Nothing to undo")
+            Outcome::none()
         } else {
             Outcome {
                 ops: ids,
@@ -354,7 +354,7 @@ impl Engine {
     pub fn redo(&self) -> Result<Outcome> {
         Ok(match self.ops().redo()? {
             Some(id) => Outcome::op(id),
-            None => Outcome::message("Nothing to redo"),
+            None => Outcome::none(),
         })
     }
 

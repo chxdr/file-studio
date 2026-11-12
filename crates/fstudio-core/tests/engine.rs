@@ -543,6 +543,8 @@ fn stale_navigation_results_are_dropped() {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
+        // Under a loaded test run the small listing may still be finishing.
+        wait_complete(&t);
         assert_eq!(t.listing().names(), ["only"]);
         t.go("..").unwrap();
         wait_complete(&t);
