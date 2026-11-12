@@ -12,3 +12,9 @@
 - `KeyChord+NSEvent.swift`: NSEvent → `KeyChord`, nothing more.
 - `MainMenu.swift`: the menu bar from the command registry (first pass).
 - `DebugAutomation.swift`: `-FSDebugScript` (DEBUG only).
+- `Tour*.swift`: the power tour (`app.power_tour`, Help › File Studio Power
+  Tour, and "Take the 1-minute tour" on setup's last page). `TourCards` holds
+  the eight cards; their keys (and the `{command}` placeholders in their text)
+  come from `engine.commandKeys`, so rebinding updates the tour. `TourDemos`
+  draws the looping demos (frozen under Reduce Motion). Debug steps:
+  `tour:<n>|menu|close`, `tourlog` (`TourDebugSteps`).

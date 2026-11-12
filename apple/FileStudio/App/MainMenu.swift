@@ -58,6 +58,12 @@ enum MainMenu {
             main.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = m
             if title == "Window" { NSApp.windowsMenu = m }
         }
+
+        // Help › File Studio Power Tour (`app.power_tour`).
+        let help = NSMenu(title: "Help")
+        if let s = commands.first(where: { $0.id == "app.power_tour" }) { help.addItem(item(s, target: target)) }
+        main.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
+        NSApp.helpMenu = help
         return main
     }
 
