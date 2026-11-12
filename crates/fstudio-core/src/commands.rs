@@ -749,38 +749,40 @@ impl Engine {
                 .ok_or_else(|| CoreError::InvalidName(s(p)))?;
             fstudio_ops::names::validate_name(&name).map_err(CoreError::InvalidName)?;
         }
+        if missing.is_empty() {
+            return t.go(path);
+        }
+        // One journaled op for the whole chain, with one undo entry (S13).
+        let steps: Vec<OpRequest> = missing
+            .iter()
+            .map(|p| OpRequest::NewFolder {
+                parent: p.parent().map(Path::to_path_buf).unwrap_or_default(),
+                name: p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            })
+            .collect();
+        let req = if steps.len() == 1 {
+            steps.into_iter().next().expect("one step")
+        } else {
+            OpRequest::Compound {
+                label: format!("New Folders “{}”", crate::confirm::display_name(&target)),
+                steps,
+            }
+        };
         let ops = self.ops();
+        let id = ops.enqueue(req)?;
         let me = self.me.clone();
-        let mut first = None;
-        let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::Builder::new()
             .name("fstudio-create-folder".into())
             .spawn(move || {
-                for (k, p) in missing.iter().enumerate() {
-                    let req = OpRequest::NewFolder {
-                        parent: p.parent().map(Path::to_path_buf).unwrap_or_default(),
-                        name: p
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                    };
-                    let Ok(id) = ops.enqueue(req) else { return };
-                    if k == 0 {
-                        let _ = tx.send(id);
-                    }
-                    ops.wait(id, Duration::from_secs(30));
-                }
-                if me.upgrade().is_some() {
+                ops.wait(id, Duration::from_secs(60));
+                if me.upgrade().is_some() && target.is_dir() {
                     t.navigate(target, None);
                 }
             })?;
-        if let Ok(id) = rx.recv_timeout(Duration::from_secs(5)) {
-            first = Some(id);
-        }
-        Ok(Outcome {
-            ops: first.into_iter().collect(),
-            ..Outcome::none().with_tab(tab)
-        })
+        Ok(Outcome::op(id).with_tab(tab))
     }
 
     /// What dropping `sources` onto the folder `dest_dir` would do, for the

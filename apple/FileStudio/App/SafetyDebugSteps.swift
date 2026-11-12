@@ -56,7 +56,8 @@ enum SafetyDebugSteps {
             "return": ("\r", 36, []),
             "f6": (String(Character(UnicodeScalar(UInt32(NSF6FunctionKey))!)), 97, .function),
         ]
-        guard let (chars, code, flags) = table[spec], let w = NSApp.keyWindow ?? NSApp.mainWindow else {
+        let main = NSApp.windows.first { $0.windowController is CoreWindowIdentifying && $0.isVisible }
+        guard let (chars, code, flags) = table[spec], let w = NSApp.keyWindow ?? NSApp.mainWindow ?? main else {
             print("HOLDKEY unknown \(spec)")
             return
         }

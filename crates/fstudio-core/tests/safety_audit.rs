@@ -814,3 +814,42 @@ fn s12_new_folder_with_a_protected_folder_asks_first() {
     ok(&h, &out);
     assert!(h.p("New Folder With Items/Documents").is_dir());
 }
+
+// ───────────────────────── S13 ─────────────────────────
+
+/// p8: "Create 3 Folders" for a mistyped path is one journaled op; one ⌘Z
+/// removes the whole chain. (The shell defaults the offer to "Go to Nearest
+/// Folder" when more than one folder would be made, makes ⌘Return show the
+/// offer, and ignores a held Return: S6.)
+#[test]
+fn s13_p8_a_chain_of_new_folders_is_one_op_and_one_undo() {
+    let h = harness();
+    let t = h.window_at("");
+    let out = h
+        .engine
+        .create_folder_and_go(t.id(), &h.s("Documnets/Projects/2026"))
+        .unwrap();
+    assert_eq!(out.ops.len(), 1);
+    ok(&h, &out);
+    assert!(h.p("Documnets/Projects/2026").is_dir());
+    assert_eq!(
+        h.engine.undo_state().undo.as_deref(),
+        Some("Undo New Folders “2026”")
+    );
+    eventually("navigated", || {
+        t.location() == h.s("Documnets/Projects/2026")
+    });
+    t.go(&h.s("")).unwrap();
+    wait_complete(&t);
+    let u = h.engine.undo().unwrap();
+    ok(&h, &u);
+    assert!(!h.p("Documnets").exists(), "the whole chain is gone");
+    assert_eq!(h.engine.undo_state().undo, None);
+    // A single missing folder is a plain New Folder.
+    let out = h.engine.create_folder_and_go(t.id(), &h.s("One")).unwrap();
+    ok(&h, &out);
+    assert_eq!(
+        h.engine.undo_state().undo.as_deref(),
+        Some("Undo New Folder")
+    );
+}
