@@ -363,9 +363,14 @@ impl Tab {
                 })
             }
             Location::File { dir, name } => {
+                // A broken symlink (a favourite whose folder went, a typed
+                // path): show it selected in its folder, and say why it
+                // didn't open.
+                let why = crate::feedback::unopenable(&dir.join(&name));
                 self.navigate(dir, Some((vec![name.clone()], Some(name))));
                 Ok(Outcome {
-                    message: chip,
+                    shell: why.clone().map(crate::feedback::warning_toast),
+                    message: why.or(chip),
                     ..out
                 })
             }

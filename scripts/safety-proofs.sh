@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD=1
 if [ "${1:-}" = "--no-build" ]; then BUILD=0; shift; fi
 WANT=("$@")
-[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu e1)
+[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu e1 e2)
 if [ "$BUILD" = 1 ]; then
   (cd "$ROOT/apple" && xcodegen -q && xcodebuild -project FileStudio.xcodeproj -scheme "File Studio" \
     -configuration Debug -derivedDataPath build/DerivedData build -quiet 2>&1 | grep -E "error:|BUILD FAILED") && exit 1
@@ -214,6 +214,21 @@ e1() {
   expect "only the three files moved" "^LS .*/\\.Trash: a.txt, b.txt, c.txt$"
   keep
   finish e1
+}
+
+# Edge fix 2: opening a broken symlink says where it points, from ⌘↓, a
+# double-click and the address bar (the sidebar goes the same way).
+e2() {
+  home
+  mkdir -p "$H/w"
+  ln -s /does/not/exist "$H/w/broken-link"
+  run e2 "wait:1;go:$H/w;wait:1;focus:list;select:broken-link;key:cmd+down;wait:0.8;snap:e2-open;dclick:300,126;wait:0.8;go:$H/w/broken-link;wait:1;snap:e2-go;quit"
+  local want="^TOAST “broken-link” points to /does/not/exist, which doesn’t exist \\(warning\\)$"
+  local n; n=$(echo "$OUT" | grep -cE "$want")
+  if [ "$n" = 3 ]; then echo "  ok   ⌘↓, double-click and the address bar each say where it points"; else echo "  FAIL the message showed $n times (want 3)"; BAD=1; fi
+  expect "the double-click hit the row" "^HIT .* -> .*Table"
+  keep
+  finish e2
 }
 
 for p in "${WANT[@]}"; do

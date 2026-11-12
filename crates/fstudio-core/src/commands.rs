@@ -1168,14 +1168,41 @@ impl Engine {
                     for d in &dirs {
                         self.open_tab_in(pane, Some(s(d)), None)?;
                     }
-                    if files.is_empty() {
+                    // A broken symlink (or an item that has gone) can't be
+                    // opened: say why instead of handing it to the OS, which
+                    // did nothing at all.
+                    let (bad, files): (Vec<String>, Vec<PathBuf>) =
+                        files
+                            .into_iter()
+                            .fold((Vec::new(), Vec::new()), |mut acc, p| {
+                                match crate::feedback::unopenable(&p) {
+                                    Some(why) => acc.0.push(why),
+                                    None => acc.1.push(p),
+                                }
+                                acc
+                            });
+                    let why = match bad.as_slice() {
+                        [] => None,
+                        [one] => Some(one.clone()),
+                        [first, rest @ ..] => {
+                            Some(format!("{first} (and {} more can’t be opened)", rest.len()))
+                        }
+                    };
+                    let mut out = if files.is_empty() {
                         done()
                     } else {
                         Outcome::shell(ShellRequest::Open {
                             paths: strings(&files),
                         })
                         .with_tab(tid)
+                    };
+                    if let Some(why) = why {
+                        if out.shell.is_none() {
+                            out.shell = Some(crate::feedback::warning_toast(why.clone()));
+                        }
+                        out.message = Some(why);
                     }
+                    out
                 }
             }
             "nav.open_new_tab" => {

@@ -176,6 +176,46 @@ impl Engine {
     }
 }
 
+// ───────────────────────── items that can't be opened ─────────────────────────
+
+/// Why `p` can't be opened, in plain words, or `None` when it can be tried:
+/// it is gone, or it is a symlink whose target doesn't exist (or loops, or
+/// can't be reached). Opening such an item used to do nothing at all.
+/// Does `lstat`, `stat` and `readlink` on `p` only.
+pub(crate) fn unopenable(p: &Path) -> Option<String> {
+    let name = quoted(p);
+    let md = match std::fs::symlink_metadata(p) {
+        Ok(md) => md,
+        Err(_) => return Some(format!("{name} no longer exists")),
+    };
+    if !md.file_type().is_symlink() {
+        return None;
+    }
+    let err = std::fs::metadata(p).err()?;
+    let target = std::fs::read_link(p)
+        .map(|t| t.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "another item".into());
+    Some(match err.raw_os_error() {
+        Some(libc::ELOOP) => {
+            format!("{name} points to {target}, which leads back to itself (a symlink loop)")
+        }
+        Some(libc::EACCES) | Some(libc::EPERM) => {
+            format!("{name} points to {target}, which you don’t have permission to open")
+        }
+        _ => format!("{name} points to {target}, which doesn’t exist"),
+    })
+}
+
+/// A warning toast with no button (an open that can't happen).
+pub(crate) fn warning_toast(text: String) -> ShellRequest {
+    ShellRequest::Toast {
+        text,
+        button: None,
+        command: None,
+        style: ToastStyle::Warning,
+    }
+}
+
 // ───────────────────────── toasts from outcomes ─────────────────────────
 
 /// What an operation is, for the words of its toast.

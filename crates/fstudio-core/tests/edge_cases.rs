@@ -216,3 +216,102 @@ fn successes_are_unchanged() {
     assert_eq!(command.as_deref(), Some("edit.undo"));
     assert_eq!(style, ToastStyle::Success);
 }
+
+// ───────────────────────── fix 2: broken symlinks ─────────────────────────
+
+fn open(h: &H, t: &Tab, arg: Option<CommandArg>) -> Outcome {
+    h.engine
+        .perform(
+            CommandInvocation {
+                id: "nav.open".into(),
+                arg,
+                tab: Some(t.id()),
+            },
+            Via::Keyboard,
+        )
+        .unwrap()
+}
+
+/// ⌘↓ on `broken-link` (→ /does/not/exist) used to hand it to the OS,
+/// which did nothing at all. Now the core says why, as a message and a
+/// warning toast, and asks the shell to open nothing.
+#[test]
+fn opening_a_broken_symlink_says_where_it_points() {
+    let h = harness();
+    std::os::unix::fs::symlink("/does/not/exist", h.p("broken-link")).unwrap();
+    std::os::unix::fs::symlink("broken-loop", h.p("broken-loop")).unwrap();
+    touch(&h.p("real.txt"));
+    std::os::unix::fs::symlink(h.p("real.txt"), h.p("good-link")).unwrap();
+    let t = h.window_at("");
+    let want = "“broken-link” points to /does/not/exist, which doesn’t exist";
+
+    // ⌘↓ on the selection.
+    t.set_selection(SelectionChange::Names(vec!["broken-link".into()]));
+    let out = open(&h, &t, None);
+    assert_eq!(out.message.as_deref(), Some(want));
+    let (text, _, style) = toast_parts(out.shell.unwrap());
+    assert_eq!((text.as_str(), style), (want, ToastStyle::Warning));
+
+    // A double-click (the row's path as the argument) is the same.
+    let out = open(&h, &t, Some(CommandArg::Path(h.p("broken-link"))));
+    assert_eq!(out.message.as_deref(), Some(want));
+    assert!(!matches!(out.shell, Some(ShellRequest::Open { .. })));
+
+    // A loop says so.
+    let out = open(&h, &t, Some(CommandArg::Path(h.p("broken-loop"))));
+    assert!(
+        out.message
+            .as_deref()
+            .unwrap()
+            .contains("leads back to itself"),
+        "{out:?}"
+    );
+
+    // A good link still opens; with a broken one alongside, the good one
+    // opens and the broken one is explained.
+    let out = open(&h, &t, Some(CommandArg::Path(h.p("good-link"))));
+    assert_eq!(
+        out.shell,
+        Some(ShellRequest::Open {
+            paths: vec![h.s("good-link")]
+        })
+    );
+    t.set_selection(SelectionChange::Names(vec![
+        "broken-link".into(),
+        "good-link".into(),
+    ]));
+    let out = open(&h, &t, None);
+    assert_eq!(
+        out.shell,
+        Some(ShellRequest::Open {
+            paths: vec![h.s("good-link")]
+        })
+    );
+    assert_eq!(out.message.as_deref(), Some(want));
+}
+
+/// The sidebar and the address bar go through `Tab::go`: the link is shown
+/// selected in its folder, with the same message.
+#[test]
+fn going_to_a_broken_symlink_says_why_it_did_not_open() {
+    let h = harness();
+    mkdirs(&h.p("w"));
+    std::os::unix::fs::symlink("/does/not/exist", h.p("w/broken-link")).unwrap();
+    let t = h.window_at("");
+    let out = t.go(&h.s("w/broken-link")).unwrap();
+    assert_eq!(
+        out.message.as_deref(),
+        Some("“broken-link” points to /does/not/exist, which doesn’t exist")
+    );
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::Toast {
+            style: ToastStyle::Warning,
+            ..
+        })
+    ));
+    wait_complete(&t);
+    eventually("the link is selected", || {
+        t.selection().names == vec!["broken-link".to_string()]
+    });
+}
