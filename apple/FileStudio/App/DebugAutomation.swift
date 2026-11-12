@@ -22,6 +22,7 @@
 //   log                   JSON lines: windows, tabs, the focused listing and selection (STATE lines)
 //   menus                 the main menu's items with key equivalents (MAINMENU lines)
 //   bench:rows            times TabAPI.rows(start:, 60) from Swift (BENCH line)
+//   …and the steps views register in `extraSteps` (List/ListDebug.swift: bench:scroll, drop:, …)
 //   quit
 
 #if DEBUG
