@@ -541,6 +541,23 @@ public struct Completions: Equatable, Sendable {
     public init() {}
 }
 
+/// What Tab / ⇧Tab does in the address bar (the core's `TabOutcome`).
+public enum TabOutcome: Equatable, Sendable {
+    case nothing
+    /// Set the field to this, keep the list open, recompute completions.
+    case extend(newInput: String)
+    /// Set the field to `text` and highlight row `index`; don't recompute.
+    case select(index: Int, text: String)
+}
+
+/// The address bar's Tab state machine (one per bar, from `EngineAPI.makeTabCycle`).
+/// `press` on Tab/⇧Tab, `reset` on any other edit.
+public protocol TabCycleAPI: AnyObject {
+    func press(_ c: Completions, backwards: Bool) -> TabOutcome
+    func reset()
+    var isCycling: Bool { get }
+}
+
 public enum PathStyle: Equatable, Sendable, CaseIterable { case posix, escaped, homeRelative, fileURL, quoted }
 
 public struct FrecentDir: Equatable, Sendable {
@@ -657,6 +674,10 @@ public struct UndoState: Equatable, Sendable {
     public var redo: String?
     public init(undo: String? = nil, redo: String? = nil) { self.undo = undo; self.redo = redo }
 }
+
+/// What dropping items onto a folder does (`EngineAPI.dropAction`). The core
+/// decides: move on the same volume, copy across volumes, ⌥ copies, ⌘ moves.
+public enum DropAction: Equatable, Sendable { case none, copy, move }
 
 /// A file operation to queue directly (drag and drop).
 public enum OpRequest: Equatable, Sendable {
@@ -983,6 +1004,11 @@ public protocol EngineAPI: AnyObject, Sendable {
     func createFolderAndGo(tab: TabID, path: String) throws -> Outcome
     /// Files from another app's pasteboard (or cut, pending a move).
     func setClipboard(_ paths: [String], cut: Bool)
+    /// What a drop of `sources` onto the folder `destDir` with these modifiers
+    /// would do (drag cursor and highlight). `lstat`s each source.
+    func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction
+    /// Drops `sources` onto `destDir`: queues the copy or move the core decides.
+    func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome
     func clipboardPaths() -> [String]
 
     // Context menus
@@ -1007,6 +1033,11 @@ public protocol EngineAPI: AnyObject, Sendable {
     func complete(_ input: String, cursor: UInt32, cwd: String) -> Completions
     func copyPath(_ path: String, style: PathStyle) -> String
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir]
+    /// A Tab state machine for one address bar.
+    func makeTabCycle() -> TabCycleAPI
+    /// ⌥⌫: deletes back one path component before `cursor` (UTF-8 bytes);
+    /// returns the new text and cursor (UTF-8 bytes).
+    func deletePathComponent(_ input: String, cursor: Int) -> (text: String, cursor: Int)
 
     // Operations
     func enqueue(_ req: OpRequest) throws -> OpID

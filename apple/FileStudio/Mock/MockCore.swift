@@ -301,11 +301,21 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     private func keyCommand(_ c: KeyChord, focus: Focus) -> Invocation? {
         let m = c.mods
         if focus == .addressBar {
-            return switch (c.key, m.isEmpty) {
-            case (.returnKey, true): Invocation(id: "addressbar.commit")
-            case (.escape, true): Invocation(id: "addressbar.cancel")
-            case (.tab, true): Invocation(id: "addressbar.complete_next")
-            default: nil
+            // Mirrors the Standard keymap's AddressBarEditing bindings.
+            switch (c.key, m.shift, m.cmd, m.alt) {
+            case (.returnKey, false, false, false): return Invocation(id: "addressbar.commit")
+            case (.returnKey, false, true, false): return Invocation(id: "addressbar.commit_other_pane")
+            case (.escape, false, false, false): return Invocation(id: "addressbar.cancel")
+            case (.tab, false, false, false): return Invocation(id: "addressbar.complete_next")
+            case (.tab, true, false, false): return Invocation(id: "addressbar.complete_prev")
+            case (.down, false, false, false): return Invocation(id: "addressbar.next")
+            case (.up, false, false, false): return Invocation(id: "addressbar.prev")
+            case (.end, false, false, false): return Invocation(id: "addressbar.accept_ghost")
+            case (.delete, false, false, true): return Invocation(id: "addressbar.delete_component")
+            case (.delete, false, true, false): return Invocation(id: "addressbar.clear_line")
+            case (.char("d"), false, true, false): return Invocation(id: "addressbar.add_favourite")
+            case (.char("l"), false, true, false), (.char("g"), true, true, false): return Invocation(id: "nav.address_bar")
+            default: return nil
             }
         }
         switch (c.key, m.cmd, m.shift, m.alt) {
@@ -313,7 +323,11 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         case (.down, true, false, false), (.char("o"), true, false, false): return Invocation(id: "nav.open")
         case (.char("["), true, _, _): return Invocation(id: "nav.back")
         case (.char("]"), true, _, _): return Invocation(id: "nav.forward")
-        case (.char("l"), true, false, false): return Invocation(id: "nav.address_bar")
+        case (.char("l"), true, false, false), (.char("g"), true, true, false): return Invocation(id: "nav.address_bar")
+        case (.char("/"), false, false, false) where focus == .list:
+            return Invocation(id: "nav.address_bar", arg: .char("/"))
+        case (.char("`"), false, true, false) where focus == .list:
+            return Invocation(id: "nav.address_bar", arg: .char("~"))
         case (.char("h"), true, true, false): return Invocation(id: "nav.go_home")
         case (.char("a"), true, false, false): return Invocation(id: "select.all")
         case (.char("n"), true, true, false): return Invocation(id: "file.new_folder")
@@ -382,9 +396,20 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         case "nav.back": out = try t.back()
         case "nav.forward": out = try t.forward()
         case "nav.go_home": t.navigate("/Mock")
-        case "nav.address_bar": out.shell = .focusAddressBar(pane: paneOf(t.id) ?? 0, text: "")
+        case "nav.address_bar":
+            var text = ""
+            if case .char(let ch) = inv.arg { text = String(ch) }
+            out.shell = .focusAddressBar(pane: paneOf(t.id) ?? 0, text: text)
         case "addressbar.commit":
             if case .path(let p) = inv.arg { out = try t.go(p) } else { out.shell = .textField(command: inv.id) }
+        case "addressbar.commit_other_pane":
+            if case .path(let p) = inv.arg {
+                guard let o = otherPaneTab(of: t.id) as? MockTab else { throw CoreError(.notAvailable, "single pane") }
+                out = try o.go(p)
+            } else { out.shell = .textField(command: inv.id) }
+        case "addressbar.add_favourite":
+            if case .path(let p) = inv.arg { try addFavourite(p, index: nil); out.message = "Added to Favourites" }
+            else { out.shell = .textField(command: inv.id) }
         case let id where id.hasPrefix("addressbar."): out.shell = .textField(command: id)
         case "select.all": t.setSelection(.all)
         case "file.rename":
@@ -473,6 +498,19 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         Outcome(tab: tab, message: "Mock: folders aren't created")
     }
     func setClipboard(_ paths: [String], cut: Bool) { clipboard = paths }
+    func dropAction(sources: [String], destDir: String, mods: Mods) -> DropAction {
+        guard !sources.isEmpty, node(destDir)?.isDir == true,
+              !sources.contains(where: { destDir == $0 || destDir.hasPrefix($0 + "/") }) else { return .none }
+        if mods.alt { return .copy }
+        if sources.allSatisfy({ ($0 as NSString).deletingLastPathComponent == destDir }) { return .none }
+        return .move
+    }
+    func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome {
+        let a = dropAction(sources: sources, destDir: destDir, mods: mods)
+        guard a != .none else { throw CoreError(.notAvailable, "the items can't be dropped there") }
+        return Outcome(ops: [startOp(a == .copy ? .copy : .move, a == .copy ? "Copy" : "Move",
+                                     files: UInt64(sources.count), bytes: 9_000_000)])
+    }
     func clipboardPaths() -> [String] { clipboard }
 
     // MARK: Menus
@@ -621,6 +659,18 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                 }
         }
         c.items.sort { $0.score > $1.score }
+        // Tab's first press extends to the rows' common prefix (a unique folder gets "/").
+        if pathLike, let first = c.items.first?.insertText {
+            var common = first
+            for i in c.items.dropFirst() {
+                while !i.insertText.lowercased().hasPrefix(common.lowercased()) { common.removeLast() }
+            }
+            if c.items.count > 1, common.hasSuffix("/") { common.removeLast() }
+            if common.count > text.count {
+                c.commonPrefixExtension = TabExtension(replaceFrom: c.segmentStart, text: String(common.dropFirst(c.segmentStart)),
+                                                       newInput: common)
+            }
+        }
         if let first = c.items.first, !text.isEmpty, first.insertText.hasPrefix(text) {
             c.ghostText = String(first.insertText.dropFirst(text.count))
         }
@@ -634,6 +684,17 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         case .fileURL: URL(fileURLWithPath: path).absoluteString
         case .quoted: "'\(path)'"
         }
+    }
+    func makeTabCycle() -> TabCycleAPI { MockTabCycle() }
+    func deletePathComponent(_ input: String, cursor: Int) -> (text: String, cursor: Int) {
+        let b = Array(input.utf8), c = min(cursor, b.count)
+        var end = c
+        if end > 0, b[end - 1] == UInt8(ascii: "/") { end -= 1 }
+        var start = end
+        while start > 0, b[start - 1] != UInt8(ascii: "/") { start -= 1 }
+        if end == 0 { start = 0 }
+        let text = String(decoding: b[..<start] + b[c...], as: UTF8.self)
+        return (text, start)
     }
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir] {
         frecency.sorted { $0.value > $1.value }.prefix(Int(limit)).map { FrecentDir(path: $0.key, score: $0.value, lastAccessed: 0) }
@@ -857,7 +918,13 @@ final class MockTab: TabAPI, @unchecked Sendable {
     func go(_ to: String) throws -> Outcome {
         let p = engine.parseLocation(to, cwd: loc)
         switch p.location {
-        case .dir(let d): navigate(d)
+        case .dir(let d):
+            // Going to an ancestor selects the child we came from (as the core does).
+            let from = loc
+            navigate(d)
+            let base = d == "/" ? "/" : d + "/"
+            if from.hasPrefix(base), let child = from.dropFirst(base.count).split(separator: "/").first,
+               let i = indexOf(name: String(child)) { setSelection(.only(i)) }
         case .file(let d, let n):
             navigate(d)
             if let i = indexOf(name: n) { setSelection(.only(i)) }
@@ -941,4 +1008,26 @@ final class MockTab: TabAPI, @unchecked Sendable {
     func scrollAnchor() -> ScrollAnchor? { scroll }
     func breadcrumbs() -> [Crumb] { engine.breadcrumbs(path: loc) }
     func complete(_ input: String, cursor: UInt32) -> Completions { engine.complete(input, cursor: cursor, cwd: loc) }
+}
+
+/// Imitates the core's Tab cycle (extend, then select row 1, then cycle).
+final class MockTabCycle: TabCycleAPI {
+    private var rows: [String] = []
+    private var index: Int?
+    func press(_ c: Completions, backwards: Bool) -> TabOutcome {
+        if let cur = index {
+            guard !rows.isEmpty else { return .nothing }
+            let n = rows.count, next = backwards ? (cur + n - 1) % n : (cur + 1) % n
+            index = next
+            return .select(index: next, text: rows[next])
+        }
+        if !backwards, let e = c.commonPrefixExtension { return .extend(newInput: e.newInput) }
+        guard !c.items.isEmpty else { return .nothing }
+        rows = c.items.map(\.insertText)
+        let first = backwards ? rows.count - 1 : 0
+        index = first
+        return .select(index: first, text: rows[first])
+    }
+    func reset() { rows = []; index = nil }
+    var isCycling: Bool { index != nil }
 }
