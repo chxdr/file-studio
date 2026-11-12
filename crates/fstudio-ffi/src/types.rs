@@ -146,6 +146,24 @@ pub struct FfiMods {
     pub ctrl: bool,
 }
 
+/// What a drop onto a folder does (`Engine::drop_action`).
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiDropAction {
+    None,
+    Copy,
+    Move,
+}
+
+impl From<core::DropAction> for FfiDropAction {
+    fn from(a: core::DropAction) -> Self {
+        match a {
+            core::DropAction::None => Self::None,
+            core::DropAction::Copy => Self::Copy,
+            core::DropAction::Move => Self::Move,
+        }
+    }
+}
+
 /// A key press.
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct FfiKeyChord {

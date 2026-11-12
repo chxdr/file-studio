@@ -469,6 +469,32 @@ impl FfiEngine {
     pub fn create_folder_and_go(&self, tab: u64, path: String) -> R<FfiOutcome> {
         Ok(self.inner.create_folder_and_go(tab_id(tab), &path)?.into())
     }
+    /// What dropping `sources` onto the folder `dest_dir` with these
+    /// modifiers would do (for the drag cursor). Does `lstat` on each source.
+    pub fn drop_action(
+        &self,
+        sources: Vec<String>,
+        dest_dir: String,
+        mods: FfiMods,
+    ) -> FfiDropAction {
+        let src: Vec<std::path::PathBuf> = sources.into_iter().map(Into::into).collect();
+        self.inner
+            .drop_action(&src, std::path::Path::new(&dest_dir), mods.into())
+            .into()
+    }
+    /// Drops `sources` onto `dest_dir`: queues the copy or move the core decides.
+    pub fn drop_files(
+        &self,
+        sources: Vec<String>,
+        dest_dir: String,
+        mods: FfiMods,
+    ) -> R<FfiOutcome> {
+        let src = sources.into_iter().map(Into::into).collect();
+        Ok(self
+            .inner
+            .drop_files(src, dest_dir.into(), mods.into())?
+            .into())
+    }
     /// Files copied in from another app (or cut, pending a move on paste).
     pub fn set_clipboard(&self, paths: Vec<String>, cut: bool) {
         self.inner.set_clipboard(paths, cut);

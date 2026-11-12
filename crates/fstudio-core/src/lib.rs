@@ -52,7 +52,8 @@ mod view;
 mod workspace;
 
 pub use commands::{
-    BindingSummary, CommandInvocation, CommandSummary, Handling, InputContext, LATER_COMMANDS,
+    BindingSummary, CommandInvocation, CommandSummary, DropAction, Handling, InputContext,
+    LATER_COMMANDS,
 };
 pub use engine::{Engine, EngineConfig, FrecentDir};
 pub use error::{CoreError, Result};
