@@ -659,3 +659,50 @@ fn s9_undo_of_duplicate_refuses_edited_contents_and_undoes_untouched_copies() {
     ok(&h, &out);
     assert!(!h.p("Site copy").exists());
 }
+
+// ───────────────────────── S10 ─────────────────────────
+
+/// p4: trash x/a.txt here, empty the Trash in Finder, trash another a.txt
+/// from Finder, then ⌘Z here. The other a.txt is not put into x/.
+#[test]
+fn s10_p4_undo_of_trash_refuses_a_different_item_with_the_same_trash_name() {
+    let h = harness();
+    mkdirs(&h.p("x"));
+    mkdirs(&h.p("y"));
+    std::fs::write(h.p("x/a.txt"), b"v1").unwrap();
+    let id = h
+        .engine
+        .enqueue(OpRequest::Trash {
+            paths: vec![h.p("x/a.txt")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    std::fs::remove_file(h.trash.join("a.txt")).unwrap();
+    std::fs::write(h.p("y/a.txt"), b"v2 from another folder").unwrap();
+    std::fs::rename(h.p("y/a.txt"), h.trash.join("a.txt")).unwrap();
+    let out = h.engine.undo().unwrap();
+    assert!(out.ops.is_empty());
+    let msg = out.message.unwrap();
+    assert!(msg.contains("no longer in the Trash"), "{msg}");
+    assert!(!h.p("x/a.txt").exists());
+    assert_eq!(
+        std::fs::read(h.trash.join("a.txt")).unwrap(),
+        b"v2 from another folder"
+    );
+}
+
+/// The item itself is put back as before.
+#[test]
+fn s10_undo_of_trash_puts_back_the_same_item() {
+    let h = harness();
+    std::fs::write(h.p("a.txt"), b"mine").unwrap();
+    let id = h
+        .engine
+        .enqueue(OpRequest::Trash {
+            paths: vec![h.p("a.txt")],
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    ok(&h, &h.engine.undo().unwrap());
+    assert_eq!(std::fs::read(h.p("a.txt")).unwrap(), b"mine");
+}

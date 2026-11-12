@@ -173,8 +173,25 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
                 let Some(loc) = &it.trash_loc else {
                     return Err(format!("the Trash didn't say where {} went", q(&it.source)));
                 };
-                if !meta::exists(loc) {
+                let Ok(md) = meta::lstat(loc) else {
                     return Err(format!("{} is no longer in the Trash", q(&it.source)));
+                };
+                // The same object that went to the Trash, not another item
+                // that got its Trash name later (S10).
+                match it.dest_ident.or(it.src_ident) {
+                    Some(was) if meta::ident(&md).same_object(&was) => {}
+                    Some(_) => {
+                        return Err(format!(
+                            "{} is no longer in the Trash (another item has its name there)",
+                            q(&it.source)
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "File Studio can’t tell whether {} in the Trash is the item it moved there",
+                            q(&it.source)
+                        ));
+                    }
                 }
                 check_free(&it.source)?;
                 pairs.push((loc.clone(), it.source.clone()));

@@ -836,6 +836,9 @@ impl Env<'_> {
         item.state = ItemState::InProgress;
         self.save(item)?;
         let loc = self.trasher.trash(&item.source)?;
+        // What is in the Trash now, so undo can tell it from another item
+        // that later gets the same Trash name (S10).
+        item.dest_ident = meta::lstat(&loc).ok().map(|m| meta::ident(&m));
         item.trash_loc = Some(loc);
         if item.kind != EntryKind::Dir {
             item.bytes = md.len();
