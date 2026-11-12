@@ -1253,9 +1253,7 @@ impl From<core::Completions> for FfiCompletions {
                 new_input: e.new_input,
             }),
             ghost_text: c.ghost_text,
-            // `fstudio_path` doesn't export `InputKind` yet (requested); its
-            // Debug name is stable enough until it does.
-            is_bare_word: format!("{:?}", c.kind) == "BareWord",
+            is_bare_word: c.kind == fstudio_path::InputKind::BareWord,
             parent: c.parent.map(|p| ps(&p)),
             segment_start: c.segment_start as u32,
             skipped_slow: c.skipped_slow,

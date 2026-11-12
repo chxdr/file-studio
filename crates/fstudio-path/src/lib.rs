@@ -30,8 +30,8 @@ pub mod testing;
 pub mod zoxide;
 
 pub use complete::{
-    Completer, CompleterConfig, Completion, CompletionKind, Completions, TabCycle, TabExtension,
-    TabOutcome,
+    Completer, CompleterConfig, Completion, CompletionKind, Completions, InputKind, TabCycle,
+    TabExtension, TabOutcome,
 };
 pub use copy::copy_path_as;
 pub use crumbs::{Crumb, CrumbKind, Volume, breadcrumbs, collapse, subfolders};
