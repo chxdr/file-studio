@@ -157,6 +157,7 @@ extension ShellRequest {
         case .confirmMove(let t, let title, let d, let p): self = .confirmMove(token: t, title: title, detail: d, paths: p)
         case .moved(let t): self = .moved(text: t)
         case .toast(let t, let b, let c): self = .toast(text: t, button: b, command: c)
+        case .confirm(let tok, let t, let d, let y, let n): self = .confirm(token: tok, title: t, detail: d, yes: y, no: n)
         case .showPowerTour: self = .showPowerTour
         case .toggleSidebar: self = .toggleSidebar
         case .toggleInspector: self = .toggleInspector

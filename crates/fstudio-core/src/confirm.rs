@@ -117,6 +117,9 @@ pub(crate) enum PendingAction {
     /// Redo this op (a move of a protected folder), if it is still the top
     /// of the redo stack; redo checks the items itself.
     Redo(fstudio_ops::OpId, Option<TabId>),
+    /// Undo this op (still the top of the undo stack), recreating the
+    /// folders it puts items back into (S14).
+    UndoRecreating(fstudio_ops::OpId, Option<TabId>),
 }
 
 impl PendingAction {
@@ -124,7 +127,7 @@ impl PendingAction {
     pub(crate) fn tab(&self) -> Option<TabId> {
         match self {
             PendingAction::Op(op) => op.tab,
-            PendingAction::Redo(_, tab) => *tab,
+            PendingAction::Redo(_, tab) | PendingAction::UndoRecreating(_, tab) => *tab,
         }
     }
 }
@@ -161,6 +164,7 @@ impl Engine {
         match action {
             PendingAction::Op(op) => self.run_pending_op(*op, true),
             PendingAction::Redo(op, tab) => self.redo_op(Some(op), tab),
+            PendingAction::UndoRecreating(op, tab) => self.undo_run(tab, Some(op)),
         }
     }
 

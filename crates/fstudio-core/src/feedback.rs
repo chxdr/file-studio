@@ -167,8 +167,104 @@ impl Engine {
     }
 }
 
+/// A file's extension as Finder sees it ("txt" in "a.txt"); none for a
+/// folder, a name with no dot, or a name that only starts with one.
+fn extension(name: &str) -> Option<&str> {
+    let i = name.rfind('.')?;
+    (i > 0 && i + 1 < name.len()).then(|| &name[i + 1..])
+}
+
+/// The question to ask before renaming `old` to `new` (S14), or `None`:
+/// `(title, detail, yes, no)`. A name that starts with a dot hides the item;
+/// a changed extension may make a file open in another app.
+pub(crate) fn rename_warning(
+    old: &str,
+    new: &str,
+    is_dir: bool,
+    warn_hidden: bool,
+    warn_extension: bool,
+) -> Option<(String, String, String, String)> {
+    if warn_hidden && new.starts_with('.') && !old.starts_with('.') {
+        return Some((
+            format!("Use a name that begins with a dot, “{new}”?"),
+            "Names that begin with a dot are hidden, so the item will disappear from the list \
+             (View › Show Hidden Files shows it)."
+                .into(),
+            "Use “.”".into(),
+            "Cancel".into(),
+        ));
+    }
+    if !warn_extension || is_dir {
+        return None;
+    }
+    let (a, b) = (extension(old), extension(new));
+    let same = match (a, b) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        (None, None) => true,
+        _ => false,
+    };
+    if same {
+        return None;
+    }
+    let detail = "If you make this change, the file may open in a different app.".to_string();
+    Some(match (a, b) {
+        (Some(a), Some(b)) => (
+            format!("Change the extension from “.{a}” to “.{b}”?"),
+            detail,
+            format!("Use .{b}"),
+            format!("Keep .{a}"),
+        ),
+        (Some(a), None) => (
+            format!("Remove the extension “.{a}”?"),
+            detail,
+            "Remove".into(),
+            format!("Keep .{a}"),
+        ),
+        (None, Some(b)) => (
+            format!("Add the extension “.{b}” to the end of the name?"),
+            detail,
+            format!("Add .{b}"),
+            "Cancel".into(),
+        ),
+        (None, None) => unreachable!("handled above"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rename_warnings_follow_finder() {
+        use super::rename_warning as w;
+        assert!(w("a.txt", "b.txt", false, true, true).is_none());
+        assert!(w("a.txt", "a.TXT", false, true, true).is_none());
+        let (t, _, yes, no) = w("a.txt", "a.md", false, true, true).unwrap();
+        assert_eq!(t, "Change the extension from “.txt” to “.md”?");
+        assert_eq!((yes.as_str(), no.as_str()), ("Use .md", "Keep .txt"));
+        assert!(
+            w("a.txt", "a", false, true, true)
+                .unwrap()
+                .0
+                .starts_with("Remove")
+        );
+        assert!(
+            w("a", "a.md", false, true, true)
+                .unwrap()
+                .0
+                .starts_with("Add")
+        );
+        // Folders keep dots freely; the settings turn each warning off.
+        assert!(w("Site", "Site.old", true, true, true).is_none());
+        assert!(w("a.txt", "a.md", false, true, false).is_none());
+        assert!(
+            w("a.txt", ".a.txt", false, true, true)
+                .unwrap()
+                .0
+                .contains("dot")
+        );
+        assert!(w("a.txt", ".a.txt", false, false, true).is_none());
+        assert!(w(".env", ".env2", false, true, true).is_none());
+    }
+
     use super::*;
 
     #[test]

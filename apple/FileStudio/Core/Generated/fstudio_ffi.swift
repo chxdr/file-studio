@@ -10299,6 +10299,8 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case toast(text: String, button: String?, command: String?
     )
+    case confirm(token: UInt64, title: String, detail: String, yes: String, no: String
+    )
     case showPowerTour
     case toggleSidebar
     case toggleInspector
@@ -10410,28 +10412,31 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 27: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf)
         )
         
-        case 28: return .showPowerTour
-        
-        case 29: return .toggleSidebar
-        
-        case 30: return .toggleInspector
-        
-        case 31: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 28: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
         )
         
-        case 32: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 29: return .showPowerTour
+        
+        case 30: return .toggleSidebar
+        
+        case 31: return .toggleInspector
+        
+        case 32: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 33: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 33: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 34: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 34: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 35: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 35: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 36: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 36: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 37: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10582,46 +10587,55 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterOptionString.write(command, into: &buf)
             
         
-        case .showPowerTour:
+        case let .confirm(token,title,detail,yes,no):
             writeInt(&buf, Int32(28))
+            FfiConverterUInt64.write(token, into: &buf)
+            FfiConverterString.write(title, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+            FfiConverterString.write(yes, into: &buf)
+            FfiConverterString.write(no, into: &buf)
+            
         
-        
-        case .toggleSidebar:
+        case .showPowerTour:
             writeInt(&buf, Int32(29))
         
         
-        case .toggleInspector:
+        case .toggleSidebar:
             writeInt(&buf, Int32(30))
         
         
-        case let .eject(path):
+        case .toggleInspector:
             writeInt(&buf, Int32(31))
-            FfiConverterString.write(path, into: &buf)
-            
         
-        case let .showDriveInfo(path):
+        
+        case let .eject(path):
             writeInt(&buf, Int32(32))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDriveInfo(path):
             writeInt(&buf, Int32(33))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(34))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(34))
+            writeInt(&buf, Int32(35))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(35))
+            writeInt(&buf, Int32(36))
             FfiConverterUInt64.write(window, into: &buf)
             
         
         case let .closeWindow(window):
-            writeInt(&buf, Int32(36))
+            writeInt(&buf, Int32(37))
             FfiConverterUInt64.write(window, into: &buf)
             
         }

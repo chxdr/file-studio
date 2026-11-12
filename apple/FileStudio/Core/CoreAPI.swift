@@ -224,6 +224,9 @@ public enum ShellRequest: Equatable, Sendable {
     /// Show `text` for ~6 s; with `button`, a button that performs `command`
     /// (S11: Trash, Delete Immediately, Undo and Redo say what they did).
     case toast(text: String, button: String?, command: String?)
+    /// A yes/no question with `no` as the default button; on yes
+    /// `engine.confirm(token)`, on no `engine.cancelConfirmation(token)` (S14).
+    case confirm(token: UInt64, title: String, detail: String, yes: String, no: String)
     /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
     case showPowerTour
     case toggleSidebar
@@ -265,6 +268,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .showSettings: "showSettings"
         case .confirmMove: "confirmMove"
         case .toast: "toast"
+        case .confirm: "confirm"
         case .moved: "moved"
         case .showPowerTour: "showPowerTour"
         case .toggleSidebar: "toggleSidebar"

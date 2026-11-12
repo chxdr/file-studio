@@ -701,10 +701,32 @@ impl OpQueue {
     /// was modified, an original location is taken…); it never overwrites.
     /// Returns the queued inverse ops (empty if nothing to undo). Blocks on
     /// `lstat` of the affected items.
+    ///
+    /// When an item would go back into a folder that no longer exists, undo
+    /// stops with [`OpsError::NeedsFolders`] (S14): nothing is recreated
+    /// unasked. [`OpQueue::undo_recreating`] then recreates those folders as
+    /// journaled steps of the same undo.
     pub fn undo(&self) -> Result<Vec<OpId>> {
-        let Some((op, _label)) = self.inner.journal.peek_stack(Stack::Undo)? else {
+        self.undo_with(None)
+    }
+
+    /// Undo after the user agreed to recreate the missing folders that
+    /// [`OpQueue::undo`] reported, if `expect` is still the op on top of the
+    /// undo stack. The folders are created by the undo op itself (a
+    /// compound op), so they are in the journal.
+    pub fn undo_recreating(&self, expect: OpId) -> Result<Vec<OpId>> {
+        self.undo_with(Some(expect))
+    }
+
+    fn undo_with(&self, recreate_for: Option<OpId>) -> Result<Vec<OpId>> {
+        let Some((op, label)) = self.inner.journal.peek_stack(Stack::Undo)? else {
             return Ok(Vec::new());
         };
+        if recreate_for.is_some_and(|e| e != op) {
+            return Err(OpsError::UndoRefused(
+                "something else was undone or done meanwhile".into(),
+            ));
+        }
         if let Some(o) = self.inner.find(op)
             && *o.phase.lock() != Phase::Finished
         {
@@ -715,7 +737,35 @@ impl OpQueue {
             .journal
             .load_op(op)?
             .ok_or(OpsError::NoSuchOp(op))?;
-        let inverse = self.inverse_of(&row)?;
+        let mut inverse = self.inverse_of(&row)?;
+        let missing = missing_parents(&inverse);
+        if !missing.is_empty() {
+            // A folder the op itself emptied and removed (the source of a
+            // merging move) comes back without asking; one that went away
+            // some other way needs the user's yes.
+            let own: Vec<PathBuf> = self
+                .items_deep(op)?
+                .into_iter()
+                .filter(|i| i.kind == EntryKind::Dir && i.state == crate::journal::ItemState::Done)
+                .map(|i| i.source)
+                .collect();
+            let asked = missing.iter().any(|d| !own.contains(d));
+            if asked && recreate_for.is_none() {
+                return Err(OpsError::NeedsFolders(missing));
+            }
+            let mut steps: Vec<OpRequest> = missing
+                .iter()
+                .map(|d| OpRequest::NewFolder {
+                    parent: d.parent().map(Path::to_path_buf).unwrap_or_default(),
+                    name: file_name(d),
+                })
+                .collect();
+            steps.extend(inverse);
+            inverse = vec![OpRequest::Compound {
+                label: label.clone(),
+                steps,
+            }];
+        }
         let mut ids = Vec::new();
         for req in inverse {
             ids.push(self.enqueue_origin(
@@ -861,6 +911,31 @@ impl OpQueue {
             .on_event(OpEvent::UndoChanged(self.inner.undo_state()));
         Ok(Some(id))
     }
+}
+
+/// The folders that items of these (undo) requests would go back into but
+/// that no longer exist, outermost first (S14).
+fn missing_parents(reqs: &[OpRequest]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for r in reqs {
+        let OpRequest::MoveTo { pairs } = r else {
+            continue;
+        };
+        for (_, to) in pairs {
+            let mut d = to.parent();
+            while let Some(dir) = d {
+                if dir.as_os_str().is_empty() || crate::meta::exists(dir) {
+                    break;
+                }
+                if !out.iter().any(|o| o == dir) {
+                    out.push(dir.to_path_buf());
+                }
+                d = dir.parent();
+            }
+        }
+    }
+    out.sort_by_key(|p| p.components().count());
+    out
 }
 
 /// Runs a compound op (see [`OpRequest::Compound`]): each step as an op of

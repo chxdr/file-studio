@@ -853,3 +853,90 @@ fn s13_p8_a_chain_of_new_folders_is_one_op_and_one_undo() {
         Some("Undo New Folder")
     );
 }
+
+// ───────────────────────── S14 ─────────────────────────
+
+/// p9: renaming to a dot name or to another extension asks first (both are
+/// settings, on by default); no leaves the item alone, yes renames it.
+#[test]
+fn s14_p9_renames_that_hide_or_change_the_extension_ask_first() {
+    let h = harness();
+    touch(&h.p("notes.txt"));
+    touch(&h.p("todo.txt"));
+    let t = h.window_at("");
+    let out = h
+        .engine
+        .rename_item(t.id(), "notes.txt", ".notes.txt")
+        .unwrap();
+    let Some(ShellRequest::Confirm { token, title, .. }) = out.shell else {
+        panic!("expected a question, got {:?}", out.shell);
+    };
+    assert!(title.contains("dot"), "{title}");
+    assert!(out.ops.is_empty());
+    h.engine.cancel_confirmation(token);
+    assert!(h.p("notes.txt").exists());
+    let out = h.engine.rename_item(t.id(), "todo.txt", "todo.md").unwrap();
+    let Some(ShellRequest::Confirm { token, yes, no, .. }) = out.shell else {
+        panic!("expected a question");
+    };
+    assert_eq!((yes.as_str(), no.as_str()), ("Use .md", "Keep .txt"));
+    ok(&h, &h.engine.confirm(token).unwrap());
+    assert!(h.p("todo.md").exists());
+    // A plain rename doesn't ask; with the setting off, neither does this.
+    eventually("listed", || names(&t).contains(&"todo.md".to_string()));
+    ok(
+        &h,
+        &h.engine.rename_item(t.id(), "todo.md", "plan.md").unwrap(),
+    );
+    assert!(h.p("plan.md").exists());
+    h.engine
+        .set_setting("operations.warn_extension_change", "false")
+        .unwrap();
+    eventually("listed", || names(&t).contains(&"plan.md".to_string()));
+    let out = h.engine.rename_item(t.id(), "plan.md", "plan.txt").unwrap();
+    assert!(out.shell.is_none());
+    ok(&h, &out);
+    assert!(h.p("plan.txt").exists());
+}
+
+/// p11 (the rest of S14): undoing a move whose original folder was deleted
+/// asks before recreating it; yes recreates it inside the journaled undo
+/// (so it can be redone and undone), no leaves everything as it is.
+#[test]
+fn s14_p11_undo_asks_before_recreating_a_deleted_folder() {
+    let h = harness();
+    mkdirs(&h.p("Projects/app"));
+    touch(&h.p("Projects/app/main.rs"));
+    mkdirs(&h.p("Archive"));
+    let id = h
+        .engine
+        .enqueue(OpRequest::Move {
+            sources: vec![h.p("Projects/app/main.rs")],
+            dest_dir: h.p("Archive"),
+        })
+        .unwrap();
+    h.engine.wait_op(id, T).unwrap();
+    std::fs::remove_dir_all(h.p("Projects")).unwrap();
+    let out = h.engine.undo().unwrap();
+    let Some(ShellRequest::Confirm { token, title, .. }) = out.shell else {
+        panic!("expected a question, got {:?}", out.shell);
+    };
+    assert_eq!(title, "Recreate 2 folders, starting with “Projects”?");
+    assert!(out.ops.is_empty());
+    h.engine.cancel_confirmation(token);
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!h.p("Projects").exists(), "nothing recreated unasked");
+    assert!(h.p("Archive/main.rs").exists());
+    // Yes: recreated and put back, as one journaled undo.
+    let Some(ShellRequest::Confirm { token, .. }) = h.engine.undo().unwrap().shell else {
+        panic!("expected the question again");
+    };
+    let out = h.engine.confirm(token).unwrap();
+    ok(&h, &out);
+    assert!(h.p("Projects/app/main.rs").exists());
+    // Redo moves it again; the recreated folders stay, empty.
+    let out = h.engine.redo().unwrap();
+    ok(&h, &out);
+    assert!(h.p("Archive/main.rs").exists());
+    assert!(h.p("Projects/app").is_dir());
+}

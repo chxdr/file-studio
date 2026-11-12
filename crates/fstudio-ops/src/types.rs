@@ -79,9 +79,10 @@ pub enum OpRequest {
         /// The items to duplicate.
         paths: Vec<PathBuf>,
     },
-    /// Move each `(from, to)` to the exact destination path `to`, creating
-    /// missing parent folders. Undo uses this to move items back, put them
-    /// back from the Trash and rename them back.
+    /// Move each `(from, to)` to the exact destination path `to`. The folder
+    /// `to` goes into must exist: a missing one is never created silently
+    /// (undo asks, then creates it as a journaled step, S14). Undo uses this
+    /// to move items back, put them back from the Trash and rename them back.
     MoveTo {
         /// `(from, to)`, where `to` is the full destination path.
         pairs: Vec<(PathBuf, PathBuf)>,
@@ -616,6 +617,10 @@ pub enum OpsError {
     #[error("can't undo: {0}")]
     /// Undo would overwrite or lose something, so it was refused.
     UndoRefused(String),
+    /// Undo would put items back into folders that no longer exist (listed,
+    /// outermost first). Ask, then call `OpQueue::undo_recreating`.
+    #[error("can't undo: a folder it goes back into is gone")]
+    NeedsFolders(Vec<PathBuf>),
     /// Redo would act on something that changed since the undo put it back
     /// (the reason is a sentence).
     #[error("can't redo: {0}")]

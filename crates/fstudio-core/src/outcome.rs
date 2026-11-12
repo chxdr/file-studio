@@ -149,6 +149,23 @@ pub enum ShellRequest {
         /// What moved where.
         text: String,
     },
+    /// A yes/no question; `no` is the default button (Return and Esc). On
+    /// yes call `Engine::confirm(token)`, on no
+    /// `Engine::cancel_confirmation(token)` (renames that hide an item or
+    /// change its extension, putting an item back into a folder that is
+    /// gone: safety audit S14).
+    Confirm {
+        /// The one-shot token.
+        token: u64,
+        /// The question.
+        title: String,
+        /// One or two sentences under it.
+        detail: String,
+        /// The button that goes ahead ("Use .md").
+        yes: String,
+        /// The default button that doesn't ("Keep .txt", "Cancel").
+        no: String,
+    },
     /// Show `text` as a toast for about six seconds (safety audit S11: Trash,
     /// Delete Immediately, Undo and Redo say what they did, and where when
     /// this window doesn't show it). With `button`, the toast has a button

@@ -227,6 +227,12 @@ pub struct OperationsSettings {
     /// Volume roots and folders open in tabs are always protected too, and
     /// the confirmation itself can't be turned off.
     pub protected_folders: Vec<String>,
+    /// Ask before a rename changes, adds or removes a file's extension, as
+    /// Finder does (safety audit S14).
+    pub warn_extension_change: bool,
+    /// Ask before a rename gives an item a name that starts with a dot,
+    /// which hides it (safety audit S14).
+    pub warn_hidden_rename: bool,
 }
 
 impl Default for OperationsSettings {
@@ -239,6 +245,8 @@ impl Default for OperationsSettings {
             ops_per_volume: 1,
             undo_limit: 100,
             protected_folders: crate::protect::default_protected_folders(),
+            warn_extension_change: true,
+            warn_hidden_rename: true,
         }
     }
 }

@@ -342,11 +342,51 @@ impl Engine {
     /// Undo for the window holding `tab`: the toast names the folder the
     /// undo changed when that window doesn't show it (S11).
     pub(crate) fn undo_in(&self, tab: Option<TabId>) -> Result<Outcome> {
+        self.undo_run(tab, None)
+    }
+
+    /// Undo, or (with `recreate_for`) undo recreating the missing folders
+    /// the user agreed to (S14).
+    pub(crate) fn undo_run(
+        &self,
+        tab: Option<TabId>,
+        recreate_for: Option<OpId>,
+    ) -> Result<Outcome> {
         let top = self.ops().undo_top()?;
-        let ids = match self.ops().undo() {
+        let res = match recreate_for {
+            Some(op) => self.ops().undo_recreating(op),
+            None => self.ops().undo(),
+        };
+        let ids = match res {
             Ok(ids) => ids,
             Err(fstudio_ops::OpsError::UndoRefused(why)) => {
                 return Ok(Self::refusal(format!("Can’t undo: {why}")));
+            }
+            Err(fstudio_ops::OpsError::NeedsFolders(dirs)) => {
+                // S14: never recreate a deleted folder unasked.
+                let Some((op, label, _)) = top else {
+                    return Ok(Outcome::none());
+                };
+                let first = crate::confirm::display_name(&dirs[0]);
+                let title = match dirs.len() {
+                    1 => format!("Recreate the folder “{first}”?"),
+                    n => format!("Recreate {n} folders, starting with “{first}”?"),
+                };
+                let detail = format!(
+                    "Undoing {label} puts items back into “{first}”, which no longer exists. \
+                     File Studio can create it again; that is part of the undo, so Redo \
+                     and Undo still work."
+                );
+                let token = self.ask(crate::confirm::PendingAction::UndoRecreating(op, tab));
+                let mut out = Outcome::shell(ShellRequest::Confirm {
+                    token,
+                    title,
+                    detail,
+                    yes: "Recreate and Undo".into(),
+                    no: "Cancel".into(),
+                });
+                out.tab = tab;
+                return Ok(out);
             }
             Err(e) => return Err(e.into()),
         };

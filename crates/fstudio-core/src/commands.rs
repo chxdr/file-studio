@@ -719,12 +719,41 @@ impl Engine {
             return Ok(Outcome::none().with_tab(tab));
         }
         let path = t.rename_target(old_name, new_name)?;
-        let id = self.enqueue(OpRequest::Rename {
-            path,
-            new_name: new_name.to_string(),
-        })?;
-        t.select_when_present(vec![new_name.to_string()]);
-        Ok(Outcome::op(id).with_tab(tab))
+        let op = PendingOp {
+            req: OpRequest::Rename {
+                path: path.clone(),
+                new_name: new_name.to_string(),
+            },
+            items: snapshot(std::slice::from_ref(&path)),
+            tab: Some(tab),
+            after: After {
+                select: Some((tab, vec![new_name.to_string()])),
+                ..After::default()
+            },
+            toast: None,
+        };
+        // S14: ask first when the new name hides the item or changes its
+        // extension (both settings, on by default), as Finder does.
+        let ops = self.settings().operations;
+        let is_dir = t.listing().inner.get(old_name).is_some_and(|e| e.is_dir());
+        if let Some((title, detail, yes, no)) = crate::feedback::rename_warning(
+            old_name,
+            new_name,
+            is_dir,
+            ops.warn_hidden_rename,
+            ops.warn_extension_change,
+        ) {
+            let token = self.ask(PendingAction::Op(Box::new(op)));
+            return Ok(Outcome::shell(ShellRequest::Confirm {
+                token,
+                title,
+                detail,
+                yes,
+                no,
+            })
+            .with_tab(tab));
+        }
+        self.run_pending_op(op, false)
     }
 
     /// Creates a missing folder (and any missing parents) through the queue,

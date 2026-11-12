@@ -346,7 +346,9 @@ impl Env<'_> {
             (None, None) => return Err(fail("the item has no destination")),
         };
         if self.kind == OpKind::MoveTo && !meta::exists(&dest_dir) {
-            std::fs::create_dir_all(&dest_dir)?;
+            // Never recreated silently (S14): undo asks first and creates the
+            // folders as journaled steps (`OpQueue::undo_recreating`).
+            return Err(fail("the folder it goes back into is gone"));
         }
         let dir_md = meta::lstat(&dest_dir)?;
         if !dir_md.is_dir() {
