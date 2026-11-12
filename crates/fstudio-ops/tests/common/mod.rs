@@ -227,3 +227,43 @@ impl Drop for Image {
             .status();
     }
 }
+
+/// Waits until the op reports a pending conflict.
+pub fn wait_conflict(e: &Env, id: OpId) -> ConflictInfo {
+    let t = std::time::Instant::now();
+    loop {
+        let st = e.q.status(id).unwrap();
+        if let Some(c) = st.conflicts.first() {
+            return c.clone();
+        }
+        assert!(
+            !st.state.is_finished(),
+            "finished without a conflict: {st:?}"
+        );
+        assert!(t.elapsed() < WAIT, "no conflict");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Kind of source/destination item for conflict tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum K {
+    File,
+    Dir,
+    Link,
+}
+
+/// Makes an item of kind `k` at `p` whose content mentions `tag`.
+pub fn make(p: &Path, k: K, tag: &str) {
+    match k {
+        K::File => write(p, tag.as_bytes()),
+        K::Dir => {
+            write(&p.join(format!("{tag}.txt")), tag.as_bytes());
+            write(&p.join("shared.txt"), tag.as_bytes());
+        }
+        K::Link => {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(format!("target-{tag}"), p).unwrap();
+        }
+    }
+}

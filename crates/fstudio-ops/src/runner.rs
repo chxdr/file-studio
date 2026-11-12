@@ -30,7 +30,8 @@ struct Graph {
     nodes: HashMap<i64, Node>,
     ready: BTreeSet<i64>,
     finalize: BTreeSet<i64>,
-    conflicts: BTreeMap<i64, ()>,
+    /// Waiting conflicts → whether each is folder-onto-folder (its rule class).
+    conflicts: BTreeMap<i64, bool>,
     files_done: u64,
     failed: u64,
     skipped: u64,
@@ -325,15 +326,9 @@ fn schedule(
             let rules = *op.ctl.rules.read();
             let covered: Vec<i64> = g
                 .conflicts
-                .keys()
-                .copied()
-                .filter(|id| {
-                    let st = op.status.lock();
-                    st.conflicts
-                        .iter()
-                        .find(|c| c.id.0 == *id)
-                        .is_some_and(|c| rules.for_class(c.can_merge).is_some())
-                })
+                .iter()
+                .filter(|(_, folder)| rules.for_class(**folder).is_some())
+                .map(|(id, _)| *id)
                 .collect();
             for id in covered {
                 g.conflicts.remove(&id);
@@ -496,7 +491,7 @@ fn handle(inner: &Inner, op: &OpShared, g: &mut Graph, out: Outcome) {
             if let Some(n) = g.nodes.get_mut(&id) {
                 n.row = row;
             }
-            g.conflicts.insert(id, ());
+            g.conflicts.insert(id, info.can_merge);
             op.status.lock().conflicts.push(info.clone());
             inner.sink.on_event(OpEvent::OpConflict {
                 op: op.id,

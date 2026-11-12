@@ -467,7 +467,7 @@ impl Env<'_> {
         dest: PathBuf,
         same_volume: bool,
     ) -> Res<()> {
-        let partial = partial_path(&dest);
+        let partial = partial_path(&dest, item.id);
         if meta::exists(&partial) {
             return Err(fail(format!(
                 "a temporary file from an earlier copy is in the way: {}",
@@ -677,7 +677,7 @@ impl Env<'_> {
             item.merged = true;
             item.created = false;
         } else {
-            let partial = partial_path(&dest);
+            let partial = partial_path(&dest, item.id);
             if meta::exists(&partial) {
                 return Err(fail(format!(
                     "a temporary folder from an earlier copy is in the way: {}",
@@ -895,7 +895,7 @@ impl Env<'_> {
                 }
             }
         }
-        let partial = partial_path(&dest);
+        let partial = partial_path(&dest, item.id);
         if meta::exists(&partial) {
             return Err(fail(format!(
                 "a temporary item is in the way: {}",

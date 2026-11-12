@@ -36,10 +36,13 @@ fn hidden_with_suffix(final_path: &Path, suffix: &str) -> PathBuf {
     final_path.with_file_name(format!(".{}{suffix}", truncate_bytes(&name, room)))
 }
 
-/// `dir/.<name>.fstudio-partial`: where a copy is written before it is renamed
-/// into place. Long names are shortened so the result stays a valid name.
-pub fn partial_path(final_path: &Path) -> PathBuf {
-    hidden_with_suffix(final_path, PARTIAL_SUFFIX)
+/// `dir/.<name>.<item>.fstudio-partial`: where a copy is written before it is
+/// renamed into place. `item` is the journal item id, so two items whose
+/// names differ only by case (or normalisation) never share a temporary name
+/// on a case-insensitive volume. Long names are shortened so the result stays
+/// a valid name.
+pub fn partial_path(final_path: &Path, item: i64) -> PathBuf {
+    hidden_with_suffix(final_path, &format!(".{item}{PARTIAL_SUFFIX}"))
 }
 
 /// The intermediate name of a case-only rename of `source`.
@@ -213,7 +216,7 @@ mod tests {
     #[test]
     fn long_names_stay_valid() {
         let long = "é".repeat(200); // 400 bytes
-        let p = partial_path(Path::new(&format!("/x/{long}")));
+        let p = partial_path(Path::new(&format!("/x/{long}")), 12345);
         let n = p.file_name().unwrap().to_str().unwrap();
         assert!(n.len() <= 255 && n.ends_with(PARTIAL_SUFFIX) && n.starts_with('.'));
         let k = keep_both_names(&"a".repeat(255), false).next().unwrap();
@@ -223,8 +226,8 @@ mod tests {
     #[test]
     fn partial_names() {
         assert_eq!(
-            partial_path(Path::new("/d/a.txt")),
-            Path::new("/d/.a.txt.fstudio-partial")
+            partial_path(Path::new("/d/a.txt"), 7),
+            Path::new("/d/.a.txt.7.fstudio-partial")
         );
         assert!(is_partial_name(Path::new("/d/.a.txt.fstudio-partial")));
         assert!(!is_partial_name(Path::new("/d/a.txt.fstudio-partial")));

@@ -507,9 +507,8 @@ impl OpQueue {
         apply_to_all: bool,
     ) -> Result<()> {
         let o = self.inner.find(id).ok_or(OpsError::NoSuchOp(id))?;
-        let info = o
-            .status
-            .lock()
+        let mut st = o.status.lock();
+        let info = st
             .conflicts
             .iter()
             .find(|c| c.id == conflict)
@@ -518,6 +517,9 @@ impl OpQueue {
         if decision == ConflictDecision::Merge && !info.can_merge {
             return Err(OpsError::InvalidDecision(decision));
         }
+        // Answered: it leaves the status now, not when the scheduler gets to it.
+        st.conflicts.retain(|c| c.id != conflict);
+        drop(st);
         if apply_to_all {
             let mut opts = o.options.lock();
             if info.can_merge {
