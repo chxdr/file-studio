@@ -10,11 +10,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use fstudio_keymap::Mods;
-use fstudio_ops::{OpId, OpRequest};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::Engine;
-use crate::error::{CoreError, Result};
+use crate::error::Result;
+use crate::outcome::Outcome;
 
 /// What dropping items onto a folder does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,34 +131,16 @@ impl Engine {
         decide(source_facts(sources).as_deref(), &dest_facts(dest), mods)
     }
 
-    /// Decides the drop as [`Engine::drop_effect`] does and queues the copy or
-    /// move. Returns the queued operation, or `NotAvailable` when the drop is
-    /// refused. A move of a protected folder (F-023) is refused too: use
-    /// [`Engine::drop_files`], which asks for confirmation instead.
-    pub fn drop_items(&self, sources: &[String], dest: &str, mods: Mods) -> Result<OpId> {
-        let effect = self.drop_effect(sources, dest, mods);
-        let sources: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
-        let dest_dir = PathBuf::from(dest);
-        let req = match effect {
-            DropEffect::Copy => OpRequest::Copy { sources, dest_dir },
-            DropEffect::Move => {
-                if let Some(why) = sources
-                    .iter()
-                    .find_map(|s| self.move_protection(&s.to_string_lossy()))
-                {
-                    return Err(CoreError::NotAvailable(format!(
-                        "Moving this needs confirmation. {why}"
-                    )));
-                }
-                OpRequest::Move { sources, dest_dir }
-            }
-            DropEffect::None => {
-                return Err(CoreError::NotAvailable(
-                    "These items can't be dropped here".into(),
-                ));
-            }
-        };
-        self.enqueue(req)
+    /// Decides the drop as [`Engine::drop_effect`] does and queues the copy
+    /// or move: the same as [`Engine::drop_files`], so a move of a protected
+    /// folder asks first (F-023) and every move answers with a "Moved … "
+    /// toast. `NotAvailable` (with a sentence to show) when the drop is refused.
+    pub fn drop_items(&self, sources: &[String], dest: &str, mods: Mods) -> Result<Outcome> {
+        self.drop_files(
+            sources.iter().map(PathBuf::from).collect(),
+            PathBuf::from(dest),
+            mods,
+        )
     }
 }
 

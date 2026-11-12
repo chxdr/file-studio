@@ -637,10 +637,13 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
             model.handle(out, in: model.keyWindowID)
             return true
         } catch {
-            model.statusMessage = (error as? CoreError)?.message ?? error.localizedDescription
+            MoveSafety.refused(Self.sentence((error as? CoreError)?.message ?? error.localizedDescription), model: model)
             return false
         }
     }
+
+    /// "the items can’t be dropped there" → "The items can’t be dropped there".
+    static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
 
     private static func paths(_ info: NSDraggingInfo) -> [String] {
         (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])?
@@ -682,7 +685,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
         let highlighted = highlightedDrop
         highlightedDrop = nil
         guard let dest = dropDestination(row: target), dest == highlighted else {
-            model.statusMessage = "The folder under the pointer changed, so nothing was dropped"
+            MoveSafety.refused("The folder under the pointer changed, so nothing was dropped", model: model)
             return false
         }
         return performDrop(Self.paths(info), row: target, flags: NSEvent.modifierFlags)

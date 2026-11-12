@@ -76,6 +76,16 @@ enum MoveSafety {
         if let w = host(window) { a.beginSheetModal(for: w, completionHandler: done) } else { done(a.runModal()) }
     }
 
+    /// A drop or move the core refused: say why where the user is looking (a
+    /// toast) and in the status line, never just a beep (safety audit S2).
+    static func refused(_ text: String, model: AppModel) {
+        model.statusMessage = text
+        #if DEBUG
+        print("REFUSED \(text)")
+        #endif
+        ToastCenter.of(model).show(text, style: .warning, seconds: 5)
+    }
+
     /// Answers the open confirmation as if a button were pressed (debug automation).
     static func answer(move: Bool) {
         guard let a = openAlert, let parent = a.window.sheetParent else { return }

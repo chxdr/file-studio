@@ -1082,10 +1082,10 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             let out = try model.engine.dropFiles(sources: sources, destDir: dir, mods: Mods(NSEvent.modifierFlags))
             model.handle(out, in: windowID)
             return true
-        } catch let e as CoreError {
-            model.statusMessage = e.message
+        } catch {
+            MoveSafety.refused(FileTable.sentence((error as? CoreError)?.message ?? error.localizedDescription), model: model)
             return false
-        } catch { return false }
+        }
     }
 
     func crumbStrip(springLoad crumb: Crumb) { goTo(crumb.path) }

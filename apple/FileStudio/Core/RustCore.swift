@@ -1072,8 +1072,8 @@ extension RustEngine: ListEngineAPI {
         case .none: .none
         }
     }
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
-        try wrap { try ffi.dropItems(sources: sources, dest: dest, mods: mods.ffi) }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome {
+        try wrap { Outcome(try ffi.dropItems(sources: sources, dest: dest, mods: mods.ffi)) }
     }
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
         try wrap { Outcome(try ffi.sortByColumn(tab: tab, column: ColumnSpec(id: column, width: 0).ffi.id)) }

@@ -775,7 +775,7 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     /**
      * Decides the drop and queues the copy or move.
      */
-    func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> Int64
+    func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> FfiOutcome
     
     /**
      * Queues an operation (drag and drop).
@@ -1388,8 +1388,8 @@ open func dropFiles(sources: [String], destDir: String, mods: FfiMods)throws  ->
     /**
      * Decides the drop and queues the copy or move.
      */
-open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> Int64  {
-    return try  FfiConverterInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_drop_items(
             self.uniffiCloneHandle(),
@@ -12321,7 +12321,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_files() != 55869) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 42296) {
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 29777) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_enqueue() != 44324) {

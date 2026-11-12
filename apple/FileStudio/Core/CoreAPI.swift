@@ -1196,8 +1196,9 @@ public protocol ListEngineAPI: AnyObject, Sendable {
     func columnSelect(tab: TabID, dir: String, name: String?) throws -> Outcome
     /// What dropping `sources` onto the folder `dest` does. Metadata only.
     func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect
-    /// Decides the drop and queues the copy or move.
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID
+    /// Decides the drop and queues the copy or move, like `dropFiles`: a move
+    /// of a protected folder comes back as `confirmMove`, a move as `moved`.
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome
     /// A click on a list-view column header: sorts by it, or flips the direction.
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome
 }

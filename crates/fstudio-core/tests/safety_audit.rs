@@ -149,3 +149,53 @@ fn s1_confirmed_protected_move_uses_the_named_items() {
     );
     std::thread::sleep(Duration::from_millis(50));
 }
+
+// ───────────────────────── S2 ─────────────────────────
+
+/// p6: `drop_files` and `drop_items` (list, crumbs, and drops from Finder,
+/// which arrive as plain file URLs) never move a protected folder without
+/// asking, and every move they queue says so.
+#[test]
+fn s2_p6_drops_of_protected_folders_ask_and_moves_show_a_toast() {
+    let h = harness();
+    for d in ["Downloads", "Documents", "Import Studio", "plain"] {
+        mkdirs(&h.p(d));
+    }
+    let _t = h.window_at("Import Studio");
+    // A Finder drag of ~/Downloads onto a crumb.
+    let out = h
+        .engine
+        .drop_files(vec![h.p("Downloads")], h.p("Import Studio"), Mods::NONE)
+        .unwrap();
+    assert!(
+        matches!(out.shell, Some(ShellRequest::ConfirmMove { .. })),
+        "{:?}",
+        out.shell
+    );
+    assert!(out.ops.is_empty());
+    // A Finder drag of ~/Documents onto the list.
+    let out = h
+        .engine
+        .drop_items(&[h.s("Documents")], &h.s("Import Studio"), Mods::NONE)
+        .unwrap();
+    assert!(matches!(out.shell, Some(ShellRequest::ConfirmMove { .. })));
+    assert!(out.ops.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(h.p("Downloads").is_dir() && h.p("Documents").is_dir());
+    // An ordinary folder moves, and says so.
+    let out = h
+        .engine
+        .drop_items(&[h.s("plain")], &h.s("Import Studio"), Mods::NONE)
+        .unwrap();
+    ok(&h, &out);
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::Moved { ref text }) if text == "Moved “plain” to “Import Studio”"
+    ));
+    // A refused drop is an error with a sentence for the shell to show.
+    let e = h
+        .engine
+        .drop_items(&[h.s("Import Studio")], &h.s("Import Studio"), Mods::NONE)
+        .unwrap_err();
+    assert!(e.to_string().contains("dropped"), "{e}");
+}

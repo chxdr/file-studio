@@ -1225,12 +1225,8 @@ extension MockEngine: ListEngineAPI {
         if mods.cmd { return .move }
         return sources.allSatisfy { $0.hasPrefix("/Mock/") } ? .move : .copy
     }
-    func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID {
-        switch dropEffect(sources: sources, dest: dest, mods: mods) {
-        case .copy: return try enqueue(.copy(sources: sources, destDir: dest))
-        case .move: return try enqueue(.move(sources: sources, destDir: dest))
-        case .none: throw CoreError(.notAvailable, "These items can't be dropped here")
-        }
+    func dropItems(sources: [String], dest: String, mods: Mods) throws -> Outcome {
+        try dropFiles(sources: sources, destDir: dest, mods: mods)
     }
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
         guard let t = tabs[tab] else { throw CoreError(.notFound, "tab \(tab)") }

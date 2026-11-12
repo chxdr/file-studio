@@ -914,8 +914,8 @@ impl FfiEngine {
         Ok(self.inner.sort_by_column(TabId(tab), column.into())?.into())
     }
     /// Decides the drop and queues the copy or move.
-    pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<i64> {
-        Ok(self.inner.drop_items(&sources, &dest, mods.into())?.0)
+    pub fn drop_items(&self, sources: Vec<String>, dest: String, mods: FfiMods) -> R<FfiOutcome> {
+        Ok(self.inner.drop_items(&sources, &dest, mods.into())?.into())
     }
 }
 
