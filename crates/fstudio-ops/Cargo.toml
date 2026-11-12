@@ -1,0 +1,15 @@
+[package]
+name = "fstudio-ops"
+description = "File operation queue: copy/move/trash, verify, conflicts, journal and undo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstudio-model.workspace = true
+fstudio-db.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

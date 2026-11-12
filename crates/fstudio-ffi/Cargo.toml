@@ -1,0 +1,26 @@
+[package]
+name = "fstudio-ffi"
+description = "UniFFI bindings for the File Studio core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "fstudio_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+fstudio-core.workspace = true
+uniffi = "0.32"
+
+[lints]
+workspace = true

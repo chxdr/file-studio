@@ -1,0 +1,40 @@
+# cargo-deny: run `cargo deny check licenses` (CI and before each milestone).
+# The project is GPL-3.0-or-later, so every dependency must be GPLv3-compatible.
+
+[graph]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+
+[licenses]
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "0BSD",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "LGPL-2.1",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-or-later",
+    "GPL-3.0",
+    "GPL-3.0-or-later",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+
+# Workspace crates are GPL-3.0-or-later and unpublished.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"

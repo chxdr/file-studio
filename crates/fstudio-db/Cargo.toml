@@ -1,0 +1,18 @@
+[package]
+name = "fstudio-db"
+description = "SQLite for the File Studio core: connection, per-module migrations, key-value store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
