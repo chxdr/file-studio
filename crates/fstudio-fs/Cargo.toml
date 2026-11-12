@@ -9,6 +9,18 @@ publish.workspace = true
 [dependencies]
 fstudio-model.workspace = true
 thiserror.workspace = true
+libc.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true
+plist = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[dev-dependencies]
+tempfile.workspace = true
+fstudio-view.workspace = true
 
 [lints]
 workspace = true
