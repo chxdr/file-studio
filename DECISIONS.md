@@ -163,3 +163,13 @@ Every one of these is also a setting.
 - **Scheduling is per volume pair** (source device, destination device), so a card-to-SSD copy doesn't block an SSD-to-SSD copy.
 - **Durability:** moves full-sync each file before placing it, and the folder after the rename. Plain copies sync only when `fsync_copies` is on. Verified copies use our own copy loop, which reads the source once, hashes it while copying and writes the destination uncached. Per-file full syncs made verified small-file copies about 50× slower.
 - **Untested:** the real system Trash (`SystemTrasher`), iCloud placeholders and a real external drive.
+
+## F-021: Core behaviour settled while integrating (accepted, M1)
+- **Per-folder view memory** ("smart", F-012) remembers sort order and view mode. "Show hidden files" stays per tab.
+- **Pasting a copy into its own folder** duplicates the item ("name 2"), as Finder does.
+- **Undo that has to refuse** (the item changed, or the original place is now taken) returns a message in the `Outcome` for the shell to show, not an error.
+- **Commands that need the OS** (Quick Look, Get Info, Open With, Reveal in Finder, Open in Terminal, the palette and dialogs) come back to the shell as a `ShellRequest`. A test checks that every registered command is either handled by the core or returns one, except an explicit list of later features: compress, make alias, global search, connect to server.
+
+## F-022: Context menus are defined by the core (accepted, M2 first task)
+The right-click menus have a core model, `context_menu(target, ctx) -> Vec<MenuItem>`, built from registered commands. The targets are: a file, a folder, a multi-selection, empty space in a list, an address-bar segment, a sidebar item and a tab. Each target has its own default contents, order, separators, enablement and submenus (Copy Path styles, Open With). Users can customise it in Settings (add, remove, reorder), and custom shell actions (M4) can join it. The shell only draws the menu and sends the chosen command back.
+**Why:** this follows F-001 and F-006: Swift must not decide which actions apply to what. It also brings the user's "everything customisable" requirement to menus.
