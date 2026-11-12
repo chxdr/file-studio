@@ -98,7 +98,7 @@ final class PaneViewController: NSViewController {
             shownMode = nil
         }
         syncContent()
-        let showTabs = pane.tabs.count >= 2 || WindowPreferences.tabBarAlways
+        let showTabs = pane.tabs.count >= 2 || WindowPreferences.tabBarAlways(model)
         let h = showTabs ? PaneTabBar.height : 0
         if tabBarHeight.constant != h { tabBarHeight.constant = h }
         tabBar.isHidden = !showTabs

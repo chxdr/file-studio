@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PlatformActions.install(model)
         installAppHandlers()
         model.windowsDidChange = { [weak self] in self?.syncWindows() }
+        WindowPreferences.migrateLegacyDefaults(model)
         model.start()
         NSApp.mainMenu = MainMenu.build(model: model, target: self)
         keyRouter = KeyRouter(model: model)

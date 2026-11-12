@@ -89,6 +89,8 @@ pub struct GeneralSettings {
     pub closed_tabs_kept: u32,
     /// The terminal "Open in Terminal" uses.
     pub terminal_app: TerminalApp,
+    /// First-run setup has been finished or skipped.
+    pub setup_done: bool,
 }
 
 /// The terminal app "Open in Terminal" opens.
@@ -113,6 +115,7 @@ impl Default for GeneralSettings {
             type_select_timeout_ms: 1000,
             closed_tabs_kept: 20,
             terminal_app: TerminalApp::Terminal,
+            setup_done: false,
         }
     }
 }
@@ -420,6 +423,18 @@ mod tests {
         let t = s.with_key("appearance.tab_bar_always", "true").unwrap();
         assert!(t.appearance.tab_bar_always && t.appearance.path_bar_subtitle);
         assert!(s.with_key("appearance.motion", "\"Wild\"").is_err());
+    }
+
+    #[test]
+    fn setup_done_key() {
+        let s = Settings::default();
+        assert_eq!(s.get_key("general.setup_done"), Some(Value::Bool(false)));
+        assert!(
+            s.with_key("general.setup_done", "true")
+                .unwrap()
+                .general
+                .setup_done
+        );
     }
 
     #[test]

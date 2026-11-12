@@ -55,9 +55,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         responderObservation = w.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.firstResponderChanged() } }
         }
-        NotificationCenter.default.addObserver(forName: WindowPreferences.changed, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.syncPanes() }
-        }
         // Setting the content controller sizes the window to its fitting size;
         // put it back, then let a saved frame win.
         w.setContentSize(NSSize(width: 1200, height: 760))

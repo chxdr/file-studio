@@ -26,7 +26,7 @@ engine (`activateTab`, `moveTab`, `focusPane`, `toggleDual`, `setLayout`).
 - `PaneStatusLine.swift`: counts, selection size, free space; in the active
   pane also pending keys, status messages (cleared after 5 s) and the queue.
 - `WindowSupport.swift`: `PaneContent` (the list/column hand-shake),
-  `WindowPreferences` (shell-side stopgaps: tab bar always, setup done),
+  `WindowPreferences` (reads tab bar always / setup done from core settings; one-time UserDefaults migration),
   `Motion`, `PaneText`, `MiddleClickCatcher`.
 - `WindowDebugSteps.swift`: DEBUG script steps (`winlog`, `layout:`,
   `movetab:`, `setup:`, `sidebarsnap:`, `button:`, `focus:`, `eject:`…).

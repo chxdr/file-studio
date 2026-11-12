@@ -56,7 +56,13 @@ enum WindowDebugSteps {
             let dest = parts.count > 2 && parts[2] == "other" && st.panes.count == 2 ? st.panes[1 - st.activePane] : src
             do { try m.engine.moveTab(src.tabs[from].id, toPane: dest.id, index: UInt32(to)) } catch { print("DEBUG \(error)") }
         }
-        DebugAutomation.register("tabbar") { arg, _ in WindowPreferences.tabBarAlways = arg == "always" }
+        DebugAutomation.register("tabbar") { arg, m in try? Core.set(m.engine, "appearance.tab_bar_always", bool: arg == "always") }
+        DebugAutomation.register("rerunsetup") { _, _ in
+            // What the Settings → General button calls.
+            print("RERUNSETUP hook=\(SettingsHooks.rerunFirstRunSetup != nil)")
+            SettingsHooks.rerunFirstRunSetup?()
+            print("RERUNSETUP open=\(SetupController.state != nil)")
+        }
         DebugAutomation.register("setup") { arg, m in
             if arg == "close" { SetupController.finish(model: m); return }
             SetupController.present(model: m, page: Int(arg) ?? 0)
