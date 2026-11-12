@@ -54,6 +54,7 @@ final class PaneViewController: NSViewController {
             root.addSubview(v)
         }
         header.install(pathBar: pathBar)
+        pathBar.onEditingChanged = { [weak header] on in header?.setEditing(on) }
         outline.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(outline)
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: 0)
@@ -108,8 +109,8 @@ final class PaneViewController: NSViewController {
         header.setActive(marked)
         outline.isHidden = !marked
         header.update(tm, volumes: model.volumes)
-        view.setAccessibilityLabel(isDual ? (isActive ? "Active pane, \(tm.title)" : "Pane, \(tm.title)") : tm.title)
         header.showSubtitle = Core.bool(model.engine, "appearance.path_bar_subtitle") ?? true
+        view.setAccessibilityLabel(isDual ? (isActive ? "Active pane, \(tm.title)" : "Pane, \(tm.title)") : tm.title)
     }
 
     /// Re-reads the subtitle and view mode after a listing change.
@@ -242,7 +243,6 @@ final class PaneHeaderView: NSView {
 
     func setActive(_ on: Bool) { bar.isHidden = !on }
 
-    override func updateLayer() {
     /// The address field in EDIT is 20 pt tall with a border and would sit on
     /// top of the subtitle, so the subtitle steps aside while editing.
     func setEditing(_ on: Bool) {
@@ -256,6 +256,7 @@ final class PaneHeaderView: NSView {
 
     private func updateSubtitleVisibility() { subtitle.isHidden = editing || !showSubtitle }
 
+    override func updateLayer() {
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         bar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
     }
