@@ -13,7 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var keyRouter: KeyRouter!
     private var volumeWatcher: VolumeWatcher?
     private var controllers: [WindowID: MainWindowController] = [:]
-    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         model = AppModel(engine: makeEngine())
@@ -26,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keyRouter.install()
         volumeWatcher = VolumeWatcher(engine: model.engine)
         syncWindows()
+        ConflictPresenter.shared.install(model)
+        ConfirmSheets.install(model)
+        OverlayController.shared.install(model)
         NSApp.activate()
         #if DEBUG
         DebugAutomation.runIfRequested(model)
@@ -59,19 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installAppHandlers() {
         model.registerShellHandler(for: "openWindow") { [weak self] _, _ in self?.syncWindows(); return true }
         model.registerShellHandler(for: "closeWindow") { [weak self] _, _ in self?.syncWindows(); return true }
-        model.registerShellHandler(for: "showSettings") { [weak self] _, _ in self?.showSettings(); return true }
+        model.registerShellHandler(for: "showSettings") { [weak self] req, _ in
+            if case .showSettings(let section) = req { self?.showSettings(section: SettingsTab(section: section)) }
+            return true
+        }
     }
 
-    func showSettings() {
-        if settingsWindow == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsPlaceholderView(model: model)))
-            w.title = "Settings"
-            w.identifier = NSUserInterfaceItemIdentifier("settings")
-            w.isReleasedWhenClosed = false
-            settingsWindow = w
-        }
-        settingsWindow?.makeKeyAndOrderFront(nil)
-    }
+    func showSettings(section: SettingsTab? = nil) { SettingsWindow.show(model: model, section: section) }
 
     /// Menu items built from the registry land here.
     @objc func runCommand(_ sender: NSMenuItem) {

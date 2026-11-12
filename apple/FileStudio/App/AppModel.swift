@@ -195,6 +195,9 @@ public final class AppModel {
 
     public func attachment<T: AnyObject>(_ type: T.Type, make: () -> T) -> T { appAttachments.get(type, make: make) }
 
+    /// Forgets finished operations (after `engine.clearFinishedOps()`); used by the ops popover.
+    public func removeFinishedOps() { ops.removeAll { $0.state.isFinished } }
+
     // MARK: Lookups
 
     public func tabModel(_ id: TabID) -> TabModel? { tabs[id] }

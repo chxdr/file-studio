@@ -23,6 +23,7 @@
 //   menus                 the main menu's items with key equivalents (MAINMENU lines)
 //   bench:rows            times TabAPI.rows(start:, 60) from Swift (BENCH line)
 //   quit
+//   (more steps for the ops UI, toasts and Settings: Views/DebugSteps.swift)
 
 #if DEBUG
 import AppKit
@@ -61,7 +62,7 @@ enum DebugAutomation {
                 case "bench": if arg == "rows" { benchRows(model) }
                 case "snap": snap(arg, dir: dir)
                 case "quit": NSApp.terminate(nil)
-                default: print("DEBUG unknown step \(step)")
+                default: if !UIDebugSteps.run(op, arg, model) { print("DEBUG unknown step \(step)") }
                 }
                 fflush(stdout)
                 try? await Task.sleep(for: .milliseconds(150))

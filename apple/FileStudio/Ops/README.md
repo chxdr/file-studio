@@ -1,11 +1,21 @@
 # Ops/ — ops-UI session
 
-The operation queue UI (PROPOSAL §10): toolbar progress ring and popover queue
-(pause/resume/cancel/reorder through the engine), the conflict sheet
-(`.opConflict` → `resolveConflict`, with Keep Both / Replace / Skip / Merge and
-"apply to all"), interrupted ops at launch (`interruptedOps`, resume or cancel),
-per-file failures (`.opFailed`), undo labels (`AppModel.undoState`).
-Confirmation sheets: `.confirmTrash`, `.confirmDeleteImmediately`.
+- `OpsPlaceholderView(model:)` (name and init kept for the window layer): the
+  **toolbar item**. A progress ring (overall progress while ops run) with a
+  badge for pending conflicts (orange), failed items (red) or interrupted ops
+  (blue). Click: the queue popover.
+- `OpsQueueView`: active ops (progress, bytes and files, speed, ETA, current
+  file; pause/resume, cancel, drag to reorder), failed items per file, finished
+  ops until cleared (Show in Folder), interrupted ops from a previous run
+  (Resume / Cancel).
+- `ConflictSheet`: sheet on the front window, both items side by side, Keep
+  Both (Return) / Replace (⌘R) / Skip (S, Esc) / Merge (M, folders only),
+  Apply to all (A), Compare (⌘Y, Quick Look), "3 of 12". The core decides what
+  each choice does.
+- `ConfirmSheets`: `.confirmTrash` / `.confirmDeleteImmediately` questions; on
+  yes the command is performed again with `.confirmed`.
+- `OpsModel` (`OpsModel.of(model)`): queue order, per-file errors,
+  interrupted ops, pending conflicts, `statusText` ("Copying… 42 %").
 
-`AppModel.ops` holds the latest `OpStatus` of each op. `OpsPlaceholderView`
-shows a tiny list in the sidebar; replace it.
+Edit-menu Undo/Redo titles come from `AppModel.undoState` (the core words
+them); `Views/OverlayController` keeps the menu items current.
