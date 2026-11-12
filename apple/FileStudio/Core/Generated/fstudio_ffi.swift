@@ -6290,6 +6290,10 @@ public enum FfiCommandArg: Equatable, Hashable {
     case char(value: String
     )
     case confirm
+    /**
+     * The user said yes to the core's confirmation question.
+     */
+    case confirmed
     case text(text: String
     )
 
@@ -6327,7 +6331,9 @@ public struct FfiConverterTypeFfiCommandArg: FfiConverterRustBuffer {
         
         case 5: return .confirm
         
-        case 6: return .text(text: try FfiConverterString.read(from: &buf)
+        case 6: return .confirmed
+        
+        case 7: return .text(text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -6362,8 +6368,12 @@ public struct FfiConverterTypeFfiCommandArg: FfiConverterRustBuffer {
             writeInt(&buf, Int32(5))
         
         
-        case let .text(text):
+        case .confirmed:
             writeInt(&buf, Int32(6))
+        
+        
+        case let .text(text):
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(text, into: &buf)
             
         }

@@ -77,12 +77,12 @@ pub enum ShellRequest {
         /// The deepest folder that does exist.
         nearest_existing: String,
     },
-    /// Ask before moving to the Trash; on yes perform `file.trash` again without `Confirm`.
+    /// Ask before moving to the Trash; on yes perform `file.trash` again with `Confirmed`.
     ConfirmTrash {
         /// The items.
         paths: Vec<String>,
     },
-    /// Ask before deleting for good; on yes perform `file.delete_immediately` with `Confirm`.
+    /// Ask before deleting for good; on yes perform `file.delete_immediately` with `Confirmed`.
     ConfirmDeleteImmediately {
         /// The items.
         paths: Vec<String>,

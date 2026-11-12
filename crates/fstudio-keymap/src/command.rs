@@ -120,6 +120,8 @@ pub enum CommandArg {
     Char(char),
     /// Ask before doing it (Vim `x` → Trash).
     Confirm,
+    /// The user already said yes to the question the core asked: do it now.
+    Confirmed,
     /// A short text, such as a Finder tag name (`tags.toggle`).
     Text(String),
 }

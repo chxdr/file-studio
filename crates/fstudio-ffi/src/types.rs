@@ -321,6 +321,8 @@ pub enum FfiCommandArg {
         value: String,
     },
     Confirm,
+    /// The user said yes to the core's confirmation question.
+    Confirmed,
     Text {
         text: String,
     },
@@ -336,6 +338,7 @@ impl From<core::CommandArg> for FfiCommandArg {
                 value: c.to_string(),
             },
             core::CommandArg::Confirm => FfiCommandArg::Confirm,
+            core::CommandArg::Confirmed => FfiCommandArg::Confirmed,
             core::CommandArg::Text(t) => FfiCommandArg::Text { text: t },
         }
     }
@@ -349,6 +352,7 @@ impl FfiCommandArg {
             FfiCommandArg::ViewMode { mode } => core::CommandArg::ViewMode((*mode).into()),
             FfiCommandArg::Char { value } => core::CommandArg::Char(value.chars().next()?),
             FfiCommandArg::Confirm => core::CommandArg::Confirm,
+            FfiCommandArg::Confirmed => core::CommandArg::Confirmed,
             FfiCommandArg::Text { text } => core::CommandArg::Text(text.clone()),
         })
     }
