@@ -456,6 +456,10 @@ fn volumes_describe_the_filesystem() {
         assert_eq!(root.fs_type, "apfs");
         assert!(root.supports_clone);
         assert!(!root.name.is_empty());
+        assert_ne!(
+            root.name, "/",
+            "the root volume has a real name (Macintosh HD)"
+        );
         assert!(root.is_internal);
     }
 }
