@@ -166,7 +166,8 @@ fn table() -> Vec<B> {
         c("nav.forward", "Forward", Navigation, "Go forward in this tab's history").s("⌘]").v("L"),
         c("nav.go_to", "Go to Folder…", Navigation, "Go to a given folder").global().arg(ArgKind::Path),
         c("nav.address_bar", "Go to Address Bar", Navigation, "Edit the path of the current folder")
-            .global().sw(When::Always, "⌘L|⇧⌘G").sa(lf.clone(), "/", CommandArg::Char('/')),
+            .global().sw(When::Always, "⌘L|⇧⌘G").sa(lf.clone(), "/", CommandArg::Char('/'))
+            .sa(lf.clone(), "~", CommandArg::Char('~')),
         c("nav.other_address_bar", "Focus Other Pane's Address Bar", Navigation, "Edit the other pane's path")
             .ctx(When::DualPane).s("⇧⌘L"),
         c("nav.quick_open", "Quick Open…", Navigation, "Jump to a folder or recent item by name").global().s("⌘P"),
