@@ -71,7 +71,7 @@ struct SettingsAppearancePane: View {
                 }
             }
             Section("Window") {
-                Toggle("Show the folder path under each pane's title", isOn: a.bool("appearance.path_bar_subtitle", default: true))
+                Toggle("Show the item count and free space under the address bar", isOn: a.bool("appearance.path_bar_subtitle", default: true))
                 Picker("Tab bar", selection: a.bool("appearance.tab_bar_always", default: false)) {
                     Text("Only with two or more tabs").tag(false)
                     Text("Always").tag(true)

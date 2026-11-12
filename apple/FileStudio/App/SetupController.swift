@@ -54,7 +54,7 @@ enum SetupController {
     static func presentIfNeeded(model: AppModel, on window: NSWindow?) {
         guard !checkedThisLaunch else { return }
         checkedThisLaunch = true
-        guard !WindowPreferences.setupDone, UserDefaults.standard.string(forKey: "FSDebugScript") == nil else { return }
+        guard !WindowPreferences.setupDone(model), UserDefaults.standard.string(forKey: "FSDebugScript") == nil else { return }
         // Let the window finish appearing first.
         DispatchQueue.main.async { MainActor.assumeIsolated { present(model: model, on: window) } }
     }
@@ -88,7 +88,7 @@ enum SetupController {
     }
 
     static func finish(model: AppModel) {
-        WindowPreferences.setupDone = true
+        WindowPreferences.setSetupDone(model)
         if let w = sheet { w.sheetParent?.endSheet(w) }
         sheet = nil
         state = nil

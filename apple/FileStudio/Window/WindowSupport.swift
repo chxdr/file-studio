@@ -26,29 +26,33 @@ extension ListPlaceholderView: PaneContent {
     var focusView: NSView { table }
 }
 
-// MARK: - Preferences the core doesn't hold yet
+// MARK: - Window preferences
 
-/// Window-layer preferences with no core setting yet. Each is a shell-side
-/// stopgap (UserDefaults) listed in the hand-over for the coordinator; move
-/// them into core `Settings` when the core grows the fields.
+/// Window-layer preferences, all held by core settings.
 @MainActor
 enum WindowPreferences {
-    static let changed = Notification.Name("FSWindowPreferencesChanged")
-
     /// Show the tab bar even with one tab (the default shows it from two tabs).
-    /// The Settings session binds a toggle to this.
-    static var tabBarAlways: Bool {
-        get { UserDefaults.standard.bool(forKey: "FSTabBarAlways") }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "FSTabBarAlways")
-            NotificationCenter.default.post(name: changed, object: nil)
-        }
-    }
+    static func tabBarAlways(_ m: AppModel) -> Bool { Core.bool(m.engine, "appearance.tab_bar_always") ?? false }
 
     /// First-run setup has been finished or skipped.
-    static var setupDone: Bool {
-        get { UserDefaults.standard.bool(forKey: "FSSetupDone") }
-        set { UserDefaults.standard.set(newValue, forKey: "FSSetupDone") }
+    static func setupDone(_ m: AppModel) -> Bool { Core.bool(m.engine, "general.setup_done") ?? false }
+
+    static func setSetupDone(_ m: AppModel) { try? Core.set(m.engine, "general.setup_done", bool: true) }
+
+    /// One-time move of the old UserDefaults stopgaps (`FSTabBarAlways`,
+    /// `FSSetupDone`) into core settings, so nobody's choice resets. Only
+    /// a value that was actually saved is carried over, then the old key is
+    /// removed. Call once at launch, before the first window.
+    static func migrateLegacyDefaults(_ m: AppModel) {
+        let d = UserDefaults.standard
+        if d.object(forKey: "FSTabBarAlways") != nil {
+            if d.bool(forKey: "FSTabBarAlways") { try? Core.set(m.engine, "appearance.tab_bar_always", bool: true) }
+            d.removeObject(forKey: "FSTabBarAlways")
+        }
+        if d.object(forKey: "FSSetupDone") != nil {
+            if d.bool(forKey: "FSSetupDone") { try? Core.set(m.engine, "general.setup_done", bool: true) }
+            d.removeObject(forKey: "FSSetupDone")
+        }
     }
 }
 

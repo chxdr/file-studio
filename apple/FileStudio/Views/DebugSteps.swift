@@ -70,6 +70,8 @@ enum UIDebugSteps {
         case "set":
             let kv = arg.split(separator: "=", maxSplits: 1).map(String.init)
             if kv.count == 2 { do { try model.engine.setSetting(kv[0], json: kv[1]) } catch { print("SET error \(error)") } }
+        case "get":
+            print("SETTING \(arg) = \((try? model.engine.setting(arg)) ?? "?")")
         case "alert":
             // Press the default (arg "ok") or the last button ("cancel") of the sheet on the front window.
             if let w = NSApp.windows.first(where: { $0.attachedSheet != nil }), let s = w.attachedSheet {

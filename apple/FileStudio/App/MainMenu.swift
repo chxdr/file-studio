@@ -82,11 +82,19 @@ enum MainMenu {
         it.target = target
         it.representedObject = c.id
         it.toolTip = c.description + (c.shortcut.map { " (\($0))" } ?? "")
-        if let s = c.shortcut, let (key, mods) = keyEquivalent(s), mods.contains(.command) {
+        // ⌘ chords and function keys (F5, ⇧F6) show in the menu; plain letters
+        // and arrows would fight with typing in text fields, so they stay out.
+        if let s = c.shortcut, let (key, mods) = keyEquivalent(s), mods.contains(.command) || isFunctionKey(key) {
             it.keyEquivalent = key
             it.keyEquivalentModifierMask = mods
         }
         return it
+    }
+
+    /// True for F1–F20 key equivalents (U+F704…U+F717).
+    static func isFunctionKey(_ key: String) -> Bool {
+        guard let u = key.unicodeScalars.first, key.unicodeScalars.count == 1 else { return false }
+        return (UInt32(NSF1FunctionKey)...UInt32(NSF20FunctionKey)).contains(u.value)
     }
 
     /// Key-cap text (`⇧⌘N`, `⌘↓`, `⌥⌘⌫`) → an NSMenuItem key equivalent.

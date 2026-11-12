@@ -72,6 +72,9 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
     private var mode = Mode.rest
     private var hovering = false
     private var lastLocation = ""
+    /// Told when the bar enters or leaves EDIT, so the header can get its
+    /// subtitle out of the field's way.
+    var onEditingChanged: ((Bool) -> Void)?
 
     // COMPLETING state
     private var completions = Completions()
@@ -341,6 +344,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         }
         folderMenu.close(notify: false)
         mode = .edit
+        onEditingChanged?(true)
         offer = nil
         errorText = nil
         typedText = nil
@@ -390,6 +394,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         ending = true
         defer { ending = false }
         mode = .rest
+        onEditingChanged?(false)
         closePanel()
         hideChip()
         offer = nil
