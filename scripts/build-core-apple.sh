@@ -17,8 +17,10 @@ TARGET=aarch64-apple-darwin
 export MACOSX_DEPLOYMENT_TARGET=26.0
 # Xcode's environment doesn't load the user's shell profile.
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
-# Xcode exports SDK variables meant for Swift; cargo picks the host SDK itself.
-unset SDKROOT
+# Xcode exports its own build settings into this script; pin the macOS SDK so
+# C dependencies (SQLite) find their headers and cargo's cache stays valid
+# between Xcode and terminal builds.
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 
 cd "$ROOT"
 if [ "$PROFILE" = "release" ]; then
