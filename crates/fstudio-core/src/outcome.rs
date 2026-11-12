@@ -122,6 +122,10 @@ pub enum ShellRequest {
         /// The section, or empty.
         section: String,
     },
+    /// Show the power tour (`app.power_tour`, Help › File Studio Power
+    /// Tour): a short, skippable sequence of cards about the power-user
+    /// tools, with keys read from the current bindings.
+    ShowPowerTour,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Show or hide the inspector.

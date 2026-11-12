@@ -8,6 +8,7 @@ Status: proposed 2026-11-12, waiting for the user's review.
 - Items that don't apply are **hidden**, not greyed out. The exception is Paste, which is greyed when the clipboard is empty, as in Finder.
 - The order follows Finder where Finder has the item. Power-user items form their own groups.
 - Each item shows the user's current binding as its shortcut.
+- **Favourites:** folder-like targets (folder, package, several items with at least one folder, address-bar segment, tab) offer **Add to Favourites** `favourites.add` (⌃⌘T, as Finder's Add to Sidebar). When the folder is already a favourite (for several items: every folder among them is), it is hidden and **Remove from Favourites** `favourites.remove` shows instead. A favourite is matched by the folder it points at, so a symlink or an NFC/NFD spelling of a pinned folder counts as pinned.
 
 ## 1. File
 1. Open `nav.open` (⌘O)
@@ -43,6 +44,7 @@ The same as a file, with these changes:
 - Open in Terminal opens inside the folder.
 - Adds Get Folder Size *(new command, M3)*.
 - Packages also get Show Package Contents *(new command: `nav.show_package_contents`)*.
+- Add to Favourites `favourites.add` (⌃⌘T) or Remove from Favourites `favourites.remove` follows Open in Editor, in the Reveal/Terminal group.
 
 ## 3. Multiple selection
 1. Open (opens each one)
@@ -54,9 +56,11 @@ The same as a file, with these changes:
 7. Copy / Cut / Paste · Copy or Move to Other Pane
 8. Copy Paths › (as in the file menu, one path per line)
 9. ───
-10. Tags › · Share ›
+10. Add to Favourites `favourites.add` (adds only the folders) or Remove from Favourites `favourites.remove`
 11. ───
-12. Move N Items to Trash
+12. Tags › · Share ›
+13. ───
+14. Move N Items to Trash
 
 ## 4. Empty space in a folder
 1. New Folder `file.new_folder` · New File `file.new_file`
@@ -77,7 +81,7 @@ The same as a file, with these changes:
 3. Copy Path › (Path, Escaped, Relative to ~, Quoted, File URL)
 4. ───
 5. Open in Terminal · Reveal in Finder
-6. Add to Favourites `addressbar.add_favourite`
+6. Add to Favourites `favourites.add` or Remove from Favourites `favourites.remove`
 7. Get Info
 
 The segment's chevron is a separate menu: the folder's subfolders.
@@ -86,7 +90,7 @@ The segment's chevron is a separate menu: the folder's subfolders.
 1. Open · Open in New Tab · Open in Other Pane
 2. Reveal in Finder · Get Info · Copy Path
 3. ───
-4. Remove from Sidebar · Rename Favourite… *(new commands)*
+4. Remove from Favourites `sidebar.remove` · Rename Favourite… `sidebar.rename` (favourites only; a favourite whose folder has gone is shown dimmed and still offers Remove)
 5. Drives and cards also get Eject and Show Drive Info *(new commands)*
 
 ## 7. Tab
@@ -95,7 +99,7 @@ The segment's chevron is a separate menu: the folder's subfolders.
 3. ───
 4. Close Tab `tab.close` · Close Other Tabs `tab.close_others`
 5. ───
-6. Copy Path · Save Workspace… `workspace.save`
+6. Copy Path · Add to Favourites `favourites.add` or Remove from Favourites `favourites.remove` (the tab's folder) · Save Workspace… `workspace.save`
 
 ## Later
 - **Custom actions (M4):** shell commands with `{selected}` and `{dir}`, placed anywhere.

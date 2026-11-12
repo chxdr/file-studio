@@ -382,6 +382,7 @@ impl Engine {
             | "filter.commit"
             | "app.settings"
             | "app.keyboard_shortcuts"
+            | "app.power_tour"
             | "edit.copy"
             | "tags.edit"
             | "sidebar.rename"
@@ -449,31 +450,85 @@ impl Engine {
         Ok(v)
     }
 
+    /// `favourites.add` (⌃⌘T) and `favourites.remove`: the path argument
+    /// (a context menu's folder, crumb or tab), else the selected folders,
+    /// else the tab's own folder. Only folders are added; files in the
+    /// selection are skipped.
+    fn favourites_command(&self, id: &str, inv: &CommandInvocation) -> Result<Outcome> {
+        let paths: Vec<PathBuf> = match &inv.arg {
+            Some(CommandArg::Path(p)) => vec![p.clone()],
+            _ => {
+                let t = self.target(inv.tab)?;
+                let sel = t.selected_pathbufs();
+                if sel.is_empty() {
+                    vec![t.location_path()]
+                } else {
+                    sel
+                }
+            }
+        };
+        let name_of = |p: &Path| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| s(p))
+        };
+        if id == "favourites.add" {
+            let folders: Vec<&PathBuf> = paths.iter().filter(|p| p.is_dir()).collect();
+            if folders.is_empty() {
+                return Ok(Outcome::message("Only folders can be favourites"));
+            }
+            let mut added = Vec::new();
+            for p in &folders {
+                if self.add_favourite_reporting(&s(p), None)? {
+                    added.push(name_of(p));
+                }
+            }
+            return Ok(Outcome::message(match (added.len(), folders.len()) {
+                (0, 1) => format!("“{}” is already in Favourites", name_of(folders[0])),
+                (0, _) => "They’re already in Favourites".to_string(),
+                (1, _) => format!("Added “{}” to Favourites", added[0]),
+                (n, _) => format!("Added {n} folders to Favourites"),
+            }));
+        }
+        let mut removed = Vec::new();
+        for p in &paths {
+            if let Some(f) = self.favourite_for(&s(p)) {
+                self.remove_favourite(&f.path)?;
+                removed.push(f.name);
+            }
+        }
+        Ok(Outcome::message(match removed.len() {
+            0 if paths.len() == 1 => format!("“{}” isn’t in Favourites", name_of(&paths[0])),
+            0 => "None of them are in Favourites".to_string(),
+            1 => format!("Removed “{}” from Favourites", removed[0]),
+            n => format!("Removed {n} folders from Favourites"),
+        }))
+    }
+
     fn sidebar_command(&self, id: &str, arg: Option<&CommandArg>) -> Result<Outcome> {
         let Some(CommandArg::Path(p)) = arg else {
             return Err(CoreError::NotAvailable("no sidebar item given".into()));
         };
         let path = s(p);
         Ok(match id {
-            "sidebar.remove" => {
-                if self.is_favourite(&path) {
-                    self.remove_favourite(&path)?;
-                    Outcome::message("Removed from the sidebar")
-                } else {
-                    Outcome::message("That folder isn't in the sidebar")
+            "sidebar.remove" => match self.favourite_for(&path) {
+                Some(f) => {
+                    self.remove_favourite(&f.path)?;
+                    Outcome::message(format!("Removed “{}” from Favourites", f.name))
                 }
-            }
+                None => Outcome::message("That folder isn’t in Favourites"),
+            },
             "sidebar.rename" => {
-                let name = self
-                    .favourites()
-                    .into_iter()
-                    .find(|f| f.path == path)
-                    .map(|f| f.name)
-                    .unwrap_or_else(|| {
-                        p.file_name()
+                let (path, name) = match self.favourite_for(&path) {
+                    Some(f) => (f.path, f.name),
+                    None => {
+                        let name = p
+                            .file_name()
                             .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default()
-                    });
+                            .unwrap_or_default();
+                        (path, name)
+                    }
+                };
                 Outcome::shell(ShellRequest::AskFavouriteName { path, name })
             }
             _ => {
@@ -838,9 +893,8 @@ impl Engine {
                 || id.starts_with("palette.")
                 || id.starts_with("rename.") =>
             {
-                if let (Some(CommandArg::Path(p)), "addressbar.add_favourite") = (&inv.arg, id) {
-                    self.add_favourite(&s(p), None)?;
-                    return Ok(Outcome::message("Added to Favourites"));
+                if let (Some(CommandArg::Path(_)), "addressbar.add_favourite") = (&inv.arg, id) {
+                    return self.favourites_command("favourites.add", inv);
                 }
                 if let Some(CommandArg::Path(p)) = &inv.arg {
                     let t = self.target(inv.tab)?;
@@ -858,6 +912,8 @@ impl Engine {
                 }));
             }
             "filter.commit" => return Ok(Outcome::shell(ShellRequest::FocusList)),
+            "favourites.add" | "favourites.remove" => return self.favourites_command(id, inv),
+            "app.power_tour" => return Ok(Outcome::shell(ShellRequest::ShowPowerTour)),
             "sidebar.remove" | "sidebar.rename" | "drive.eject" | "drive.info" => {
                 return self.sidebar_command(id, inv.arg.as_ref());
             }
