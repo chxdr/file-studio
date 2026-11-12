@@ -18,7 +18,7 @@
 //   deactivate / activate takes keyboard focus away from / back to the list
 //   listlog               prints the list's state (LIST lines)
 //   select:<name>|<name>  selects rows by name through the core
-//   state:<loading|empty|none>  forces a state overlay (for snapshots)
+//   state:<loading|empty|privacy|none>  forces a state overlay (for snapshots)
 //   resize:<w>,<h>        resizes the main window's content
 
 #if DEBUG
@@ -91,6 +91,22 @@ enum ListDebug {
                 l.scrollView.window?.makeFirstResponder(l.table)
             },
             "listlog": { _ in listLog(model) },
+            "viewtree": { @MainActor arg in
+                guard let v = active(model)?.scrollView else { return }
+                @MainActor func dump(_ v: NSView, _ d: Int) {
+                    guard d <= (Int(arg) ?? 6) else { return }
+                    let l = v.layer
+                    print("TREE \(String(repeating: "  ", count: d))\(type(of: v)) frame=\(v.frame) hidden=\(v.isHidden) "
+                          + "alpha=\(v.alphaValue) layer=\(l.map { "\($0.frame) h=\($0.isHidden) o=\($0.opacity) c=\($0.contents != nil) m=\($0.mask != nil)" } ?? "nil")")
+                    if v is ColumnStrip || v is NSClipView {
+                        for sl in l?.sublayers ?? [] {
+                            print("TREE \(String(repeating: "  ", count: d))  sublayer \(type(of: sl)) delegate=\(sl.delegate.map { String(describing: type(of: $0)) } ?? "nil") frame=\(sl.frame) h=\(sl.isHidden) z=\(sl.zPosition)")
+                        }
+                    }
+                    for s in v.subviews { dump(s, d + 1) }
+                }
+                dump(v, 0)
+            },
             "snapview": { arg in
                 // The pane's file area drawn through AppKit's drawing path (cacheDisplay).
                 guard let v = active(model)?.scrollView,
@@ -108,7 +124,13 @@ enum ListDebug {
             "state": { arg in
                 // Forces a state overlay for a snapshot (loading is usually too quick to catch).
                 guard let l = active(model) else { return }
-                l.activeFileTable.stateView.show(arg == "loading" ? .loading : arg == "empty" ? .empty : .none)
+                let st: ListStateView.State = switch arg {
+                case "loading": .loading
+                case "empty": .empty
+                case "privacy": .error("/Users/x/Library/Mail: Operation not permitted (os error 1)")
+                default: .none
+                }
+                l.activeFileTable.stateView.show(st)
             },
             "resize": { arg in
                 let n = arg.split(separator: ",").compactMap { Double($0) }

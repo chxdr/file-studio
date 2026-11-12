@@ -45,8 +45,7 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
         scroll.hasHorizontalScroller = true
         scroll.hasVerticalScroller = false
         scroll.autohidesScrollers = true
-        scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.drawsBackground = false
         scroll.horizontalScrollElasticity = .allowed
         scroll.verticalScrollElasticity = .none
         scroll.documentView = strip
@@ -316,6 +315,8 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
 /// The columns' document view.
 final class ColumnStrip: NSView {
     override var isFlipped: Bool { true }
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) { NSColor.textBackgroundColor.setFill(); dirtyRect.fill() }
 }
 
 /// The handle between two columns: drag to resize, double-click to fit.
