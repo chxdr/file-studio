@@ -59,9 +59,23 @@ struct CrumbLayoutPlan: Equatable {
         } else {
             plan = CrumbLayoutPlan(visible: all, hidden: [], textWidths: w)
         }
-        // Shrink names: earlier crumbs first, the current one last.
-        var p = plan!
-        var excess = width(p.visible, overflow: !p.hidden.isEmpty) - available
+        var p = shrink(plan!, w: w, fixed: fixed, overflowWidth: overflowWidth, available: available)
+        // Very narrow (a dual-pane pane): if the current folder's name would be cut
+        // below ~60 pt, drop the parent too (first + "…" + current).
+        if n > 2, let cur = p.textWidths.last, cur < min(60, w[n - 1]) {
+            let one = CrumbLayoutPlan(visible: [0, n - 1], hidden: Array(1..<(n - 1)), textWidths: [w[0], w[n - 1]])
+            let q = shrink(one, w: w, fixed: fixed, overflowWidth: overflowWidth, available: available)
+            if (q.textWidths.last ?? 0) > cur { p = q }
+        }
+        return p
+    }
+
+    /// Shrinks names until the plan fits: earlier crumbs first, the current one last.
+    private static func shrink(_ plan: CrumbLayoutPlan, w: [CGFloat], fixed: CGFloat, overflowWidth: CGFloat,
+                               available: CGFloat) -> CrumbLayoutPlan {
+        var p = plan
+        var excess = p.textWidths.reduce(0, +) + CGFloat(p.visible.count) * fixed
+            + (p.hidden.isEmpty ? 0 : overflowWidth) - available
         let order = Array(p.visible.indices.dropLast()) + [p.visible.count - 1]
         for k in order where excess > 0 {
             let minW: CGFloat = k == p.visible.count - 1 ? 24 : 0
@@ -69,6 +83,8 @@ struct CrumbLayoutPlan: Equatable {
             p.textWidths[k] -= cut
             excess -= cut
         }
+        // A sliver of a name reads as noise: show just the icon.
+        for k in p.visible.indices.dropLast() where p.textWidths[k] < 20 { p.textWidths[k] = 0 }
         return p
     }
 }

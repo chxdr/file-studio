@@ -37,18 +37,25 @@ enum PathBarStyle {
     static var crumbHover: NSColor { .quaternaryLabelColor }
     static var crumbPressed: NSColor { .tertiaryLabelColor }
 
+    /// Symbol images are cached: building one costs far more than drawing it,
+    /// and rows are redrawn on every keystroke. Keyed by appearance too, since
+    /// dynamic colours resolve when the image is built.
+    private static var symbols: [String: NSImage] = [:]
+
     /// A chevron glyph for separators and menu rows.
     static func chevron(pointSize: CGFloat = 9, color: NSColor = .tertiaryLabelColor) -> NSImage {
-        let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-            .applying(.init(paletteColors: [color]))
-        return NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
-            .withSymbolConfiguration(cfg) ?? NSImage()
+        symbol("chevron.right", size: pointSize, weight: .semibold, color: color) ?? NSImage()
     }
 
     static func symbol(_ name: String, size: CGFloat = 11, weight: NSFont.Weight = .regular,
                        color: NSColor = .secondaryLabelColor) -> NSImage? {
+        let appearance = NSAppearance.currentDrawing().name.rawValue
+        let key = "\(name)|\(size)|\(weight.rawValue)|\(color)|\(appearance)"
+        if let i = symbols[key] { return i }
         let cfg = NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        let i = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        symbols[key] = i
+        return i
     }
 }
 
@@ -59,7 +66,9 @@ enum PathBarStyle {
 enum CrumbIcons {
     private static var byPath: [String: NSImage] = [:]
 
-    static func icon(_ c: Crumb) -> NSImage {
+    static func icon(_ c: Crumb) -> NSImage { small(fullIcon(c)) }
+
+    private static func fullIcon(_ c: Crumb) -> NSImage {
         switch c.kind {
         case .volumeRoot, .home:
             if let i = byPath[c.path] { return i }
@@ -80,15 +89,32 @@ enum CrumbIcons {
     static func folder(path: String) -> NSImage {
         let ext = (path as NSString).pathExtension.lowercased()
         if ["app", "bundle", "framework", "plugin", "kext", "photoslibrary"].contains(ext) {
-            return IconCache.shared.icon(key: "package.\(ext)", path: path)
+            return small(IconCache.shared.icon(key: "package.\(ext)", path: path))
         }
-        return IconCache.shared.icon(key: "folder")
+        return small(IconCache.shared.icon(key: "folder"))
     }
 
-    /// A 16 pt copy, for menus (cached images are shared; never resize them).
+    private static var bitmaps: [ObjectIdentifier: NSImage] = [:]
+
+    /// A pre-rendered 16 pt bitmap (1x and 2x) of a system icon. System icons
+    /// hold many sizes and are downscaled on every draw; rows draw these instead.
     static func small(_ i: NSImage) -> NSImage {
-        let c = i.copy() as? NSImage ?? i
-        c.size = NSSize(width: 16, height: 16)
-        return c
+        let id = ObjectIdentifier(i)
+        if let b = bitmaps[id] { return b }
+        let out = NSImage(size: NSSize(width: 16, height: 16))
+        for scale in [1, 2] {
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16 * scale, pixelsHigh: 16 * scale,
+                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = NSSize(width: 16, height: 16)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            NSGraphicsContext.current?.imageInterpolation = .high
+            i.draw(in: NSRect(x: 0, y: 0, width: 16, height: 16), from: .zero, operation: .copy, fraction: 1)
+            NSGraphicsContext.restoreGraphicsState()
+            out.addRepresentation(rep)
+        }
+        bitmaps[id] = out
+        return out
     }
 }

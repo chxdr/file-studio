@@ -97,7 +97,8 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
 
     // Timing (DEBUG log + signposts)
     private static let signposter = OSSignposter(subsystem: "app.filestudio", category: "PathBar")
-    private var pendingTiming: (start: TimeInterval, completeMs: Double, state: OSSignpostIntervalState)?
+    private var pendingTiming: (start: TimeInterval, handlerStart: TimeInterval, completeMs: Double,
+                                state: OSSignpostIntervalState)?
 
     init(model: AppModel, paneID: PaneID) {
         self.model = model
@@ -431,7 +432,8 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         lastText = text
         let undoing = field.currentEditor()?.undoManager?.isUndoing == true
             || field.currentEditor()?.undoManager?.isRedoing == true
-        if undoing { hideChip() }
+        // The chip describes the last paste; any other edit retires it (⌘Z still works).
+        hideChip()
         typedText = nil
         field.textColor = .labelColor
         tabCycle.reset()
@@ -503,9 +505,12 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         let t0 = ProcessInfo.processInfo.systemUptime
         completions = t.api.complete(field.stringValue, cursor: UInt32(cursorUTF8))
         let completeMs = (ProcessInfo.processInfo.systemUptime - t0) * 1000
-        pendingTiming = (start, completeMs, state)
+        pendingTiming = (start, t0, completeMs, state)
         showRows()
-        if !panel.isVisible { finishTiming() }
+        // Draw now rather than at the next display pass, so the list is current
+        // when the handler returns.
+        if panel.isVisible { panel.list.displayIfNeeded() }
+        finishTiming()
     }
 
     private func listDidDraw() { finishTiming() }
@@ -515,9 +520,9 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         pendingTiming = nil
         Self.signposter.endInterval("keystroke→list", p.state)
         #if DEBUG
-        let ms = (ProcessInfo.processInfo.systemUptime - p.start) * 1000
-        print(String(format: "PATHBAR keystroke→list %.3f ms (core complete %.3f ms, %d rows)", ms, p.completeMs,
-                     completions.items.count))
+        let now = ProcessInfo.processInfo.systemUptime
+        print(String(format: "PATHBAR keystroke→list %.3f ms (handler %.3f ms, core complete %.3f ms, %d rows)",
+                     (now - p.start) * 1000, (now - p.handlerStart) * 1000, p.completeMs, completions.items.count))
         fflush(stdout)
         #endif
     }
@@ -567,7 +572,9 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             rows.append(PopupRow(kind: .error, title: "“\(tilde(o.path))” doesn’t exist",
                                  detail: "Nearest folder: \(tilde(o.nearest))"))
             let missing = Self.missingCount(path: o.path, nearest: o.nearest)
-            let name = (o.path as NSString).lastPathComponent
+            // The part that would be created ("x/y" when there are two).
+            let name = o.path.hasPrefix(o.nearest + "/") ? String(o.path.dropFirst(o.nearest.count + 1))
+                : (o.path as NSString).lastPathComponent
             rows.append(PopupRow(kind: .action, icon: PathBarStyle.symbol("folder.badge.plus", size: 13, color: .controlAccentColor),
                                  title: missing > 1 ? "Create \(missing) Folders “\(name)”" : "Create Folder “\(name)”",
                                  detail: missing > 1 ? tilde(o.path) : nil, badgeText: "↩", payload: "create"))
@@ -711,6 +718,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         tabCycle.reset()
         offer = nil
         errorText = nil
+        hideChip()
         if let ed = field.currentEditor() {
             let loc: Int
             if let c = cursorUTF8, let i = text.utf8.index(text.utf8.startIndex, offsetBy: min(c, text.utf8.count), limitedBy: text.utf8.endIndex) {
@@ -719,6 +727,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
                 loc = (text as NSString).length
             }
             ed.selectedRange = NSRange(location: loc, length: 0)
+            (ed as? NSTextView)?.scrollRangeToVisible(ed.selectedRange)
         }
         updateCapsule()
         if recomplete { refreshCompletions() }
@@ -920,11 +929,20 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         return true
     }
 
-    private func applyCleanup(raw: String, cleaned: String, chip chipText: String) {
+    private func applyCleanup(raw: String, cleaned: String, chip chipText: String, tries: Int = 0) {
         guard mode == .edit, field.stringValue == raw, let tv = field.currentEditor() as? NSTextView else { return }
         watchUndo(tv.undoManager)
-        // Close the text view's open typing group, so the paste stays its own step.
+        // Close the text view's open typing group, so the paste stays its own step;
+        // if the paste's own undo group is still open, wait for it to close.
         tv.breakUndoCoalescing()
+        if let um = tv.undoManager, um.groupingLevel > 0, tries < 50 {
+            Timer.scheduledTimer(withTimeInterval: 0.01, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.applyCleanup(raw: raw, cleaned: cleaned, chip: chipText, tries: tries + 1)
+                }
+            }
+            return
+        }
         swapCleanup(to: cleaned, from: raw, showing: chipText, chip: chipText, undo: tv.undoManager)
     }
 
@@ -945,8 +963,11 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         typedText = nil
         field.textColor = .labelColor
         tabCycle.reset()
-        tv.selectedRange = NSRange(location: (new as NSString).length, length: 0)
         if let c = showing { showChip(c, undoable: true) } else { hideChip() }
+        // The chip narrows the field: lay out first, then keep the end in view.
+        layoutSubtreeIfNeeded()
+        tv.selectedRange = NSRange(location: (new as NSString).length, length: 0)
+        tv.scrollRangeToVisible(tv.selectedRange)
         refreshCompletions()
     }
 
