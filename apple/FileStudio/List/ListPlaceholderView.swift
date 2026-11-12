@@ -40,6 +40,13 @@ final class ListHostView: NSView {
 final class FileHeaderView: NSTableHeaderView {
     override init(frame: NSRect) { super.init(frame: NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: 28)) }
     required init?(coder: NSCoder) { fatalError() }
+    // Opaque, so rows never show through it (F-019: opaque content background).
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+        super.draw(dirtyRect)
+    }
 }
 
 @MainActor

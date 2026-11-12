@@ -91,6 +91,16 @@ enum ListDebug {
                 l.scrollView.window?.makeFirstResponder(l.table)
             },
             "listlog": { _ in listLog(model) },
+            "snapview": { arg in
+                // The pane's file area drawn through AppKit's drawing path (cacheDisplay).
+                guard let v = active(model)?.scrollView,
+                      let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                v.cacheDisplay(in: v.bounds, to: rep)
+                let dir = UserDefaults.standard.string(forKey: "FSDebugSnapshotDir") ?? NSTemporaryDirectory()
+                let url = URL(fileURLWithPath: dir).appendingPathComponent("\(arg).png")
+                try? rep.representation(using: .png, properties: [:])?.write(to: url)
+                print("SNAP \(url.path)")
+            },
             "select": { arg in
                 guard let l = active(model) else { return }
                 l.activeFileTable.source?.setSelection(.names(arg.split(separator: "|").map(String.init)))
@@ -133,7 +143,13 @@ enum ListDebug {
                       + "\(r.isDataless ? " (cloud)" : "")\(r.isSymlink ? " (link)" : "")\(r.isHidden ? " (hidden)" : "")")
             }
         }
-        if let c = l.columns, v.mode == .columns { print("LIST columnDirs=\(c.columnDirs)") }
+        if let c = l.columns, v.mode == .columns {
+            print("LIST columnDirs=\(c.columnDirs.map { ($0 as NSString).lastPathComponent })")
+            for g in c.columnGeometry { print("LIST column \(g)") }
+        }
+        if let rv = ft.table.rowView(atRow: max(vis.location, 0), makeIfNecessary: false) {
+            print("LIST a11y row: \(rv.accessibilityLabel() ?? "") selected=\(rv.isAccessibilitySelected())")
+        }
         let ql = QLPreviewPanel.sharedPreviewPanelExists() && (QLPreviewPanel.shared()?.isVisible ?? false)
         print("LIST quickLookVisible=\(ql) status=\(m.statusMessage ?? "")")
     }

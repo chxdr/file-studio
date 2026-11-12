@@ -64,6 +64,17 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
     var focusedTable: FileTable? { cols.last?.table }
     /// Every column's folder, left to right (debug logs).
     var columnDirs: [String] { cols.map(\.dir) + (preview.map { [$0.dir + " (preview)"] } ?? []) }
+    /// Each column's geometry (debug logs).
+    var columnGeometry: [String] {
+        (cols + (preview.map { [$0] } ?? [])).map { c in
+            let t = c.table.table
+            return "\((c.dir as NSString).lastPathComponent): view=\(c.table.view.frame) table=\(t.frame) "
+                + "col=\(t.tableColumns.first?.width ?? -1) rows=\(t.numberOfRows) vis=\(t.rows(in: c.table.contentRect)) "
+                + "hidden=\(c.table.view.isHiddenOrHasHiddenAncestor) win=\(c.table.view.window != nil) "
+                + "rowViews=\((0..<t.numberOfRows).filter { t.rowView(atRow: $0, makeIfNecessary: false) != nil }.count) "
+                + "layer=\(c.table.view.layer != nil) scrollLayer=\(c.table.scrollView.layer != nil) clipInsets=\(c.table.scrollView.contentView.contentInsets.top) clip=\(c.table.scrollView.contentView.bounds)"
+        } + ["strip=\(strip.frame) clip=\(scroll.contentView.bounds)"]
+    }
 
     override func layout() {
         super.layout()
