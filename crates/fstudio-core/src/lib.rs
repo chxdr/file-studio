@@ -70,7 +70,7 @@ pub use outcome::{Outcome, ShellRequest};
 pub use probe::{FsCoreProbe, FsDirSource};
 pub use settings::{
     FolderMemory, GeneralSettings, OperationsSettings, PathBarSettings, RowDensity,
-    SETTINGS_VERSION, Settings, ViewSettings,
+    SETTINGS_VERSION, Settings, TerminalApp, ViewSettings,
 };
 pub use shared::MIGRATIONS;
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};

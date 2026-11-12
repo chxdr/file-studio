@@ -162,3 +162,30 @@ fn delete_immediately_only_when_enabled_and_confirmed() {
     h.engine.wait_op(out.ops[0], T).unwrap();
     assert!(!h.p("doomed").exists());
 }
+
+#[test]
+fn keys_can_be_rebound_and_reset() {
+    let h = harness();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌘D".to_string()]
+    );
+    h.engine
+        .set_command_key("file.duplicate", true, Some("⌃⌘D"))
+        .unwrap();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌃⌘D".to_string()]
+    );
+    assert!(
+        h.engine
+            .set_command_key("file.duplicate", true, Some("⌘Q"))
+            .is_err()
+    );
+    assert!(h.engine.set_command_key("no.such", true, None).is_err());
+    h.engine.reset_command_keys(Some("file.duplicate")).unwrap();
+    assert_eq!(
+        h.engine.command_keys("file.duplicate"),
+        vec!["⌘D".to_string()]
+    );
+}

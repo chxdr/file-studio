@@ -291,6 +291,52 @@ impl Engine {
         Ok(imported.warnings)
     }
 
+    /// The key-cap text of each binding a command has now, primary first.
+    pub fn command_keys(&self, command: &str) -> Vec<String> {
+        self.keymap
+            .lock()
+            .bindings_for(&CommandId::new(command))
+            .iter()
+            .map(|b| b.text())
+            .collect()
+    }
+
+    /// Sets (or with `None` clears) a command's primary or secondary key in
+    /// the active profile. `keys` is key-cap text (`⇧⌘N`, `g g`, `F5`); the
+    /// binding applies where the command does. Refuses macOS shortcuts.
+    pub fn set_command_key(&self, command: &str, primary: bool, keys: Option<&str>) -> Result<()> {
+        let info =
+            registry::get(command).ok_or_else(|| CoreError::UnknownCommand(command.to_string()))?;
+        let binding = match keys {
+            Some(k) => Some(
+                fstudio_keymap::Binding::parse(k, info.contexts[0].clone())
+                    .ok_or_else(|| CoreError::InvalidSetting(format!("can't read keys “{k}”")))?,
+            ),
+            None => None,
+        };
+        let slot = if primary {
+            fstudio_keymap::Slot::Primary
+        } else {
+            fstudio_keymap::Slot::Secondary
+        };
+        let mut s = self.settings();
+        s.keymap
+            .set_slot(&info.id, slot, binding)
+            .map_err(|e| CoreError::InvalidSetting(e.to_string()))?;
+        self.update_settings(s)
+    }
+
+    /// Puts one command's keys back to the profile's defaults (all commands
+    /// when `command` is `None`).
+    pub fn reset_command_keys(&self, command: Option<&str>) -> Result<()> {
+        let mut s = self.settings();
+        match command {
+            Some(c) => s.keymap.reset_command(&CommandId::new(c)),
+            None => s.keymap.reset_all(),
+        }
+        self.update_settings(s)
+    }
+
     /// Vim's modal state (`Off` with the Standard profile).
     pub fn vim_mode(&self) -> VimMode {
         *self.vim.lock()

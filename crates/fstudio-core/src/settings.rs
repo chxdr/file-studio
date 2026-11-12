@@ -51,6 +51,20 @@ pub struct GeneralSettings {
     pub type_select_timeout_ms: u32,
     /// How many closed tabs "Reopen Closed Tab" remembers (1–100).
     pub closed_tabs_kept: u32,
+    /// The terminal "Open in Terminal" uses.
+    pub terminal_app: TerminalApp,
+}
+
+/// The terminal app "Open in Terminal" opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TerminalApp {
+    /// Apple's Terminal.
+    #[default]
+    Terminal,
+    /// iTerm2.
+    ITerm,
+    /// Ghostty.
+    Ghostty,
 }
 
 impl Default for GeneralSettings {
@@ -62,6 +76,7 @@ impl Default for GeneralSettings {
             confirm_trash: false,
             type_select_timeout_ms: 1000,
             closed_tabs_kept: 20,
+            terminal_app: TerminalApp::Terminal,
         }
     }
 }

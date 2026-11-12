@@ -20,7 +20,15 @@ bindgen = ["uniffi/cli"]
 
 [dependencies]
 fstudio-core.workspace = true
+fstudio-model.workspace = true
+fstudio-keymap.workspace = true
+fstudio-ops.workspace = true
+fstudio-path.workspace = true
+thiserror.workspace = true
 uniffi = "0.32"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
