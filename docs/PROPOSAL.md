@@ -1,6 +1,6 @@
 # File Studio: architecture proposal (pre-code)
 
-Status: **draft, waiting for your sign-off.** Nothing here is built yet. Once you approve it, the agreed decisions move into `DECISIONS.md` as ADR entries, in Import Studio's style.
+Status: **approved 2026-11-12** (as drafted). The agreed decisions are F-001…F-011 in `DECISIONS.md`. Sections 6, 9 and 11 get spike numbers when `docs/SPIKES.md` lands.
 
 **Environment checked on 2026-11-12:**
 - Machine: Apple M6, 24 GB RAM, macOS 27.2.
