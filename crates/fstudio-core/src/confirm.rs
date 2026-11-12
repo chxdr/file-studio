@@ -68,6 +68,15 @@ pub(crate) fn first_change(items: &[(PathBuf, Option<ObjId>)]) -> Option<String>
                 display_name(p)
             ));
         }
+        // S5: the same object under another spelling is not what was named.
+        if let (Ok(real), Some(n)) = (fstudio_fs::on_disk_name(p), p.file_name())
+            && real != n.to_string_lossy()
+        {
+            return Some(format!(
+                "“{}” is now called “{real}”, so nothing was done",
+                display_name(p)
+            ));
+        }
     }
     None
 }

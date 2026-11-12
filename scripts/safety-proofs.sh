@@ -74,6 +74,20 @@ s4() {
   finish s4
 }
 
+# S5: rename Notes.txt to NOTES.txt in place. The list shows 3 rows (no ghost
+# of the old name), matching the disk.
+s5() {
+  home
+  mkdir -p "$H/w"
+  echo a > "$H/w/Notes.txt"; echo b > "$H/w/a.txt"; echo c > "$H/w/b.txt"
+  run s5 "wait:1;go:$H/w;wait:1;focus:list;select:Notes.txt;key:return;wait:0.5;key:cmd+a;type:NOTES.txt;key:return;wait:3;listlog;ls:$H/w;quit"
+  expect "the disk has NOTES.txt" "^LS .*/w: NOTES.txt, a.txt, b.txt$"
+  expect "the list has 3 rows" "^LIST mode=.* rows=3 "
+  expect "the row is NOTES.txt" "^LIST row 2 \\[x\\]> NOTES.txt"
+  refuse "no ghost row" "^LIST row .*Notes.txt"
+  finish s5
+}
+
 for p in "${WANT[@]}"; do
   if declare -F "$p" >/dev/null; then echo "── $p"; "$p"; else echo "no proof named $p"; fi
 done

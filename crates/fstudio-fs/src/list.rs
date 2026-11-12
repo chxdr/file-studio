@@ -265,15 +265,28 @@ pub fn list_all(dir: impl AsRef<Path>) -> Result<Vec<Entry>> {
     Ok(all)
 }
 
-/// Stats one path with `lstat` (a symlink is described, not followed).
+/// Stats one path with `lstat` (a symlink is described, not followed). The
+/// entry's name is the name **on disk** (F-017), which on a case- or
+/// normalisation-insensitive volume can differ from the name in `path`:
+/// after renaming `Notes.txt` to `NOTES.txt`, `stat_entry("…/Notes.txt")`
+/// succeeds and is named `NOTES.txt`.
 pub fn stat_entry(path: impl AsRef<Path>) -> Result<Entry> {
     let path = path.as_ref();
     let m = fs::symlink_metadata(path).map_err(|e| Error::io(path, e))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let name = match path.file_name() {
+        Some(n) => on_disk_name(path).unwrap_or_else(|_| n.to_string_lossy().into_owned()),
+        None => path.to_string_lossy().into_owned(),
+    };
     Ok(entry_from_metadata(name, &m))
+}
+
+/// The name of the item at `path` exactly as the volume stores it (no
+/// symlink is followed). `NotFound` when nothing is there.
+pub fn on_disk_name(path: impl AsRef<Path>) -> Result<String> {
+    let path = path.as_ref();
+    let raw = crate::sys::name_on_disk(path).map_err(|e| Error::io(path, e))?;
+    Ok(String::from_utf8(raw)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
 fn kind_from_mode(mode: u32) -> EntryKind {

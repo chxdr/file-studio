@@ -550,7 +550,31 @@ impl Engine {
         if v.is_empty() {
             return Err(CoreError::NotAvailable("nothing is selected".into()));
         }
+        Self::check_names_on_disk(t, &v)?;
         Ok(v)
+    }
+
+    /// S5: before acting on selected items, each selected name must be the
+    /// name on disk, byte for byte. A row left over from a case-only or
+    /// NFC ↔ NFD rename resolves to the renamed item on an insensitive
+    /// volume; acting on it would hit the real file. The list is refreshed
+    /// and nothing is done. (A missing item is left to the op, which reports
+    /// it per file.)
+    fn check_names_on_disk(t: &Tab, paths: &[PathBuf]) -> Result<()> {
+        for p in paths {
+            let Some(name) = p.file_name().map(|n| n.to_string_lossy()) else {
+                continue;
+            };
+            if let Ok(real) = fstudio_fs::on_disk_name(p)
+                && real != name
+            {
+                t.refresh();
+                return Err(CoreError::NotAvailable(format!(
+                    "“{name}” is now called “{real}”; the list was refreshed, so nothing was done"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The first of `base`, `base 2`, `base 3`… free in the tab's folder,

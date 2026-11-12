@@ -370,3 +370,78 @@ fn s4_pending_selection_replaces_when_untouched() {
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(t.selection().names, vec!["mine.txt".to_string()]);
 }
+
+// ───────────────────────── S5 ─────────────────────────
+
+fn insensitive(h: &H) -> bool {
+    touch(&h.p("CaseProbe"));
+    let yes = h.p("caseprobe").exists();
+    std::fs::remove_file(h.p("CaseProbe")).unwrap();
+    yes
+}
+
+/// p12: after a case-only and an NFD → NFC rename, the list shows each item
+/// once, under its new name (no ghost of the old name).
+#[test]
+fn s5_p12_no_ghost_rows_after_case_or_normalisation_renames() {
+    let h = harness();
+    touch(&h.p("Notes.txt"));
+    touch(&h.p("Cafe\u{301}.txt"));
+    let t = h.window_at("");
+    ok(
+        &h,
+        &h.engine
+            .rename_item(t.id(), "Notes.txt", "NOTES.txt")
+            .unwrap(),
+    );
+    ok(
+        &h,
+        &h.engine
+            .rename_item(t.id(), "Cafe\u{301}.txt", "Caf\u{e9}.txt")
+            .unwrap(),
+    );
+    eventually("both renames listed", || {
+        let n = names(&t);
+        n.contains(&"NOTES.txt".to_string()) && n.contains(&"Caf\u{e9}.txt".to_string())
+    });
+    // Give the watcher time to (wrongly) bring the old names back.
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut n = names(&t);
+    n.sort();
+    assert_eq!(
+        n,
+        vec!["Caf\u{e9}.txt".to_string(), "NOTES.txt".to_string()]
+    );
+}
+
+/// p10: the user can't trash "the old one" and hit the renamed file. With
+/// no ghost there is no old row; and a stale name (renamed on disk before
+/// the list caught up) is refused by the on-disk name check.
+#[test]
+fn s5_p10_acting_on_a_stale_name_never_hits_the_renamed_file() {
+    let h = harness();
+    touch(&h.p("File.txt"));
+    let t = h.window_at("");
+    ok(
+        &h,
+        &h.engine
+            .rename_item(t.id(), "File.txt", "file.txt")
+            .unwrap(),
+    );
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(names(&t), vec!["file.txt".to_string()]);
+    if !insensitive(&h) {
+        return;
+    }
+    // Rename behind the list's back and act on the old row straight away.
+    touch(&h.p("Notes.txt"));
+    eventually("listed", || names(&t).contains(&"Notes.txt".to_string()));
+    std::fs::rename(h.p("Notes.txt"), h.p("NOTES.txt")).unwrap();
+    t.set_selection(SelectionChange::Names(vec!["Notes.txt".into()]));
+    if let Ok(out) = run(&h, &t, "file.trash", None) {
+        ok(&h, &out);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(h.p("NOTES.txt").exists(), "the renamed file is untouched");
+    assert!(dir_names(&h.trash).is_empty());
+}

@@ -770,14 +770,7 @@ impl Tab {
             self.rescan(gen_);
             return;
         }
-        let changes: Vec<Change> = names
-            .into_iter()
-            .filter_map(|n| match fstudio_fs::stat_entry(dir.join(&n)) {
-                Ok(e) => Some(Change::Upsert(e)),
-                Err(e) if e.kind() == Some(std::io::ErrorKind::NotFound) => Some(Change::Remove(n)),
-                Err(_) => None,
-            })
-            .collect();
+        let changes = Self::patch_changes(&dir, names, &self.listing().inner);
         if changes.is_empty() {
             return;
         }
@@ -816,6 +809,52 @@ impl Tab {
                 ChangeKind::Patched,
             );
         }
+    }
+
+    /// The listing changes for watcher events about `names` in `dir` (S5).
+    /// Each name is described as the disk stores it: after a case-only or
+    /// NFC ↔ NFD rename the event's old spelling still `lstat`s on an
+    /// insensitive volume, so a name whose on-disk spelling differs is
+    /// removed and the real name upserted. A row that is the same object
+    /// (device and inode) as an upserted entry under another name is
+    /// removed too, unless that name is really on disk (a hard link).
+    fn patch_changes(
+        dir: &Path,
+        names: BTreeSet<String>,
+        current: &fstudio_view::Listing,
+    ) -> Vec<Change> {
+        let mut changes = Vec::new();
+        let mut upserted: Vec<(String, u64, u64)> = Vec::new();
+        for n in names {
+            match fstudio_fs::stat_entry(dir.join(&n)) {
+                Ok(e) => {
+                    if e.name != n {
+                        changes.push(Change::Remove(n));
+                    }
+                    upserted.push((e.name.clone(), e.dev, e.inode));
+                    changes.push(Change::Upsert(e));
+                }
+                Err(e) if e.kind() == Some(std::io::ErrorKind::NotFound) => {
+                    changes.push(Change::Remove(n))
+                }
+                Err(_) => {}
+            }
+        }
+        for (name, dev, ino) in &upserted {
+            for other in current.iter() {
+                if other.dev == *dev
+                    && other.inode == *ino
+                    && other.name != *name
+                    && !upserted.iter().any(|u| u.0 == other.name)
+                {
+                    let real = fstudio_fs::on_disk_name(dir.join(&other.name)).ok();
+                    if real.as_deref() != Some(other.name.as_str()) {
+                        changes.push(Change::Remove(other.name.clone()));
+                    }
+                }
+            }
+        }
+        changes
     }
 
     fn rescan(&self, gen_: u64) {
@@ -1241,7 +1280,18 @@ impl Tab {
         if st.listing.inner.get(old_name).is_none() {
             return Err(CoreError::NotFound(format!("“{old_name}”")));
         }
-        Ok(st.location.join(old_name))
+        let path = st.location.join(old_name);
+        drop(st);
+        // S5: a leftover row's name must still be the name on disk.
+        if let Ok(real) = fstudio_fs::on_disk_name(&path)
+            && real != old_name
+        {
+            self.refresh();
+            return Err(CoreError::NotAvailable(format!(
+                "“{old_name}” is now called “{real}”; the list was refreshed"
+            )));
+        }
+        Ok(path)
     }
 
     /// True if a name is taken in the current listing (ignoring case and normalisation).
