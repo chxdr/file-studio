@@ -22,13 +22,21 @@
 //   log                   JSON lines: windows, tabs, the focused listing and selection (STATE lines)
 //   menus                 the main menu's items with key equivalents (MAINMENU lines)
 //   bench:rows            times TabAPI.rows(start:, 60) from Swift (BENCH line)
+//   appearance:dark|light|system   forces the app's appearance (for light/dark snapshots)
 //   quit
+// UI sessions add their own steps with `DebugAutomation.register("name") { arg, model in … }`.
 
 #if DEBUG
 import AppKit
 
 @MainActor
 enum DebugAutomation {
+    /// Steps added by the UI sessions (`name:arg`), so they don't edit this file.
+    private static var custom: [String: (String, AppModel) async -> Void] = [:]
+
+    /// Adds a script step. Register before the script runs (at window creation, say).
+    static func register(_ name: String, _ run: @escaping (String, AppModel) async -> Void) { custom[name] = run }
+
     static func runIfRequested(_ model: AppModel) {
         guard let script = UserDefaults.standard.string(forKey: "FSDebugScript") else { return }
         let dir = URL(fileURLWithPath: UserDefaults.standard.string(forKey: "FSDebugSnapshotDir")
@@ -60,8 +68,15 @@ enum DebugAutomation {
                 case "menus": dumpMenus()
                 case "bench": if arg == "rows" { benchRows(model) }
                 case "snap": snap(arg, dir: dir)
+                case "appearance":
+                    NSApp.appearance = switch arg {
+                    case "dark": NSAppearance(named: .darkAqua)
+                    case "light": NSAppearance(named: .aqua)
+                    default: nil
+                    }
                 case "quit": NSApp.terminate(nil)
-                default: print("DEBUG unknown step \(step)")
+                default:
+                    if let f = custom[op] { await f(arg, model) } else { print("DEBUG unknown step \(step)") }
                 }
                 fflush(stdout)
                 try? await Task.sleep(for: .milliseconds(150))
