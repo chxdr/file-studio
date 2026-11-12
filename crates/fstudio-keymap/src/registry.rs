@@ -222,7 +222,7 @@ fn table() -> Vec<B> {
         c("file.open_in_editor", "Open in Editor", File, "Open the selection in your editor").s("⌘E"),
         // ── Edit ──
         c("edit.copy", "Copy", Edit, "Copy the selection").s("⌘C").v("y y").vv("y"),
-        c("edit.cut", "Cut (Mark for Move)", Edit, "Mark the selection to be moved when you paste; it is never deleted").v("d d").vv("d"),
+        c("edit.cut", "Cut (Mark for Move)", Edit, "Mark the selection to be moved when you paste; it is never deleted").s("⌘X").v("d d").vv("d"),
         c("edit.paste", "Paste", Edit, "Paste the copied items here").s("⌘V").v("p"),
         c("edit.undo", "Undo", Edit, "Undo the last file operation").s("⌘Z").v("u"),
         c("edit.redo", "Redo", Edit, "Redo the operation you undid").s("⇧⌘Z").v("⌃R"),

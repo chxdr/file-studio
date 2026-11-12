@@ -49,11 +49,10 @@ enum MainMenu {
 
         for (title, cats) in layout {
             let m = NSMenu(title: title)
-            if title == "Edit" { addTextEditing(to: m) }
             for (i, cat) in cats.enumerated() {
                 let items = commands.filter { $0.category == cat && !$0.id.hasPrefix("app.") }
                 if items.isEmpty { continue }
-                if i > 0 || title == "Edit", m.numberOfItems > 0 { m.addItem(.separator()) }
+                if i > 0, m.numberOfItems > 0 { m.addItem(.separator()) }
                 for c in items { m.addItem(item(c, target: target)) }
             }
             main.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = m
@@ -62,16 +61,10 @@ enum MainMenu {
         return main
     }
 
-    /// ⌘X for text fields (the core's Cut has no ⌘X binding). ⌘C, ⌘V, ⌘A,
-    /// ⌘Z and ⇧⌘Z reach text fields through `AppDelegate.runCommand`, which
-    /// turns a declined key into the standard text action.
-    private static func addTextEditing(to m: NSMenu) {
-        m.addItem(withTitle: "Cut Text", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    }
-
     /// Standard text actions for commands whose keys a text field also uses.
     static let textActions: [String: Selector] = [
         "edit.copy": #selector(NSText.copy(_:)),
+        "edit.cut": #selector(NSText.cut(_:)),
         "edit.paste": #selector(NSText.paste(_:)),
         "select.all": #selector(NSText.selectAll(_:)),
         "edit.undo": Selector(("undo:")),
