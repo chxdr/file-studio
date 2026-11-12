@@ -19,11 +19,10 @@ import QuickLookUI
 /// Holds the list or the column view; this is what the pane lays out.
 @MainActor
 final class ListHostView: NSView {
-    override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.textBackgroundColor.setFill()
-        dirtyRect.fill()
-    }
+    override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+    required init?(coder: NSCoder) { fatalError() }
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.textBackgroundColor.cgColor }
     func setContent(_ v: NSView) {
         guard v.superview !== self else { return }
         subviews.forEach { $0.removeFromSuperview() }

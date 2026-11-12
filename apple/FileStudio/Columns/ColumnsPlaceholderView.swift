@@ -42,6 +42,7 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
     init(model: AppModel) {
         self.model = model
         super.init(frame: .zero)
+        wantsLayer = true
         scroll.hasHorizontalScroller = true
         scroll.hasVerticalScroller = false
         scroll.autohidesScrollers = true
@@ -58,6 +59,11 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
         observer = model.observe { [weak self] e in self?.event(e) }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // The background, drawn here: the scroll view's own background (a visual
+    // effect view on macOS 26) covers nested scroll views.
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.textBackgroundColor.cgColor }
 
     /// The column showing the tab's own folder.
     var focusedTable: FileTable? { cols.last?.table }
@@ -315,8 +321,6 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
 /// The columns' document view.
 final class ColumnStrip: NSView {
     override var isFlipped: Bool { true }
-    override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { NSColor.textBackgroundColor.setFill(); dirtyRect.fill() }
 }
 
 /// The handle between two columns: drag to resize, double-click to fit.
@@ -326,6 +330,13 @@ final class ColumnDivider: NSView {
     var onDrag: ((CGFloat) -> Void)?
     var onDoubleClick: (() -> Void)?
     private var last: NSPoint?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+    }
+    required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.textBackgroundColor.setFill(); bounds.fill()
@@ -357,6 +368,8 @@ final class FileInfoColumn: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        // Its own layer: drawn into the strip's shared layer it covered the other columns.
+        wantsLayer = true
         icon.imageScaling = .scaleProportionallyUpOrDown
         name.font = .systemFont(ofSize: 13, weight: .semibold)
         name.alignment = .center
@@ -380,7 +393,8 @@ final class FileInfoColumn: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func draw(_ dirtyRect: NSRect) { NSColor.textBackgroundColor.setFill(); dirtyRect.fill() }
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = NSColor.textBackgroundColor.cgColor }
 
     func show(_ r: Row, path: String) {
         let img = IconCache.shared.icon(key: r.iconKey, path: r.kind == .package ? path : nil).copy() as? NSImage
