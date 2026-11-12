@@ -173,3 +173,12 @@ Every one of these is also a setting.
 ## F-022: Context menus are defined by the core (accepted, M2 first task)
 The right-click menus have a core model, `context_menu(target, ctx) -> Vec<MenuItem>`, built from registered commands. The targets are: a file, a folder, a multi-selection, empty space in a list, an address-bar segment, a sidebar item and a tab. Each target has its own default contents, order, separators, enablement and submenus (Copy Path styles, Open With). Users can customise it in Settings (add, remove, reorder), and custom shell actions (M4) can join it. The shell only draws the menu and sends the chosen command back.
 **Why:** this follows F-001 and F-006: Swift must not decide which actions apply to what. It also brings the user's "everything customisable" requirement to menus.
+
+## F-023: No silent moves of important folders (accepted 2026-11-12, after a real incident)
+**The incident:** while trying the first M2 build, the user accidentally moved `~/Applications`, `~/Downloads` and their `~/Import Studio` project into other folders in about a minute, most likely by dragging sidebar favourites. Nothing was lost: the ops journal recorded every move, and all three were put back. But the app gave no sign anything had moved.
+
+**Rules:**
+- **Sidebar drags are references.** They reorder or pin and never move a real folder; they use a private pasteboard type.
+- **Moving a protected folder needs confirmation from the core, with Cancel as the default.** Protected folders are: the home folder, the standard home folders, the system folders, volume roots, and ancestors of open tabs. The list is a setting; the confirmation itself is always on.
+- **Every move by drag, F6 or cut/paste shows a toast** with Undo.
+- **The drop target is exactly what's highlighted at mouse-up.**
