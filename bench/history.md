@@ -44,3 +44,17 @@ Measured through the `fstudio-core` API on synthetic fixtures (warm cache). Late
 | copy 5,000 small files, cross volume — queue | 1198 ms | 1724 ms | – | – | cp -R median 1855 ms |
 | journal overhead per item (5,000 files, queue − cp -R) | -131 µs | -131 µs | – | – | 166372324 bytes total; negative means the queue's parallel workers beat cp |
 | copy 1 GiB cross volume with verify — queue | 1064 MB/s | 719 MB/s | – | – | copy + xxh3 re-read |
+
+## M1 real card: 2026-11-12 (user's 128 GB SD card "W2", exFAT, USB reader)
+
+Run by hand through the `fstudio` CLI. Each time includes a final `sync`. Card reads were cold: the card was unmounted and remounted before each run.
+
+| Case | `cp` | File Studio | Finder |
+|---|---|---|---|
+| 1 GiB file, Mac → card (3 rounds) | 9.02–9.04 s | 9.03–9.11 s (**≤ 1 % of cp**) | 9.25–9.42 s |
+| 5,000 small files (168 MB), Mac → card | 86.7 s (`cp -R`) | **73.9 s** | – |
+| Real camera folder, card → Mac: 198 files (Sony ARW + HIF pairs), 3.7 GB | 25.2 s (`cp -R`) | **22.9 s** | – |
+| Same, with xxh3 verify | – | **20.8 s** (verify on) | – |
+| Cold listing of a 199-entry DCIM folder (`fstudio ls`, including process start) | – | 62 ms | – |
+
+The copied raws were md5-identical to the card. The copy budget (within 5 % of `cp`/Finder) **passes on real removable media**. exFAT has no `clonefile` and no exclusive rename, so this run exercised the check-then-rename fallback; xattrs land as AppleDouble `._` files, as with Finder.
