@@ -926,6 +926,10 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         Completions(ffi.complete(input: input, cursor: cursor, cwd: cwd))
     }
     func copyPath(_ path: String, style: PathStyle) -> String { ffi.copyPathAs(path: path, style: style.ffi) }
+    func importZoxide(dbPath: String?) throws -> (added: UInt32, merged: UInt32) {
+        let r = try wrap { try ffi.importZoxide(dbPath: dbPath) }
+        return (r.first ?? 0, r.count > 1 ? r[1] : 0)
+    }
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir] {
         ffi.frecent(query: query, limit: limit).map { FrecentDir(path: $0.path, score: $0.score, lastAccessed: $0.lastAccessed) }
     }

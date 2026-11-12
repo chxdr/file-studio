@@ -232,7 +232,27 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         emit(.tabsChanged)
     }
     func moveTab(_ id: TabID, toPane pane: PaneID, index: UInt32) throws {
-        throw CoreError(.notAvailable, "Mock: tabs don't move between panes")
+        guard let l = locate(id) else { throw CoreError(.notFound, "tab \(id)") }
+        guard let wi = workspace.windows.firstIndex(where: { $0.panes.contains { $0.id == pane } }),
+              let pi = workspace.windows[wi].panes.firstIndex(where: { $0.id == pane }) else {
+            throw CoreError(.notFound, "pane \(pane)")
+        }
+        let same = l.w == wi && l.p == pi
+        if !same && workspace.windows[l.w].panes[l.p].tabs.count == 1 {
+            throw CoreError(.notAvailable, "Mock: a pane keeps its last tab")
+        }
+        let t = workspace.windows[l.w].panes[l.p].tabs.remove(at: l.t)
+        if !same {
+            let src = workspace.windows[l.w].panes[l.p]
+            workspace.windows[l.w].panes[l.p].activeTab = min(src.activeTab, src.tabs.count - 1)
+        }
+        var dest = workspace.windows[wi].panes[pi]
+        let at = min(Int(index), dest.tabs.count)
+        dest.tabs.insert(t, at: at)
+        dest.activeTab = at
+        workspace.windows[wi].panes[pi] = dest
+        workspace.windows[wi].activePane = pi
+        emit(.tabsChanged)
     }
     func focusPane(window: WindowID, index: UInt32) throws {
         guard let w = workspace.windows.firstIndex(where: { $0.id == window }) else { return }
@@ -440,6 +460,21 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
             if case .path(let p) = inv.arg { out.shell = .openTerminal(dir: p) } else { out.shell = .openTerminal(dir: t.location()) }
         case "app.settings": out.shell = .showSettings(section: "")
         case "tags.toggle": out.message = "Mock: tags aren't stored"
+        case "drive.eject":
+            if case .path(let p) = inv.arg { out.shell = .eject(path: p) }
+        case "drive.info":
+            if case .path(let p) = inv.arg { out.shell = .showDriveInfo(path: p) }
+        case "sidebar.remove":
+            if case .path(let p) = inv.arg { try removeFavourite(p) }
+        case "nav.open_new_tab":
+            if case .path(let p) = inv.arg, let l = locate(t.id) {
+                out.tab = try openTab(inPane: workspace.windows[l.w].panes[l.p].id, path: p, index: nil).id
+            }
+        case "pane.equalize":
+            if let l = locate(t.id) {
+                let w = workspace.windows[l.w]
+                try setLayout(window: w.id, orientation: w.orientation, splitRatio: 0.5)
+            }
         default: throw CoreError(.unknownCommand, "Mock doesn't do \(inv.id)")
         }
         return out
@@ -539,6 +574,9 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
                          MenuItem.separator]
             items.append(k == .favourite ? cmd("sidebar.remove", "Remove from Sidebar", tab: nil, arg: .path(p))
                          : cmd("drive.info", "Show Drive Info", tab: nil, arg: .path(p)))
+            if k == .volume, volumes().first(where: { $0.mountPath == p })?.isRemovable == true {
+                items.append(cmd("drive.eject", "Eject", tab: nil, arg: .path(p)))
+            }
             return items
         case .tab(let t):
             return [cmd("tab.new", "New Tab", tab: t), .separator, cmd("tab.close", "Close Tab", tab: t)]
@@ -634,6 +672,11 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         case .fileURL: URL(fileURLWithPath: path).absoluteString
         case .quoted: "'\(path)'"
         }
+    }
+    func importZoxide(dbPath: String?) throws -> (added: UInt32, merged: UInt32) {
+        frecency["/Mock/Downloads"] = 3
+        emit(.settingsChanged)
+        return (42, 3)
     }
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir] {
         frecency.sorted { $0.value > $1.value }.prefix(Int(limit)).map { FrecentDir(path: $0.key, score: $0.value, lastAccessed: 0) }

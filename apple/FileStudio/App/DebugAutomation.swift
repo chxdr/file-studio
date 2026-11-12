@@ -27,13 +27,22 @@
 //   log                   JSON lines: windows, tabs, the focused listing and selection (STATE lines)
 //   menus                 the main menu's items with key equivalents (MAINMENU lines)
 //   bench:rows            times TabAPI.rows(start:, 60) from Swift (BENCH line)
+//   appearance:dark|light|system   forces the app's appearance (for light/dark snapshots)
 //   quit
+// UI sessions add their own steps with `DebugAutomation.register("name") { arg, model in … }`.
 
 #if DEBUG
 import AppKit
 
 @MainActor
 enum DebugAutomation {
+    /// Steps added by the UI sessions (`name:arg`), so they don't edit this file.
+    private static var custom: [String: @MainActor (String, AppModel) -> Void] = [:]
+
+    /// Adds a script step. Register before the script runs (at window creation, say).
+    /// Steps run synchronously from a run-loop timer (never inside a `Task`; see `after`).
+    static func register(_ name: String, _ run: @escaping @MainActor (String, AppModel) -> Void) { custom[name] = run }
+
     static func runIfRequested(_ model: AppModel) {
         guard let script = UserDefaults.standard.string(forKey: "FSDebugScript") else { return }
         let dir = URL(fileURLWithPath: UserDefaults.standard.string(forKey: "FSDebugSnapshotDir")
@@ -91,8 +100,15 @@ enum DebugAutomation {
         case "raise":
             // Self-test: an Objective-C exception, as AppKit can throw; the app must survive it.
             NSException(name: .internalInconsistencyException, reason: "debug script raise", userInfo: nil).raise()
+        case "appearance":
+            NSApp.appearance = switch arg {
+            case "dark": NSAppearance(named: .darkAqua)
+            case "light": NSAppearance(named: .aqua)
+            default: nil
+            }
         case "quit": NSApp.terminate(nil)
-        default: print("DEBUG unknown step \(step)")
+        default:
+            if let f = custom[op] { f(arg, model) } else { print("DEBUG unknown step \(step)") }
         }
         fflush(stdout)
     }

@@ -1007,6 +1007,9 @@ public protocol EngineAPI: AnyObject, Sendable {
     func complete(_ input: String, cursor: UInt32, cwd: String) -> Completions
     func copyPath(_ path: String, style: PathStyle) -> String
     func frecent(_ query: String, limit: UInt32) -> [FrecentDir]
+    /// Imports zoxide's database once (nil: its usual location). Returns how
+    /// many folders were added and how many merged into known ones. Reads a file.
+    func importZoxide(dbPath: String?) throws -> (added: UInt32, merged: UInt32)
 
     // Operations
     func enqueue(_ req: OpRequest) throws -> OpID
