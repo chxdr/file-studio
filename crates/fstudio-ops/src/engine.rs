@@ -352,7 +352,9 @@ impl Env<'_> {
             return Err(fail("the destination is not a folder"));
         }
         let src_name = file_name(&item.source);
-        if self.kind == OpKind::Duplicate && item.dest_name.is_none() {
+        // Only the duplicated item itself gets "name copy"; what is inside a
+        // duplicated folder keeps its name.
+        if self.kind == OpKind::Duplicate && item.parent.is_none() && item.dest_name.is_none() {
             let free = names::duplicate_names(&src_name, src.is_dir())
                 .find(|n| !meta::exists(&dest_dir.join(n)))
                 .expect("infinite candidates");
