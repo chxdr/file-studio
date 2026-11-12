@@ -1005,6 +1005,16 @@ extension MockEngine: ListEngineAPI {
         case .none: throw CoreError(.notAvailable, "These items can't be dropped here")
         }
     }
+    func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
+        guard let t = tabs[tab] else { throw CoreError(.notFound, "tab \(tab)") }
+        var v = t.view()
+        if v.sort == column.sortBy { v.ascending.toggle() } else {
+            v.sort = column.sortBy
+            v.ascending = ![.size, .modified, .created].contains(column)
+        }
+        t.setView(v)
+        return Outcome(tab: tab)
+    }
     /// ←/→ in column view (the core's rule, imitated).
     fileprivate func columnKey(_ chord: KeyChord, context: InputContext) -> Outcome? {
         guard context.focus == .list, chord.mods.isEmpty, chord.key == .left || chord.key == .right,

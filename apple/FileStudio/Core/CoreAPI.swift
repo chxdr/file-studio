@@ -1137,4 +1137,6 @@ public protocol ListEngineAPI: AnyObject, Sendable {
     func dropEffect(sources: [String], dest: String, mods: Mods) -> DropEffect
     /// Decides the drop and queues the copy or move.
     func dropItems(sources: [String], dest: String, mods: Mods) throws -> OpID
+    /// A click on a list-view column header: sorts by it, or flips the direction.
+    func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome
 }

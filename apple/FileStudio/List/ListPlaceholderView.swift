@@ -1,211 +1,297 @@
-// ListPlaceholderView.swift — PLACEHOLDER for the list view (F-005, F-019).
-// The list/column session replaces it with the real NSTableView (columns from
-// ViewState, 120 Hz scrolling, rubber band, drag and drop, rename in place).
-// What it shows the wiring for:
-// - rows come from `TabAPI.rows(start:count:)`, cached in blocks per listing
-//   version; the shell never sorts or holds a second model;
-// - clicks become `SelectionChange`s; the core's selection is drawn back;
-// - keys never reach the table: KeyRouter sends them to the core first
-//   (the table reports `.list` focus);
-// - right-click builds the menu from `menuTarget` + `contextMenu`.
+// ListPlaceholderView.swift — a pane's file area (F-005, F-019): the list
+// view, or the column view when the tab's view mode is Columns. (The type
+// keeps its placeholder name because the window embeds it as
+// `ListPlaceholderView(model:)`, `.scrollView`, `.table` and `.show(_:)`.)
+//
+// List view: one FileTable with a 28 pt header. Columns, their order, widths
+// and the sort are the core's `ViewState` (remembered per folder by the
+// core); this only draws them and reports changes: a header click is
+// `sortByColumn`, the header's right-click menu shows or hides columns,
+// dragging and resizing columns writes them back with `setView`.
+//
+// It also carries out the shell requests that belong to the list:
+// `beginRename` (the in-place field), `textField(rename.…)`, and Quick Look
+// for dataless items (F-016: never preview one without asking).
 
 import AppKit
+import QuickLookUI
 
+/// Holds the list or the column view; this is what the pane lays out.
 @MainActor
-final class CoreTableView: NSTableView, CoreFocusReporting {
-    var coreFocus: Focus { .list }
-    var coreTab: TabID?
-    var onMouseDown: ((NSEvent) -> Void)?
-    var menuProvider: ((NSEvent) -> NSMenu?)?
-
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
-        onMouseDown?(event)
+final class ListHostView: NSView {
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
     }
-    override func menu(for event: NSEvent) -> NSMenu? { menuProvider?(event) }
-    override var acceptsFirstResponder: Bool { true }
-    // The core handles ⌘C/⌘V/⌘A for lists through KeyRouter; these cover the menu items.
-    @objc func copy(_ sender: Any?) { AppModel.current?.perform(Invocation(id: "edit.copy", tab: coreTab), via: .menu) }
-    @objc func paste(_ sender: Any?) { AppModel.current?.perform(Invocation(id: "edit.paste", tab: coreTab), via: .menu) }
-    override func selectAll(_ sender: Any?) {
-        AppModel.current?.perform(Invocation(id: "select.all", tab: coreTab), via: .menu)
+    func setContent(_ v: NSView) {
+        guard v.superview !== self else { return }
+        subviews.forEach { $0.removeFromSuperview() }
+        v.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: leadingAnchor), v.trailingAnchor.constraint(equalTo: trailingAnchor),
+            v.topAnchor.constraint(equalTo: topAnchor), v.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 }
 
+/// The 28 pt column header (F-019).
+final class FileHeaderView: NSTableHeaderView {
+    override init(frame: NSRect) { super.init(frame: NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: 28)) }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 @MainActor
-final class ListPlaceholderView: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class ListPlaceholderView: NSObject, NSMenuDelegate {
     private unowned let model: AppModel
-    let table = CoreTableView()
-    let scrollView = NSScrollView()
+    /// The view the pane lays out (list or column view).
+    let scrollView = ListHostView()
+    /// The list view's table.
+    let list: FileTable
+    /// The column view (made on first use).
+    private(set) var columns: ColumnsPlaceholderView?
     private(set) var tab: TabModel?
     private var observer: ObserverToken?
-    /// Rows by block start, for one listing version.
-    private var cache: [UInt32: [Row]] = [:]
-    private var cacheVersion: UInt64 = .max
-    private static let block: UInt32 = 64
-    private var rowHeight: CGFloat = 22
+    private var handlerIDs: [Int] = []
+    private var mode: ViewMode = .list
+    private var columnsWriteTimer: Timer?
+    private var applyingColumns = false
+    private var qlPaths: [String] = []
+
+    /// The table that takes keyboard focus: the list's, or the column view's focused column.
+    var table: CoreTableView { mode == .columns ? (columns?.focusedTable?.table ?? list.table) : list.table }
+
+    /// The table showing the tab's own folder.
+    var activeFileTable: FileTable { mode == .columns ? (columns?.focusedTable ?? list) : list }
 
     init(model: AppModel) {
         self.model = model
+        list = FileTable(model: model, kind: .name)
         super.init()
-        for (id, title, width) in [("name", "Name", 320.0), ("size", "Size", 80.0), ("date", "Date Modified", 170.0),
-                                   ("kind", "Kind", 120.0)] {
-            let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
-            c.title = title
-            c.width = width
-            table.addTableColumn(c)
-        }
-        table.style = .fullWidth
-        table.usesAlternatingRowBackgroundColors = false
-        table.rowHeight = rowHeight
-        table.intercellSpacing = NSSize(width: 6, height: 0)
-        table.allowsMultipleSelection = true
-        table.dataSource = self
-        table.delegate = self
-        table.onMouseDown = { [weak self] e in self?.click(e) }
-        table.menuProvider = { [weak self] e in self?.contextMenu(e) }
-        scrollView.documentView = table
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView,
-                                               queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reportVisibleRange() }
-        }
+        list.rename = RenameController(model: model, table: list)
+        let header = FileHeaderView(frame: .zero)
+        list.table.headerView = header
+        list.scrollView.tile()
+        let hm = NSMenu()
+        hm.delegate = self
+        header.menu = hm
+        list.table.allowsColumnReordering = true
+        list.table.allowsColumnResizing = true
+        list.onColumnClick = { [weak self] id in self?.headerClicked(id) }
+        list.onColumnsEdited = { [weak self] in self?.columnsEdited() }
+        scrollView.setContent(list.view)
         observer = model.observe { [weak self] e in self?.event(e) }
+        installHandlers()
+        #if DEBUG
+        ListDebug.install(model: model)
+        #endif
     }
 
+    isolated deinit {
+        for id in handlerIDs { model.unregisterShellHandler(id) }
+    }
+
+    /// Shows a tab (the pane's active tab changed).
     func show(_ t: TabModel) {
         tab = t
-        table.coreTab = t.id
-        rowHeight = model.settings.view.density.rowHeight
-        table.rowHeight = rowHeight
-        reload()
+        #if DEBUG
+        ListDebug.register(self)
+        #endif
+        list.show(.tab(t.api), owner: t.id)
+        applyView()
     }
+
+    // MARK: View state (mode, columns, sort)
 
     private func event(_ e: CoreEvent) {
         guard let t = tab else { return }
         switch e {
-        case .listingChanged(let id, _, _) where id == t.id: reload()
-        case .selectionChanged(let id, _, let cursor) where id == t.id:
-            cache = [:]
-            table.reloadData()
-            syncSelection()
-            if let c = cursor { table.scrollRowToVisible(Int(c)) }
+        case .listingChanged(let id, _, _) where id == t.id: applyView()
+        case .selectionChanged(let id, _, _) where id == t.id: followQuickLook()
+        case .tabsChanged: applyView()
         default: break
         }
     }
 
-    private func reload() {
-        cache = [:]
-        cacheVersion = tab?.listing.version ?? .max
-        table.reloadData()
-        syncSelection()
-        if let anchor = tab?.api.scrollAnchor(), let i = tab?.api.indexOf(name: anchor.name) {
-            table.scrollRowToVisible(Int(i))
-        }
-    }
-
-    private func syncSelection() {
+    /// Switches between list and column view and applies columns and the sort indicator.
+    private func applyView() {
         guard let t = tab else { return }
-        let rows = IndexSet(t.api.selection().rows.map { Int($0) })
-        if table.selectedRowIndexes != rows { table.selectRowIndexes(rows, byExtendingSelection: false) }
-    }
-
-    func row(_ i: Int) -> Row? {
-        guard let t = tab, i >= 0 else { return nil }
-        if t.listing.version != cacheVersion { cache = [:]; cacheVersion = t.listing.version }
-        let start = UInt32(i) / Self.block * Self.block
-        if cache[start] == nil { cache[start] = t.api.rows(start: start, count: Self.block) }
-        let b = cache[start]!
-        let k = i - Int(start)
-        return b.indices.contains(k) ? b[k] : nil
-    }
-
-    // MARK: Data source
-
-    func numberOfRows(in tableView: NSTableView) -> Int { Int(tab?.listing.count ?? 0) }
-
-    func tableView(_ tv: NSTableView, viewFor col: NSTableColumn?, row i: Int) -> NSView? {
-        guard let r = row(i), let col else { return nil }
-        let id = col.identifier
-        let cell = tv.makeView(withIdentifier: id, owner: nil) as? NSTableCellView ?? makeCell(id)
-        switch id.rawValue {
-        case "name":
-            cell.textField?.stringValue = r.name
-            cell.textField?.alphaValue = r.isCutPending || r.isHidden ? 0.5 : 1
-            cell.imageView?.image = IconCache.shared.icon(key: r.iconKey, path: tab.map { $0.location + "/" + r.name })
-        case "size": cell.textField?.stringValue = r.sizeText
-        case "date": cell.textField?.stringValue = r.modifiedText
-        default: cell.textField?.stringValue = r.isDataless ? r.kindText + " (in iCloud)" : r.kindText
+        let v = t.api.view()
+        let wanted: ViewMode = v.mode == .columns ? .columns : .list
+        if wanted != mode {
+            let hadFocus = list.isActive || (columns?.focusedTable?.isActive ?? false)
+            mode = wanted
+            if mode == .columns {
+                let c = columns ?? ColumnsPlaceholderView(model: model)
+                columns = c
+                c.show(t)
+                scrollView.setContent(c)
+            } else {
+                columns?.detach()
+                scrollView.setContent(list.view)
+                list.show(.tab(t.api), owner: t.id)
+            }
+            if hadFocus { scrollView.window?.makeFirstResponder(table) }
+        } else if mode == .columns {
+            columns?.show(t)
         }
-        return cell
+        if mode == .list { applyColumns(v) }
     }
 
-    private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-        let cell = NSTableCellView()
-        cell.identifier = id
-        let tf = NSTextField(labelWithString: "")
-        tf.lineBreakMode = .byTruncatingMiddle
-        tf.translatesAutoresizingMaskIntoConstraints = false
-        if id.rawValue == "name" {
-            tf.font = .systemFont(ofSize: 13)
-            let iv = NSImageView()
-            iv.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(iv)
-            cell.imageView = iv
-            NSLayoutConstraint.activate([
-                iv.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
-                iv.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                iv.widthAnchor.constraint(equalToConstant: 16), iv.heightAnchor.constraint(equalToConstant: 16),
-            ])
+    private func applyColumns(_ v: ViewState) {
+        let tv = list.table
+        let want = v.columns
+        let have = tv.tableColumns.map { ColumnSpec(id: ColumnID(rawValue: $0.identifier.rawValue) ?? .name, width: Double($0.width)) }
+        if have.map(\.id) != want.map(\.id) || zip(have, want).contains(where: { abs($0.width - $1.width) > 0.5 }) {
+            applyingColumns = true
+            for c in tv.tableColumns { tv.removeTableColumn(c) }
+            for spec in want {
+                let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(spec.id.rawValue))
+                c.title = spec.id.title
+                c.width = CGFloat(spec.width)
+                c.minWidth = 36
+                c.maxWidth = 4000
+                c.resizingMask = .userResizingMask
+                c.headerCell.alignment = spec.id == .size ? .right : .left
+                c.headerToolTip = spec.id == .name ? nil : "Right-click to choose columns"
+                tv.addTableColumn(c)
+            }
+            list.columnIDs = want.map(\.id)
+            applyingColumns = false
+        }
+        // The sort indicator.
+        for c in tv.tableColumns {
+            let id = ColumnID(rawValue: c.identifier.rawValue)
+            let on = id?.sortBy == v.sort
+            tv.setIndicatorImage(on ? NSImage(named: v.ascending ? "NSAscendingSortIndicator" : "NSDescendingSortIndicator") : nil,
+                                 in: c)
+            if on { tv.highlightedTableColumn = c }
+        }
+    }
+
+    private func headerClicked(_ id: ColumnID) {
+        guard let t = tab, let eng = model.engine as? ListEngineAPI else { return }
+        do { model.handle(try eng.sortByColumn(tab: t.id, column: id), in: model.keyWindowID) } catch {
+            model.statusMessage = (error as? CoreError)?.message
+        }
+    }
+
+    /// The user resized or moved a column: write the columns back (debounced).
+    private func columnsEdited() {
+        guard !applyingColumns else { return }
+        columnsWriteTimer?.invalidate()
+        columnsWriteTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.writeColumns() }
+        }
+    }
+
+    private func writeColumns() {
+        guard let t = tab else { return }
+        var v = t.api.view()
+        v.columns = list.table.tableColumns.compactMap { c in
+            ColumnID(rawValue: c.identifier.rawValue).map { ColumnSpec(id: $0, width: Double(c.width.rounded())) }
+        }
+        t.api.setView(v)
+    }
+
+    /// Shows or hides a column (the header menu).
+    func toggleColumn(_ id: ColumnID) {
+        guard id != .name, let t = tab else { return }
+        var v = t.api.view()
+        if let i = v.columns.firstIndex(where: { $0.id == id }) {
+            v.columns.remove(at: i)
         } else {
-            tf.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-            tf.textColor = .secondaryLabelColor
-            if id.rawValue == "size" { tf.alignment = .right }
+            v.columns.append(ColumnSpec(id: id, width: id.defaultWidth))
         }
-        cell.addSubview(tf)
-        cell.textField = tf
-        NSLayoutConstraint.activate([
-            tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: id.rawValue == "name" ? 24 : 2),
-            tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
-            tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        return cell
+        t.api.setView(v)
     }
 
-    // MARK: Input
+    // Header menu: the column chooser.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let shown = Set(tab?.api.view().columns.map(\.id) ?? [])
+        for id in ColumnID.allCases {
+            let it = ActionItem(title: id.title) { [weak self] in self?.toggleColumn(id) }
+            it.state = shown.contains(id) ? .on : .off
+            it.isEnabled = id != .name
+            menu.addItem(it)
+        }
+        menu.autoenablesItems = false
+    }
 
-    private func click(_ e: NSEvent) {
-        guard let t = tab else { return }
-        let p = table.convert(e.locationInWindow, from: nil)
-        let i = table.row(at: p)
-        guard i >= 0 else { t.api.setSelection(.none); return }
-        let r = UInt32(i)
-        if e.clickCount == 2 {
-            model.perform(Invocation(id: "nav.open", tab: t.id), via: .mouse)
+    /// The header menu's items as text (debug logs).
+    func headerMenuDescription() -> [String] {
+        let m = NSMenu()
+        menuNeedsUpdate(m)
+        return m.items.map { "\($0.state == .on ? "✓ " : "  ")\($0.title)\($0.isEnabled ? "" : " (disabled)")" }
+    }
+
+    // MARK: Shell requests
+
+    private func installHandlers() {
+        handlerIDs.append(model.registerShellHandler(for: "beginRename") { [weak self] req, _ in
+            guard let self, case .beginRename(let tabID, let name) = req, tabID == self.tab?.id else { return false }
+            let ft = self.activeFileTable
+            if ft.rename == nil { ft.rename = RenameController(model: self.model, table: ft) }
+            print("RENAME begin “\(name)”")
+            ft.rename?.begin(name: name)
+            return true
+        })
+        handlerIDs.append(model.registerShellHandler(for: "textField") { [weak self] req, _ in
+            guard let self, case .textField(let cmd) = req, cmd.hasPrefix("rename."),
+                  let r = self.activeFileTable.rename, r.isActive else { return false }
+            if cmd == "rename.cancel" { r.cancel() } else { r.commit() }
+            return true
+        })
+        handlerIDs.append(model.registerShellHandler(for: "quickLook") { [weak self] req, ctx in
+            guard let self, case .quickLook(let paths) = req, let t = self.tab,
+                  ctx.tab == t.id || (ctx.tab == nil && self.model.focusedTab?.id == t.id) else { return false }
+            return self.quickLook(paths)
+        })
+    }
+
+    /// Names among `paths` that are iCloud placeholders (from the rows on screen).
+    private func datalessNames(_ paths: [String]) -> [String] {
+        let ft = activeFileTable
+        return paths.compactMap { p in
+            let n = (p as NSString).lastPathComponent
+            return ft.cache.cachedRow(named: n)?.isDataless == true ? n : nil
+        }
+    }
+
+    /// Quick Look, asking first for dataless items (opening them downloads them).
+    private func quickLook(_ paths: [String]) -> Bool {
+        let cloud = datalessNames(paths)
+        qlPaths = paths
+        print("QL toggle \(paths.map { ($0 as NSString).lastPathComponent })\(cloud.isEmpty ? "" : " dataless=\(cloud)")")
+        guard !cloud.isEmpty else { return false } // the default handler shows the panel
+        if let p = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil, p.isVisible { p.orderOut(nil) }
+        guard let w = scrollView.window else { return true }
+        let a = NSAlert()
+        a.messageText = cloud.count == 1 ? "“\(cloud[0])” is in iCloud" : "\(cloud.count) items are in iCloud"
+        a.informativeText = "Previewing downloads it to this Mac."
+        a.addButton(withTitle: "Download and Preview")
+        a.addButton(withTitle: "Cancel")
+        a.beginSheetModal(for: w) { resp in
+            if resp == .alertFirstButtonReturn { QuickLookController.shared.toggle(paths) }
+        }
+        return true
+    }
+
+    /// While the panel is up, it follows the selection (arrow keys go to the core).
+    private func followQuickLook() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), let p = QLPreviewPanel.shared(), p.isVisible,
+              let t = tab, model.focusedTab?.id == t.id else { return }
+        let paths = t.api.selectedPaths()
+        guard !paths.isEmpty, paths != qlPaths else { return }
+        qlPaths = paths
+        if !datalessNames(paths).isEmpty {
+            p.orderOut(nil)
+            model.statusMessage = "Not previewed: the item is in iCloud"
             return
         }
-        let f = e.modifierFlags
-        t.api.setSelection(f.contains(.command) ? .toggle(r) : f.contains(.shift) ? .extendTo(r) : .only(r))
-    }
-
-    private func contextMenu(_ e: NSEvent) -> NSMenu? {
-        guard let t = tab else { return nil }
-        let i = table.row(at: table.convert(e.locationInWindow, from: nil))
-        guard let target = try? model.engine.menuTarget(tab: t.id, row: i >= 0 ? UInt32(i) : nil),
-              let items = try? model.engine.contextMenu(target, context: MenuContext(pasteboardHasFiles: Pasteboard.hasFiles()))
-        else { return nil }
-        return ContextMenuBuilder.menu(items, model: model)
-    }
-
-    private func reportVisibleRange() {
-        guard let t = tab else { return }
-        let r = table.rows(in: table.visibleRect)
-        t.api.setVisibleRange(start: UInt32(max(r.location, 0)), count: UInt32(r.length))
-        if r.length > 0, let top = row(r.location) {
-            t.api.setScrollAnchor(ScrollAnchor(name: top.name, offset: 0))
-        }
+        print("QL follow \(paths.map { ($0 as NSString).lastPathComponent })")
+        QuickLookController.shared.toggle(paths)
     }
 }

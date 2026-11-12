@@ -937,6 +937,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func settings()  -> FfiSettings
     
     /**
+     * A click on a list-view column header (sorts, or flips the direction).
+     */
+    func sortByColumn(tab: UInt64, column: FfiColumnId) throws  -> FfiOutcome
+    
+    /**
      * A folder's subfolders, for a crumb's chevron menu. Lists the folder.
      */
     func subfolders(path: String)  -> [FfiCrumb]
@@ -1929,6 +1934,20 @@ open func settings() -> FfiSettings  {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_settings(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * A click on a list-view column header (sorts, or flips the direction).
+     */
+open func sortByColumn(tab: UInt64, column: FfiColumnId)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_sort_by_column(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(tab),
+        FfiConverterTypeFfiColumnId_lower(column),uniffiCallStatus
     )
 })
 }
@@ -11855,6 +11874,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_settings() != 52987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_sort_by_column() != 21630) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_subfolders() != 59842) {

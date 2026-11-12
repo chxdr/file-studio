@@ -58,16 +58,21 @@ enum DebugAutomation {
                     }
                 case "log": log(model)
                 case "menus": dumpMenus()
-                case "bench": if arg == "rows" { benchRows(model) }
+                case "bench" where arg == "rows": benchRows(model)
                 case "snap": snap(arg, dir: dir)
                 case "quit": NSApp.terminate(nil)
-                default: print("DEBUG unknown step \(step)")
+                default:
+                    // Steps registered by the UI folders (List/ListDebug.swift…).
+                    if let fn = extraSteps[op] { await fn(arg) } else { print("DEBUG unknown step \(step)") }
                 }
                 fflush(stdout)
                 try? await Task.sleep(for: .milliseconds(150))
             }
         }
     }
+
+    /// More steps, by name, registered by the views that own them.
+    static var extraSteps: [String: @MainActor (String) async -> Void] = [:]
 
     private static var mainWindow: NSWindow? {
         NSApp.keyWindow.flatMap { $0.windowController is CoreWindowIdentifying ? $0 : nil }
