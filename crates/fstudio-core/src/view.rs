@@ -54,6 +54,8 @@ pub struct ViewState {
     pub show_hidden: bool,
     /// Treat packages as files when sorting.
     pub packages_as_files: bool,
+    /// The list view's columns, in order, with widths.
+    pub columns: Vec<crate::view_columns::ColumnSpec>,
 }
 
 impl Default for ViewState {
@@ -72,6 +74,7 @@ impl ViewState {
             folders_first: v.folders_first,
             show_hidden: v.show_hidden,
             packages_as_files: v.packages_as_files,
+            columns: crate::view_columns::sanitize_columns(&v.columns),
         }
     }
 

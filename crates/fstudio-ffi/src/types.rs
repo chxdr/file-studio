@@ -682,6 +682,12 @@ pub struct FfiRow {
     pub is_selected: bool,
     pub is_cursor: bool,
     pub is_cut_pending: bool,
+    // ui-list additions
+    /// Creation time (the modification time when the filesystem has none).
+    pub created_ns: i64,
+    pub created_text: String,
+    /// The extension as on disk; empty for folders.
+    pub ext_text: String,
 }
 
 impl From<core::RowInfo> for FfiRow {
@@ -703,6 +709,9 @@ impl From<core::RowInfo> for FfiRow {
             is_selected: r.is_selected,
             is_cursor: r.is_cursor,
             is_cut_pending: r.is_cut_pending,
+            created_ns: r.created_ns,
+            created_text: r.created_text,
+            ext_text: r.ext_text,
         }
     }
 }
@@ -815,6 +824,9 @@ pub struct FfiViewState {
     pub folders_first: bool,
     pub show_hidden: bool,
     pub packages_as_files: bool,
+    // ui-list additions
+    /// The list view's columns, in order, with widths.
+    pub columns: Vec<FfiColumnSpec>,
 }
 
 impl From<core::ViewState> for FfiViewState {
@@ -826,6 +838,7 @@ impl From<core::ViewState> for FfiViewState {
             folders_first: v.folders_first,
             show_hidden: v.show_hidden,
             packages_as_files: v.packages_as_files,
+            columns: v.columns.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -839,6 +852,9 @@ impl From<FfiViewState> for core::ViewState {
             folders_first: v.folders_first,
             show_hidden: v.show_hidden,
             packages_as_files: v.packages_as_files,
+            columns: core::sanitize_columns(
+                &v.columns.into_iter().map(Into::into).collect::<Vec<_>>(),
+            ),
         }
     }
 }
@@ -1977,6 +1993,90 @@ impl From<core::CoreEvent> for FfiEvent {
             E::Hint { hint } => FfiEvent::Hint { hint: hint.into() },
             E::SettingsChanged => FfiEvent::SettingsChanged,
             E::FavouritesChanged => FfiEvent::FavouritesChanged,
+        }
+    }
+}
+
+// ───────────────────────── ui-list additions ─────────────────────────
+
+/// A list-view column.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FfiColumnId {
+    Name,
+    Size,
+    Modified,
+    Created,
+    Kind,
+    Extension,
+}
+
+impl From<core::ColumnId> for FfiColumnId {
+    fn from(c: core::ColumnId) -> Self {
+        match c {
+            core::ColumnId::Name => FfiColumnId::Name,
+            core::ColumnId::Size => FfiColumnId::Size,
+            core::ColumnId::Modified => FfiColumnId::Modified,
+            core::ColumnId::Created => FfiColumnId::Created,
+            core::ColumnId::Kind => FfiColumnId::Kind,
+            core::ColumnId::Extension => FfiColumnId::Extension,
+        }
+    }
+}
+
+impl From<FfiColumnId> for core::ColumnId {
+    fn from(c: FfiColumnId) -> Self {
+        match c {
+            FfiColumnId::Name => core::ColumnId::Name,
+            FfiColumnId::Size => core::ColumnId::Size,
+            FfiColumnId::Modified => core::ColumnId::Modified,
+            FfiColumnId::Created => core::ColumnId::Created,
+            FfiColumnId::Kind => core::ColumnId::Kind,
+            FfiColumnId::Extension => core::ColumnId::Extension,
+        }
+    }
+}
+
+/// One shown column and its width in points.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq)]
+pub struct FfiColumnSpec {
+    pub id: FfiColumnId,
+    pub width: f64,
+}
+
+impl Eq for FfiColumnSpec {}
+
+impl From<core::ColumnSpec> for FfiColumnSpec {
+    fn from(c: core::ColumnSpec) -> Self {
+        FfiColumnSpec {
+            id: c.id.into(),
+            width: c.width,
+        }
+    }
+}
+
+impl From<FfiColumnSpec> for core::ColumnSpec {
+    fn from(c: FfiColumnSpec) -> Self {
+        core::ColumnSpec {
+            id: c.id.into(),
+            width: c.width,
+        }
+    }
+}
+
+/// What a drop does.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiDropEffect {
+    Copy,
+    Move,
+    None,
+}
+
+impl From<core::DropEffect> for FfiDropEffect {
+    fn from(d: core::DropEffect) -> Self {
+        match d {
+            core::DropEffect::Copy => FfiDropEffect::Copy,
+            core::DropEffect::Move => FfiDropEffect::Move,
+            core::DropEffect::None => FfiDropEffect::None,
         }
     }
 }

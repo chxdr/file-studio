@@ -125,6 +125,8 @@ pub struct ViewSettings {
     pub hour24: bool,
     /// Row height.
     pub density: RowDensity,
+    /// The list view's default columns (a folder can remember its own).
+    pub columns: Vec<crate::view_columns::ColumnSpec>,
 }
 
 impl Default for ViewSettings {
@@ -139,6 +141,7 @@ impl Default for ViewSettings {
             folder_memory: FolderMemory::Smart,
             hour24: true,
             density: RowDensity::Regular,
+            columns: crate::view_columns::default_columns(),
         }
     }
 }

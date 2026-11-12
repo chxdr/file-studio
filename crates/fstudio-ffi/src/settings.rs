@@ -4,7 +4,7 @@
 
 use fstudio_core as core;
 
-use crate::types::{FfiSortBy, FfiViewMode};
+use crate::types::{FfiColumnSpec, FfiSortBy, FfiViewMode};
 
 /// Where toasts and the overlay sit.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +95,9 @@ pub struct FfiViewSettings {
     pub folder_memory: bool,
     pub hour24: bool,
     pub density: FfiRowDensity,
+    // ui-list additions
+    /// The list view's default columns.
+    pub columns: Vec<FfiColumnSpec>,
 }
 
 /// The address bar.
@@ -194,6 +197,7 @@ impl From<&core::Settings> for FfiSettings {
                     core::RowDensity::Regular => FfiRowDensity::Regular,
                     core::RowDensity::Comfortable => FfiRowDensity::Comfortable,
                 },
+                columns: v.columns.iter().map(|c| (*c).into()).collect(),
             },
             path_bar: FfiPathBarSettings {
                 completion_limit: p.completion_limit,
@@ -272,6 +276,8 @@ pub(crate) fn apply(base: &mut core::Settings, f: FfiSettings) {
         FfiRowDensity::Regular => core::RowDensity::Regular,
         FfiRowDensity::Comfortable => core::RowDensity::Comfortable,
     };
+    base.view.columns =
+        core::sanitize_columns(&v.columns.into_iter().map(Into::into).collect::<Vec<_>>());
     let p = f.path_bar;
     base.path_bar.completion_limit = p.completion_limit;
     base.path_bar.complete_hidden = p.complete_hidden;

@@ -35,13 +35,16 @@
 //! No method blocks on disk except where its docs say so.
 
 mod commands;
+mod drop;
 mod engine;
 mod error;
 mod events;
 mod favourites;
 mod ids;
 mod listing;
+mod listing_handle;
 pub mod menus;
+mod miller;
 mod outcome;
 mod probe;
 mod settings;
@@ -49,11 +52,13 @@ mod shared;
 mod sys;
 mod tab;
 mod view;
+mod view_columns;
 mod workspace;
 
 pub use commands::{
     BindingSummary, CommandInvocation, CommandSummary, Handling, InputContext, LATER_COMMANDS,
 };
+pub use drop::DropEffect;
 pub use engine::{Engine, EngineConfig, FrecentDir};
 pub use error::{CoreError, Result};
 pub use events::{
@@ -62,6 +67,7 @@ pub use events::{
 pub use favourites::Favourite;
 pub use ids::{PaneId, TabId, WindowId, WorkspaceId};
 pub use listing::{Listing, ListingState, RowInfo, RowKind};
+pub use listing_handle::ListingHandle;
 pub use menus::{
     MenuCommand, MenuContext, MenuEntryInfo, MenuItem, MenuKind, MenuOverride, MenuPlacement,
     MenuSettings, MenuTarget, SidebarItemKind, SystemMenu,
@@ -75,6 +81,9 @@ pub use settings::{
 pub use shared::MIGRATIONS;
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};
 pub use view::{SortBy, ViewState};
+pub use view_columns::{
+    ColumnId, ColumnSpec, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, sanitize_columns,
+};
 pub use workspace::{Orientation, PaneState, WindowState, WorkspaceState, WorkspaceSummary};
 
 // The types from other crates that appear on this crate's surface.
