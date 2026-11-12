@@ -706,3 +706,61 @@ fn s10_undo_of_trash_puts_back_the_same_item() {
     ok(&h, &h.engine.undo().unwrap());
     assert_eq!(std::fs::read(h.p("a.txt")).unwrap(), b"mine");
 }
+
+// ───────────────────────── S11 ─────────────────────────
+
+fn toast(out: &Outcome) -> String {
+    match &out.shell {
+        Some(ShellRequest::Toast { text, .. }) | Some(ShellRequest::Moved { text }) => text.clone(),
+        other => panic!("expected a toast, got {other:?}"),
+    }
+}
+
+/// Trash, Undo and Redo always say what they did; undo and redo name the
+/// folder (and "another window") when the window they ran in doesn't show it.
+#[test]
+fn s11_trash_undo_and_redo_show_toasts_naming_where() {
+    let h = harness();
+    mkdirs(&h.p("work"));
+    mkdirs(&h.p("elsewhere"));
+    for n in ["a.txt", "b.txt", "c.txt"] {
+        touch(&h.p(&format!("work/{n}")));
+    }
+    let a = h.window_at("work");
+    t_select_all(&a);
+    let out = run(&h, &a, "file.trash", None).unwrap();
+    assert!(matches!(out.shell, Some(ShellRequest::Moved { .. })));
+    assert_eq!(toast(&out), "Moved 3 items to the Trash");
+    ok(&h, &out);
+    // Undo from the same window: no folder named.
+    let out = run(&h, &a, "edit.undo", None).unwrap();
+    assert_eq!(toast(&out), "Put back 3 items");
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::Toast { button: Some(ref b), command: Some(ref c), .. })
+            if b == "Redo" && c == "edit.redo"
+    ));
+    ok(&h, &out);
+    // Redo from a second window showing another folder.
+    let b = h.window_at("elsewhere");
+    let out = run(&h, &b, "edit.redo", None).unwrap();
+    assert_eq!(
+        toast(&out),
+        "Redid: Move to Trash of 3 Items in “work” (another window)"
+    );
+    ok(&h, &out);
+    // Undo with the folder shown nowhere.
+    a.go(&h.s("elsewhere")).unwrap();
+    wait_complete(&a);
+    let out = run(&h, &b, "edit.undo", None).unwrap();
+    assert_eq!(toast(&out), "Put back 3 items in “work”");
+    ok(&h, &out);
+    // A refused undo is a toast too.
+    let out = run(&h, &b, "edit.undo", None).unwrap();
+    assert!(out.ops.is_empty());
+    assert_eq!(out.message.as_deref(), Some("Nothing to undo"));
+}
+
+fn t_select_all(t: &Tab) {
+    t.set_selection(SelectionChange::All);
+}

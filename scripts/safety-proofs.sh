@@ -134,6 +134,21 @@ s8() {
   finish s8
 }
 
+# S11: ⌘⌫ three items (scratch Trash), ⌘Z, go elsewhere, ⇧⌘Z, ⌘Z: each says
+# what it did, naming the folder once this window no longer shows it.
+s11() {
+  home
+  mkdir -p "$H/work" "$H/elsewhere"
+  for n in a b c; do echo "$n" > "$H/work/$n.txt"; done
+  run s11 "wait:1;go:$H/work;wait:1;focus:list;key:cmd+a;key:cmd+delete;wait:1;key:cmd+z;wait:1;ls:$H/work;go:$H/elsewhere;wait:1;focus:list;key:cmd+shift+z;wait:1;ls:$H/.Trash;key:cmd+z;wait:1;quit"
+  expect "Trash says so, with Undo" "^MOVED Moved 3 items to the Trash$"
+  expect "Undo says so, with Redo" "^TOAST Put back 3 items \\[Redo\\]$"
+  expect "…and put them back" "^LS .*/work: a.txt, b.txt, c.txt$"
+  expect "Redo names the folder off screen" "^TOAST Redid: Move to Trash of 3 Items in “work” \\[Undo\\]$"
+  expect "Undo names it too" "^TOAST Put back 3 items in “work” \\[Redo\\]$"
+  finish s11
+}
+
 for p in "${WANT[@]}"; do
   if declare -F "$p" >/dev/null; then echo "── $p"; "$p"; else echo "no proof named $p"; fi
 done

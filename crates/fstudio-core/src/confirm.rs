@@ -127,7 +127,7 @@ pub(crate) enum PendingAction {
     },
     /// Redo this op (a move of a protected folder), if it is still the top
     /// of the redo stack; redo checks the items itself.
-    Redo(fstudio_ops::OpId),
+    Redo(fstudio_ops::OpId, Option<TabId>),
 }
 
 impl PendingAction {
@@ -136,7 +136,7 @@ impl PendingAction {
         match self {
             PendingAction::Op(op) => op.tab,
             PendingAction::NewFolderWith { tab, .. } => Some(*tab),
-            PendingAction::Redo(_) => None,
+            PendingAction::Redo(_, tab) => *tab,
         }
     }
 }
@@ -172,7 +172,7 @@ impl Engine {
             .ok_or_else(|| CoreError::NotFound(format!("question {token}")))?;
         match action {
             PendingAction::Op(op) => self.run_pending_op(op, true),
-            PendingAction::Redo(op) => self.redo_op(Some(op)),
+            PendingAction::Redo(op, tab) => self.redo_op(Some(op), tab),
             PendingAction::NewFolderWith {
                 tab,
                 parent,

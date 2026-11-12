@@ -41,6 +41,7 @@ mod engine;
 mod error;
 mod events;
 mod favourites;
+mod feedback;
 mod ids;
 mod listing;
 mod listing_handle;

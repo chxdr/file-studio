@@ -168,7 +168,10 @@ fn trash_confirmation_can_be_confirmed() {
     };
     assert_eq!(paths, vec![h.s("keep-me")]);
     let out = h.engine.confirm(token).unwrap();
-    assert!(out.shell.is_none());
+    assert!(
+        matches!(out.shell, Some(ShellRequest::Moved { .. })),
+        "the Trash toast (S11)"
+    );
     h.engine.wait_op(out.ops[0], T).unwrap();
     assert!(!h.p("keep-me").exists());
     assert!(h.engine.confirm(token).is_err(), "a token works once");

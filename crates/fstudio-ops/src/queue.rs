@@ -700,7 +700,21 @@ impl OpQueue {
 
     /// The op Redo would redo and its request, if any.
     pub fn redo_peek(&self) -> Result<Option<(OpId, OpRequest)>> {
-        let Some((op, _)) = self.inner.journal.peek_stack(Stack::Redo)? else {
+        Ok(self.peek(Stack::Redo)?.map(|(op, _, req)| (op, req)))
+    }
+
+    /// The op on top of the undo stack: its id, label ("Move of “a”") and request.
+    pub fn undo_top(&self) -> Result<Option<(OpId, String, OpRequest)>> {
+        self.peek(Stack::Undo)
+    }
+
+    /// The op on top of the redo stack: its id, label and request.
+    pub fn redo_top(&self) -> Result<Option<(OpId, String, OpRequest)>> {
+        self.peek(Stack::Redo)
+    }
+
+    fn peek(&self, stack: Stack) -> Result<Option<(OpId, String, OpRequest)>> {
+        let Some((op, label)) = self.inner.journal.peek_stack(stack)? else {
             return Ok(None);
         };
         let row = self
@@ -708,7 +722,7 @@ impl OpQueue {
             .journal
             .load_op(op)?
             .ok_or(OpsError::NoSuchOp(op))?;
-        Ok(Some((op, row.request)))
+        Ok(Some((op, label, row.request)))
     }
 
     /// Redoes the most recently undone op by queuing its original request

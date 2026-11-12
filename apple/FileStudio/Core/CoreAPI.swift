@@ -221,6 +221,9 @@ public enum ShellRequest: Equatable, Sendable {
     case confirmMove(token: UInt64, title: String, detail: String, paths: [String])
     /// A move was queued: show `text` for ~6 s with Undo (`edit.undo`).
     case moved(text: String)
+    /// Show `text` for ~6 s; with `button`, a button that performs `command`
+    /// (S11: Trash, Delete Immediately, Undo and Redo say what they did).
+    case toast(text: String, button: String?, command: String?)
     /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
     case showPowerTour
     case toggleSidebar
@@ -261,6 +264,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .showQuickOpen: "showQuickOpen"
         case .showSettings: "showSettings"
         case .confirmMove: "confirmMove"
+        case .toast: "toast"
         case .moved: "moved"
         case .showPowerTour: "showPowerTour"
         case .toggleSidebar: "toggleSidebar"

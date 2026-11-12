@@ -149,6 +149,18 @@ pub enum ShellRequest {
         /// What moved where.
         text: String,
     },
+    /// Show `text` as a toast for about six seconds (safety audit S11: Trash,
+    /// Delete Immediately, Undo and Redo say what they did, and where when
+    /// this window doesn't show it). With `button`, the toast has a button
+    /// with that title that performs `command` (`edit.undo`, `edit.redo`).
+    Toast {
+        /// "Put back 3 items", "Redid: Move of “Downloads” in “Projects”".
+        text: String,
+        /// The button's title ("Undo", "Redo"), if any.
+        button: Option<String>,
+        /// The command the button performs.
+        command: Option<String>,
+    },
     /// Show the power tour (`app.power_tour`, Help › File Studio Power
     /// Tour): a short, skippable sequence of cards about the power-user
     /// tools, with keys read from the current bindings.

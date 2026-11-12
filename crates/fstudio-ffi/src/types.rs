@@ -578,6 +578,11 @@ pub enum FfiShellRequest {
     Moved {
         text: String,
     },
+    Toast {
+        text: String,
+        button: Option<String>,
+        command: Option<String>,
+    },
     ShowPowerTour,
     ToggleSidebar,
     ToggleInspector,
@@ -650,6 +655,15 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 paths,
             },
             S::Moved { text } => Self::Moved { text },
+            S::Toast {
+                text,
+                button,
+                command,
+            } => Self::Toast {
+                text,
+                button,
+                command,
+            },
             S::ShowPowerTour => Self::ShowPowerTour,
             S::ToggleSidebar => Self::ToggleSidebar,
             S::ToggleInspector => Self::ToggleInspector,

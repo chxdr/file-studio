@@ -1048,8 +1048,8 @@ impl Engine {
                     None => Outcome::message("No closed tab to reopen"),
                 });
             }
-            "edit.undo" => return self.undo(),
-            "edit.redo" => return self.redo(),
+            "edit.undo" => return self.undo_in(inv.tab),
+            "edit.redo" => return self.redo_in(inv.tab),
             "app.settings" => {
                 return Ok(Outcome::shell(ShellRequest::ShowSettings {
                     section: String::new(),
@@ -1382,7 +1382,10 @@ impl Engine {
                         remove_from: Some(tid),
                         ..After::default()
                     },
-                    toast: None,
+                    // S11: a trash is never silent.
+                    toast: Some(ShellRequest::Moved {
+                        text: crate::feedback::trashed_text(&sel),
+                    }),
                 };
                 if ask {
                     let token = self.ask(PendingAction::Op(op));
@@ -1415,7 +1418,11 @@ impl Engine {
                         remove_from: Some(tid),
                         ..After::default()
                     },
-                    toast: None,
+                    toast: Some(ShellRequest::Toast {
+                        text: crate::feedback::deleted_text(&sel),
+                        button: None,
+                        command: None,
+                    }),
                 }));
                 Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
                     token,

@@ -37,6 +37,23 @@ enum MoveSafety {
             }
             return true
         }
+        // S11: Trash, Delete Immediately, Undo and Redo always say what they did.
+        model.registerShellHandler(for: "toast") { req, ctx in
+            guard case .toast(let text, let button, let command) = req else { return false }
+            #if DEBUG
+            lastToast = text
+            print("TOAST \(text)\(button.map { " [\($0)]" } ?? "")")
+            #endif
+            let refused = text.hasPrefix("Can’t")
+            if let button, let command {
+                ToastCenter.of(model).show(text, style: .success, seconds: 6, actionTitle: button) {
+                    model.perform(Invocation(id: command), via: .mouse, window: ctx.window)
+                }
+            } else {
+                ToastCenter.of(model).show(text, style: refused ? .warning : .info, seconds: refused ? 6 : 4)
+            }
+            return true
+        }
     }
 
     private static func host(_ id: WindowID?) -> NSWindow? {
