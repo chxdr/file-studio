@@ -7,6 +7,8 @@
 //   "File Studio" -FSDebugScript "wait:1;key:cmd+l;type:~/Documents;key:return;wait:0.5;snap:docs;log;quit" \
 //                 -FSDebugSnapshotDir /tmp/shots [-FSMockCore] [-FSDataDir /tmp/fs-data]
 //
+// Steps run from a run-loop timer, never inside a Swift Task (see `after`).
+//
 // Steps (separated by `;`):
 //   wait:<s>              pause
 //   key:[shift+|cmd+|alt+|ctrl+]<name>   one key (names: a–z, 0–9, return, tab, space, delete,
@@ -17,6 +19,9 @@
 //   rclick:<x>,<y>        logs the context menu a right-click there would show (MENU lines)
 //   scroll:<dx>,<dy>      scroll wheel over the window's centre (pixels)
 //   drag:<x>,<y>,<dx>,<dy>
+//   move:<x>,<y>          mouse-moved events ending at the point (hover, tracking areas)
+//   activate:<n>|next     make the n-th visible window key
+//   raise                 self-test: throws an Objective-C exception (the app logs it and goes on)
 //   go:<path>             the focused tab goes to a path (as typed in the address bar)
 //   snap:<name>           <SnapshotDir>/<name>.png for each visible window (SNAP lines)
 //   log                   JSON lines: windows, tabs, the focused listing and selection (STATE lines)
@@ -34,39 +39,62 @@ enum DebugAutomation {
         let dir = URL(fileURLWithPath: UserDefaults.standard.string(forKey: "FSDebugSnapshotDir")
                       ?? NSTemporaryDirectory())
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1))
+        let steps = script.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }
+        after(1) {
             NSApp.activate()
             mainWindow?.makeKeyAndOrderFront(nil)
-            for raw in script.split(separator: ";") {
-                let step = raw.trimmingCharacters(in: .whitespaces)
-                let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
-                let op = parts.first ?? "", arg = parts.count > 1 ? parts[1] : ""
-                print("STEP \(step)")
-                switch op {
-                case "wait": try? await Task.sleep(for: .seconds(Double(arg) ?? 1))
-                case "key": sendKey(arg)
-                case "type": typeText(arg)
-                case "click": click(arg, count: 1)
-                case "dclick": click(arg, count: 2)
-                case "rclick": rightClick(arg)
-                case "drag": drag(arg)
-                case "scroll": scroll(arg)
-                case "go":
-                    if let t = model.focusedTab {
-                        do { model.handle(try t.api.go(arg), in: model.keyWindowID) } catch { print("GO error \(error)") }
-                    }
-                case "log": log(model)
-                case "menus": dumpMenus()
-                case "bench": if arg == "rows" { benchRows(model) }
-                case "snap": snap(arg, dir: dir)
-                case "quit": NSApp.terminate(nil)
-                default: print("DEBUG unknown step \(step)")
-                }
-                fflush(stdout)
-                try? await Task.sleep(for: .milliseconds(150))
-            }
+            runStep(0, steps, model, dir)
         }
+    }
+
+    /// Runs `body` from a run-loop timer: never inside a Swift `Task`, and not
+    /// through the main dispatch queue. AppKit catches and swallows
+    /// Objective-C exceptions thrown while it handles (synthetic) events. If
+    /// one unwinds through a Swift concurrency job, the runtime's executor
+    /// tracking is left pointing at a dead stack frame and a later
+    /// `@MainActor` check crashes (SIGSEGV in `swift_task_isCurrentExecutor`);
+    /// through the main dispatch queue, it wedges the queue. Timer callouts
+    /// have neither, so a raising step only ends that step.
+    private static func after(_ seconds: TimeInterval, _ body: @escaping @MainActor () -> Void) {
+        let t = Timer(timeInterval: seconds, repeats: false) { _ in MainActor.assumeIsolated { body() } }
+        RunLoop.main.add(t, forMode: .common)
+    }
+
+    private static func runStep(_ i: Int, _ steps: [String], _ model: AppModel, _ dir: URL) {
+        guard i < steps.count else { return }
+        let step = steps[i]
+        let parts = step.split(separator: ":", maxSplits: 1).map(String.init)
+        let op = parts.first ?? "", arg = parts.count > 1 ? parts[1] : ""
+        print("STEP \(step)")
+        fflush(stdout)
+        // Schedule the next step first, so a step that raises doesn't stop the script.
+        after(op == "wait" ? Double(arg) ?? 1 : 0.15) { runStep(i + 1, steps, model, dir) }
+        switch op {
+        case "wait": break
+        case "key": sendKey(arg)
+        case "type": typeText(arg)
+        case "click": click(arg, count: 1)
+        case "dclick": click(arg, count: 2)
+        case "rclick": rightClick(arg)
+        case "move": moveMouse(arg)
+        case "activate": activate(arg)
+        case "drag": drag(arg)
+        case "scroll": scroll(arg)
+        case "go":
+            if let t = model.focusedTab {
+                do { model.handle(try t.api.go(arg), in: model.keyWindowID) } catch { print("GO error \(error)") }
+            }
+        case "log": log(model)
+        case "menus": dumpMenus()
+        case "bench": if arg == "rows" { benchRows(model) }
+        case "snap": snap(arg, dir: dir)
+        case "raise":
+            // Self-test: an Objective-C exception, as AppKit can throw; the app must survive it.
+            NSException(name: .internalInconsistencyException, reason: "debug script raise", userInfo: nil).raise()
+        case "quit": NSApp.terminate(nil)
+        default: print("DEBUG unknown step \(step)")
+        }
+        fflush(stdout)
     }
 
     private static var mainWindow: NSWindow? {
@@ -263,6 +291,23 @@ enum DebugAutomation {
             v = cur.superview
         }
         print("MENU none at \(arg)")
+    }
+
+    /// Mouse-moved events along a line to the point (tracking areas, hover).
+    private static func moveMouse(_ arg: String) {
+        guard let w = mainWindow, let p = point(arg, in: w) else { return }
+        for k in 0...8 {
+            let q = NSPoint(x: p.x - Double(8 - k) * 10, y: p.y)
+            if let e = mouse(.mouseMoved, q, w, count: 0) { NSApp.sendEvent(e) }
+        }
+    }
+
+    /// Makes the n-th visible app window key (1-based), or cycles with `next`.
+    private static func activate(_ arg: String) {
+        let ws = NSApp.windows.filter { $0.isVisible && $0.frame.width > 200 }
+        guard !ws.isEmpty else { return }
+        let i = Int(arg).map { $0 - 1 } ?? ((ws.firstIndex { $0.isKeyWindow } ?? -1) + 1) % ws.count
+        if ws.indices.contains(i) { ws[i].makeKeyAndOrderFront(nil) }
     }
 
     private static func drag(_ arg: String) {
