@@ -426,3 +426,19 @@ Rank is global (1 = highest priority across all areas). Verdict reasons are one 
 - [S21] yazi/ranger/nnn comparisons: https://blog.starmorph.com/blog/yazi-terminal-file-manager-guide ; https://maketecheasier.com/yazi-is-the-best-terminal-based-file-manager-you-are-looking-for ; r/commandline "Is yazi overhyped" (mirror): https://reddit.fsky.io/r/commandline/comments/1jcej42/is_yazi_overhyped ; https://bradleyfay.github.io/trek/comparison/
 - [S22] NewsShooter on page-cache read-back caveat for verification: https://www.newsshooter.com/?p=319175
 - [S23] diglloyd on FastRawViewer for organising shoots: https://diglloyd.com/blog/2023/20231204_1540-FastRawViewer-organizing-shoots.html
+
+---
+
+## Sign-off changes (user, 2026-11-12)
+
+The ranking is approved with these changes, which override the table above:
+
+| # | Feature | Was | Now |
+|---|---|---|---|
+| 85 | Disk-usage map (QDirStat/WinDirStat-style treemap) | never | **later (M4)**: builds on cached folder sizes (#22) |
+| 42 | Vim keymap profile | later | **v1**: the engine ships in M1, and the profile is offered in first-run setup (M2) |
+| 33 | Saved workspaces | later (M4) | **v1 (M2)**: early, alongside session restore, which uses the same core `Workspace` state (F-002) |
+| 18 | Per-folder view memory | v1, optional | **v1, on by default in "smart" mode**: only folders whose view you changed are remembered; stored in the DB, never in `.DS_Store` |
+| 19, 20 | Icon grid and gallery views | v1 (M3) | unchanged: M3 |
+
+All the other "never" entries stand.

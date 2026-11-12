@@ -71,3 +71,11 @@ These are the answers to proposal §13, taken from its recommendations.
 | zoxide history | first-run setup offers a one-time import from zoxide, if its database is found |
 
 Every one of these is also a setting.
+
+## F-012: Feature ranking signed off (accepted 2026-11-12)
+`docs/RESEARCH.md` §3 is the v1 / later / never list. The user changed it as follows (see "Sign-off changes" in that file):
+- **Disk-usage map:** moved from never to later (M4).
+- **Vim profile:** moved to v1, offered in setup.
+- **Saved workspaces:** moved to M2, next to session restore.
+- **Per-folder view memory:** on by default in "smart" mode.
+- **Gallery and icon views:** stay in M3.
