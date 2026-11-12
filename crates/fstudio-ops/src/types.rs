@@ -86,6 +86,23 @@ pub enum OpRequest {
         /// `(from, to)`, where `to` is the full destination path.
         pairs: Vec<(PathBuf, PathBuf)>,
     },
+    /// Several requests run one after another as **one** journaled op with
+    /// one undo entry (New Folder with Selection, a chain of new folders,
+    /// putting an item back into a recreated folder). Each step runs as its
+    /// own op once the one before it has completed; if a step doesn't
+    /// complete, the rest are not run. Undo undoes the steps in reverse.
+    Compound {
+        /// The Edit menu's label ("New Folder with Items").
+        label: String,
+        /// The steps, in order.
+        steps: Vec<OpRequest>,
+    },
+    /// Inside a [`OpRequest::Compound`] only: undo the op `op` (its inverse
+    /// is worked out when this step starts, after the steps before it ran).
+    UndoOf {
+        /// The op to undo.
+        op: OpId,
+    },
 }
 
 impl OpRequest {
@@ -101,6 +118,7 @@ impl OpRequest {
             OpRequest::Rename { .. } => OpKind::Rename,
             OpRequest::Duplicate { .. } => OpKind::Duplicate,
             OpRequest::MoveTo { .. } => OpKind::MoveTo,
+            OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => OpKind::Compound,
         }
     }
 }
@@ -126,6 +144,8 @@ pub enum OpKind {
     Duplicate,
     /// An [`OpRequest::MoveTo`].
     MoveTo,
+    /// An [`OpRequest::Compound`].
+    Compound,
 }
 
 impl OpKind {
@@ -140,6 +160,7 @@ impl OpKind {
             OpKind::NewFile => "New File",
             OpKind::Rename => "Rename",
             OpKind::Duplicate => "Duplicate",
+            OpKind::Compound => "Change",
         }
     }
 

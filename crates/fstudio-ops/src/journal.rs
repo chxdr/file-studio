@@ -16,9 +16,10 @@ use crate::types::{EnqueueOptions, OpId, OpPlan, OpRequest, OpState, Result};
 /// The ops module's schema. Append-only.
 pub const MIGRATIONS: Migrations = Migrations {
     module: "ops",
-    steps: &[(
-        1,
-        "CREATE TABLE ops_ops (
+    steps: &[
+        (
+            1,
+            "CREATE TABLE ops_ops (
             id          INTEGER PRIMARY KEY,
             seq         REAL NOT NULL,
             kind        TEXT NOT NULL,
@@ -63,7 +64,15 @@ pub const MIGRATIONS: Migrations = Migrations {
             op_id INTEGER NOT NULL REFERENCES ops_ops(id),
             label TEXT NOT NULL
         );",
-    )],
+        ),
+        (
+            2,
+            // Compound ops (safety audit S12–S14): each step is an op of its own,
+            // marked as part `part_step` of the op `part_of`.
+            "ALTER TABLE ops_ops ADD COLUMN part_of INTEGER;
+        ALTER TABLE ops_ops ADD COLUMN part_step INTEGER;",
+        ),
+    ],
 };
 
 /// The state of one item in the journal.
@@ -187,6 +196,8 @@ pub struct OpRow {
     #[allow(dead_code)]
     pub undo_of: Option<OpId>,
     pub title: String,
+    /// For a step of a compound op: the compound op and the step's index.
+    pub part_of: Option<(OpId, usize)>,
 }
 
 /// Why an op exists.
@@ -195,6 +206,8 @@ pub enum Origin {
     User,
     Undo,
     Redo,
+    /// A step of a compound op (never on the undo stack by itself).
+    Part,
 }
 
 impl Origin {
@@ -203,12 +216,14 @@ impl Origin {
             Origin::User => "user",
             Origin::Undo => "undo",
             Origin::Redo => "redo",
+            Origin::Part => "part",
         }
     }
     fn parse(s: &str) -> Origin {
         match s {
             "undo" => Origin::Undo,
             "redo" => Origin::Redo,
+            "part" => Origin::Part,
             _ => Origin::User,
         }
     }
@@ -283,6 +298,8 @@ type RawOp = (
     String,
     Option<i64>,
     String,
+    Option<i64>,
+    Option<i64>,
 );
 
 /// The journal: typed access to the `ops_*` tables.
@@ -299,6 +316,7 @@ impl Journal {
     }
 
     /// Records a new op and its top-level items, in one transaction.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_op(
         &self,
         req: &OpRequest,
@@ -307,6 +325,7 @@ impl Journal {
         undo_of: Option<OpId>,
         title: &str,
         roots: &[NewItem],
+        part_of: Option<(OpId, usize)>,
     ) -> Result<OpId> {
         let request = serde_json::to_string(req)?;
         let options = serde_json::to_string(opts)?;
@@ -317,8 +336,9 @@ impl Journal {
                 r.get(0)
             })?;
             tx.execute(
-                "INSERT INTO ops_ops(seq, kind, request, options, state, origin, undo_of, title, created_ns)
-                 VALUES (?1, ?2, ?3, ?4, 'queued', ?5, ?6, ?7, ?8)",
+                "INSERT INTO ops_ops(seq, kind, request, options, state, origin, undo_of, title, created_ns,
+                    part_of, part_step)
+                 VALUES (?1, ?2, ?3, ?4, 'queued', ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     seq,
                     kind,
@@ -327,7 +347,9 @@ impl Journal {
                     origin.as_str(),
                     undo_of.map(|o| o.0),
                     title,
-                    now_ns()
+                    now_ns(),
+                    part_of.map(|p| p.0.0),
+                    part_of.map(|p| p.1 as i64),
                 ],
             )?;
             let id = tx.last_insert_rowid();
@@ -396,11 +418,14 @@ impl Journal {
             r.get(6)?,
             r.get(7)?,
             r.get(8)?,
+            r.get(9)?,
+            r.get(10)?,
         ))
     }
 
     fn build_op(raw: RawOp) -> Result<OpRow> {
-        let (id, _seq, request, options, plan, state, origin, undo_of, title) = raw;
+        let (id, _seq, request, options, plan, state, origin, undo_of, title, part_of, part_step) =
+            raw;
         Ok(OpRow {
             id: OpId(id),
             request: serde_json::from_str(&request)?,
@@ -410,10 +435,12 @@ impl Journal {
             origin: Origin::parse(&origin),
             undo_of: undo_of.map(OpId),
             title,
+            part_of: part_of.map(|p| (OpId(p), part_step.unwrap_or(0) as usize)),
         })
     }
 
-    const OP_COLS: &str = "id, seq, request, options, plan, state, origin, undo_of, title";
+    const OP_COLS: &str =
+        "id, seq, request, options, plan, state, origin, undo_of, title, part_of, part_step";
 
     /// Loads one op.
     pub fn load_op(&self, id: OpId) -> Result<Option<OpRow>> {
@@ -439,6 +466,19 @@ impl Journal {
                 Self::OP_COLS
             ))?;
             st.query_map([], Self::op_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        raws.into_iter().map(Self::build_op).collect()
+    }
+
+    /// The steps of the compound op `op`, in the order they were queued.
+    pub fn parts_of(&self, op: OpId) -> Result<Vec<OpRow>> {
+        let raws = self.db.with(|c| {
+            let mut st = c.prepare(&format!(
+                "SELECT {} FROM ops_ops WHERE part_of = ?1 ORDER BY id",
+                Self::OP_COLS
+            ))?;
+            st.query_map([op.0], Self::op_from_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()
         })?;
         raws.into_iter().map(Self::build_op).collect()

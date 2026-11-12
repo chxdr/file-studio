@@ -9341,6 +9341,10 @@ public enum FfiOpKind: Equatable, Hashable {
     case rename
     case duplicate
     case moveTo
+    /**
+     * Several steps as one op (New Folder with Selection, a chain of folders).
+     */
+    case compound
 
 
 
@@ -9379,6 +9383,8 @@ public struct FfiConverterTypeFfiOpKind: FfiConverterRustBuffer {
         case 8: return .duplicate
         
         case 9: return .moveTo
+        
+        case 10: return .compound
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9422,6 +9428,10 @@ public struct FfiConverterTypeFfiOpKind: FfiConverterRustBuffer {
         
         case .moveTo:
             writeInt(&buf, Int32(9))
+        
+        
+        case .compound:
+            writeInt(&buf, Int32(10))
         
         }
     }

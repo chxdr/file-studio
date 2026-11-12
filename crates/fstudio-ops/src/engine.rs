@@ -240,6 +240,7 @@ impl Env<'_> {
             OpKind::Trash => self.trash(item).map(|()| Vec::new()),
             OpKind::DeleteImmediately => self.delete(item).map(|()| Vec::new()),
             OpKind::NewFolder | OpKind::NewFile => self.create(item, decision).map(|()| Vec::new()),
+            OpKind::Compound => Err(fail("a compound op has no items of its own")),
         }
     }
 

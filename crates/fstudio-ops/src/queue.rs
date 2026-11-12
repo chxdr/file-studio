@@ -82,6 +82,14 @@ pub struct OpQueue {
     inner: Arc<Inner>,
 }
 
+/// A volume-pair key of its own for each compound op: a compound op only
+/// waits for its steps, which take the real volume slots, so it must never
+/// hold one itself.
+fn compound_key() -> (u64, u64) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    (u64::MAX, NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
 fn dev_of(p: &Path) -> u64 {
     std::fs::symlink_metadata(p).map(|m| m.dev()).unwrap_or(0)
 }
@@ -116,6 +124,8 @@ fn title_for(req: &OpRequest, origin: Origin) -> String {
         OpRequest::Rename { new_name, .. } => format!("Renaming {w} to {}", quoted(new_name)),
         OpRequest::Duplicate { .. } => format!("Duplicating {w}"),
         OpRequest::MoveTo { .. } => format!("Moving {w} back"),
+        OpRequest::Compound { label, .. } => label.clone(),
+        OpRequest::UndoOf { .. } => "Undo".to_string(),
     };
     match origin {
         Origin::Undo => format!("Undo: {t}"),
@@ -126,6 +136,8 @@ fn title_for(req: &OpRequest, origin: Origin) -> String {
 /// The undo label for an op: "Copy of 3 Items", "Rename of “a.txt”", "New Folder".
 pub fn undo_label(kind: OpKind, roots: usize, first: &str) -> String {
     match kind {
+        // A compound op carries its own label ("New Folder with Items").
+        OpKind::Compound => first.to_string(),
         OpKind::NewFolder | OpKind::NewFile => kind.verb().to_string(),
         _ if roots == 1 => format!("{} of {}", kind.verb(), quoted(first)),
         _ => format!("{} of {roots} Items", kind.verb()),
@@ -161,7 +173,11 @@ impl Inner {
             std::thread::Builder::new()
                 .name(format!("fstudio-op-{}", op.id.0))
                 .spawn(move || {
-                    crate::runner::run(&me, &op);
+                    if op.kind == OpKind::Compound {
+                        run_compound(&me, &op);
+                    } else {
+                        crate::runner::run(&me, &op);
+                    }
                     {
                         let _g = me.ops.lock();
                         *op.phase.lock() = Phase::Finished;
@@ -176,7 +192,9 @@ impl Inner {
     /// Bookkeeping when an op finishes: the undo stack.
     pub fn op_finished(&self, op: &OpShared, report: &OpReport) {
         let undoable = !matches!(op.kind, OpKind::DeleteImmediately);
-        if op.origin != Origin::Undo && undoable && report.files_done > 0 {
+        // Undo ops and the steps of a compound op are never undone by themselves.
+        let on_stack = matches!(op.origin, Origin::User | Origin::Redo);
+        if on_stack && undoable && report.files_done > 0 {
             let label = undo_label(op.kind, op.roots, &op.first_name);
             let _ = self
                 .journal
@@ -257,6 +275,17 @@ impl OpQueue {
         origin: Origin,
         undo_of: Option<OpId>,
     ) -> Result<OpId> {
+        self.enqueue_full(req, opts, origin, undo_of, None)
+    }
+
+    fn enqueue_full(
+        &self,
+        req: OpRequest,
+        opts: EnqueueOptions,
+        origin: Origin,
+        undo_of: Option<OpId>,
+        part_of: Option<(OpId, usize)>,
+    ) -> Result<OpId> {
         plan::validate(&req).map_err(OpsError::InvalidRequest)?;
         if matches!(req, OpRequest::DeleteImmediately { .. })
             && !self.inner.cfg.allow_delete_immediately
@@ -282,21 +311,28 @@ impl OpQueue {
             _ => dev_of(&t.0),
         });
         let dst_dev = ts.first().and_then(|t| t.1.as_deref()).map(dev_of);
-        let key = (src_dev.unwrap_or(0), dst_dev.or(src_dev).unwrap_or(0));
+        let key = if kind == OpKind::Compound {
+            compound_key()
+        } else {
+            (src_dev.unwrap_or(0), dst_dev.or(src_dev).unwrap_or(0))
+        };
         let id = self
             .inner
             .journal
-            .insert_op(&req, &opts, origin, undo_of, &title, &roots)?;
+            .insert_op(&req, &opts, origin, undo_of, &title, &roots, part_of)?;
         if origin == Origin::User {
             self.inner.journal.clear_stack(Stack::Redo)?;
             self.inner
                 .sink
                 .on_event(OpEvent::UndoChanged(self.inner.undo_state()));
         }
-        let first = ts.first().map(|t| match &t.2 {
-            Some(n) if kind != OpKind::Rename => n.clone(),
-            _ => file_name(&t.0),
-        });
+        let first = match &req {
+            OpRequest::Compound { label, .. } => Some(label.clone()),
+            _ => ts.first().map(|t| match &t.2 {
+                Some(n) if kind != OpKind::Rename => n.clone(),
+                _ => file_name(&t.0),
+            }),
+        };
         let shared = self.make_shared(
             id,
             kind,
@@ -431,11 +467,19 @@ impl OpQueue {
             .and_then(|t| t.1.as_deref())
             .map(dev_of)
             .unwrap_or(src_dev);
-        let first = ts.first().map(|t| file_name(&t.0)).unwrap_or_default();
+        let first = match &row.request {
+            OpRequest::Compound { label, .. } => label.clone(),
+            _ => ts.first().map(|t| file_name(&t.0)).unwrap_or_default(),
+        };
+        let key = if kind == OpKind::Compound {
+            compound_key()
+        } else {
+            (src_dev, dst_dev)
+        };
         let shared = self.make_shared(
             id,
             kind,
-            (src_dev, dst_dev),
+            key,
             row.origin,
             ts.len(),
             first,
@@ -671,8 +715,7 @@ impl OpQueue {
             .journal
             .load_op(op)?
             .ok_or(OpsError::NoSuchOp(op))?;
-        let items = self.inner.journal.load_items(op)?;
-        let inverse = undo::inverse(&row, &items).map_err(OpsError::UndoRefused)?;
+        let inverse = self.inverse_of(&row)?;
         let mut ids = Vec::new();
         for req in inverse {
             ids.push(self.enqueue_origin(
@@ -696,6 +739,54 @@ impl OpQueue {
             .sink
             .on_event(OpEvent::UndoChanged(self.inner.undo_state()));
         Ok(ids)
+    }
+
+    /// The requests that undo `row` (see [`undo::inverse`]). A compound op
+    /// is undone by one compound op that undoes its steps in reverse order,
+    /// each worked out when it starts; the last step is checked now, so an
+    /// undo that can't work is refused up front.
+    fn inverse_of(&self, row: &crate::journal::OpRow) -> Result<Vec<OpRequest>> {
+        if let OpRequest::Compound { label, .. } = &row.request {
+            let parts: Vec<_> = self
+                .inner
+                .journal
+                .parts_of(row.id)?
+                .into_iter()
+                .filter(|p| p.state.is_finished())
+                // Only steps that changed something (a failed step may not have).
+                .filter(|p| {
+                    self.items_deep(p.id).is_ok_and(|items| {
+                        items
+                            .iter()
+                            .any(|i| i.state == crate::journal::ItemState::Done)
+                    })
+                })
+                .collect();
+            let Some(last) = parts.last() else {
+                return Err(OpsError::UndoRefused("nothing was changed".into()));
+            };
+            let items = self.inner.journal.load_items(last.id)?;
+            undo::inverse(last, &items).map_err(OpsError::UndoRefused)?;
+            return Ok(vec![OpRequest::Compound {
+                label: label.clone(),
+                steps: parts
+                    .iter()
+                    .rev()
+                    .map(|p| OpRequest::UndoOf { op: p.id })
+                    .collect(),
+            }]);
+        }
+        let items = self.inner.journal.load_items(row.id)?;
+        undo::inverse(row, &items).map_err(OpsError::UndoRefused)
+    }
+
+    /// The journal items of `op` and, for a compound op, of its steps.
+    fn items_deep(&self, op: OpId) -> Result<Vec<ItemRow>> {
+        let mut out = self.inner.journal.load_items(op)?;
+        for p in self.inner.journal.parts_of(op)? {
+            out.extend(self.items_deep(p.id)?);
+        }
+        Ok(out)
     }
 
     /// The op Redo would redo and its request, if any.
@@ -749,7 +840,7 @@ impl OpQueue {
             .journal
             .load_op(op)?
             .ok_or(OpsError::NoSuchOp(op))?;
-        let items = self.inner.journal.load_items(op)?;
+        let items = self.items_deep(op)?;
         let mut undo_items = Vec::new();
         for u in self.inner.journal.undo_ops_of(op)? {
             let finished = match self.inner.find(u.id) {
@@ -759,7 +850,7 @@ impl OpQueue {
             if !finished {
                 return Err(OpsError::RedoRefused("the undo is still running".into()));
             }
-            undo_items.extend(self.inner.journal.load_items(u.id)?);
+            undo_items.extend(self.items_deep(u.id)?);
         }
         undo::redo_check(&row, &items, &undo_items).map_err(OpsError::RedoRefused)?;
         self.inner.journal.pop_stack(Stack::Redo)?;
@@ -770,6 +861,165 @@ impl OpQueue {
             .on_event(OpEvent::UndoChanged(self.inner.undo_state()));
         Ok(Some(id))
     }
+}
+
+/// Runs a compound op (see [`OpRequest::Compound`]): each step as an op of
+/// its own (origin `Part`), one after another, stopping at the first step
+/// that doesn't complete. A resumed compound op picks up its steps where they
+/// were. Never blocks a volume slot itself.
+fn run_compound(inner: &Arc<Inner>, op: &OpShared) {
+    let q = OpQueue {
+        inner: Arc::clone(inner),
+    };
+    let started = std::time::Instant::now();
+    let journal = &inner.journal;
+    let (steps, options) = match journal.load_op(op.id) {
+        Ok(Some(row)) => match row.request {
+            OpRequest::Compound { steps, .. } => (steps, row.options),
+            _ => (Vec::new(), row.options),
+        },
+        _ => (Vec::new(), EnqueueOptions::default()),
+    };
+    {
+        let mut st = op.status.lock();
+        st.state = OpState::Running;
+        st.files_total = steps.len() as u64;
+    }
+    let _ = journal.set_op_state(op.id, OpState::Running);
+    inner
+        .sink
+        .on_event(OpEvent::OpProgress(op.status.lock().clone()));
+    let existing = journal.parts_of(op.id).unwrap_or_default();
+    let mut done = 0u64;
+    let mut errors: Vec<crate::types::ItemError> = Vec::new();
+    let fail = |errors: &mut Vec<crate::types::ItemError>, msg: String| {
+        errors.push(crate::types::ItemError {
+            path: PathBuf::new(),
+            dest: None,
+            message: msg,
+            errno: None,
+        });
+    };
+    'steps: for (i, step) in steps.iter().enumerate() {
+        if op.ctl.cancelled() {
+            break;
+        }
+        let mine: Vec<OpId> = existing
+            .iter()
+            .filter(|p| p.part_of.map(|x| x.1) == Some(i))
+            .map(|p| p.id)
+            .collect();
+        let ids = if !mine.is_empty() {
+            // Resuming: the step's ops exist already.
+            for id in &mine {
+                let _ = q.resume(*id);
+            }
+            mine
+        } else {
+            let reqs = match step {
+                OpRequest::UndoOf { op: target } => {
+                    let row = match journal.load_op(*target) {
+                        Ok(Some(r)) => r,
+                        _ => {
+                            fail(&mut errors, format!("{target} is missing from the journal"));
+                            break;
+                        }
+                    };
+                    match q.inverse_of(&row) {
+                        Ok(r) => r,
+                        Err(OpsError::UndoRefused(why)) => {
+                            fail(&mut errors, why);
+                            break;
+                        }
+                        Err(e) => {
+                            fail(&mut errors, e.to_string());
+                            break;
+                        }
+                    }
+                }
+                other => vec![other.clone()],
+            };
+            let mut ids = Vec::new();
+            for r in reqs {
+                match q.enqueue_full(r, options.clone(), Origin::Part, None, Some((op.id, i))) {
+                    Ok(id) => ids.push(id),
+                    Err(e) => {
+                        fail(&mut errors, e.to_string());
+                        break 'steps;
+                    }
+                }
+            }
+            ids
+        };
+        for id in ids {
+            // A step may wait for a conflict decision for as long as it takes.
+            let st = loop {
+                if op.ctl.cancelled() {
+                    let _ = q.cancel(id);
+                }
+                match q.wait(id, Duration::from_millis(250)) {
+                    Some(st) if st.state.is_finished() => break Some(st),
+                    Some(_) => {}
+                    None => break None,
+                }
+            };
+            match st {
+                Some(st) if st.state == OpState::Completed => {}
+                Some(st) => {
+                    if st.errors.is_empty() {
+                        fail(&mut errors, format!("“{}” didn't finish", st.title));
+                    }
+                    errors.extend(st.errors);
+                    break 'steps;
+                }
+                None => {
+                    fail(&mut errors, "a step was lost".into());
+                    break 'steps;
+                }
+            }
+        }
+        done += 1;
+        {
+            let mut st = op.status.lock();
+            st.files_done = done;
+        }
+        inner
+            .sink
+            .on_event(OpEvent::OpProgress(op.status.lock().clone()));
+    }
+    let state = if op.ctl.cancelled() {
+        OpState::Cancelled
+    } else if !errors.is_empty() {
+        OpState::CompletedWithErrors
+    } else {
+        OpState::Completed
+    };
+    let _ = journal.set_op_state(op.id, state);
+    let report = {
+        let mut st = op.status.lock();
+        st.state = state;
+        st.files_done = done;
+        st.errors = errors.clone();
+        st.current = None;
+        OpReport {
+            id: op.id,
+            kind: op.kind,
+            state,
+            files_done: done,
+            files_failed: u64::from(!errors.is_empty()),
+            files_skipped: 0,
+            bytes_done: 0,
+            errors,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        }
+    };
+    inner
+        .sink
+        .on_event(OpEvent::OpProgress(op.status.lock().clone()));
+    inner.op_finished(op, &report);
+    inner
+        .sink
+        .on_event(OpEvent::OpFinished { op: op.id, report });
 }
 
 /// A status for an op that isn't loaded, from its journal rows.

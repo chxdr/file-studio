@@ -604,7 +604,11 @@ public struct FrecentDir: Equatable, Sendable {
 
 // MARK: - Operations
 
-public enum OpKind: Equatable, Sendable { case copy, move, trash, deleteImmediately, newFolder, newFile, rename, duplicate, moveTo }
+public enum OpKind: Equatable, Sendable {
+    case copy, move, trash, deleteImmediately, newFolder, newFile, rename, duplicate, moveTo
+    /// Several steps as one op (New Folder with Selection, a chain of folders).
+    case compound
+}
 
 public enum OpState: Equatable, Sendable {
     case queued, running, paused, waitingForDecision, completed, completedWithErrors, cancelled, failed, interrupted

@@ -113,18 +113,7 @@ pub(crate) struct PendingOp {
 #[derive(Debug, Clone)]
 pub(crate) enum PendingAction {
     /// Queue a request.
-    Op(PendingOp),
-    /// New Folder with Selection: make `parent/name`, move `items` into it.
-    NewFolderWith {
-        /// The tab it was asked from.
-        tab: TabId,
-        /// The folder to create it in.
-        parent: PathBuf,
-        /// The new folder's name.
-        name: String,
-        /// The items that move into it, with their identity then.
-        items: Vec<(PathBuf, Option<ObjId>)>,
-    },
+    Op(Box<PendingOp>),
     /// Redo this op (a move of a protected folder), if it is still the top
     /// of the redo stack; redo checks the items itself.
     Redo(fstudio_ops::OpId, Option<TabId>),
@@ -135,7 +124,6 @@ impl PendingAction {
     pub(crate) fn tab(&self) -> Option<TabId> {
         match self {
             PendingAction::Op(op) => op.tab,
-            PendingAction::NewFolderWith { tab, .. } => Some(*tab),
             PendingAction::Redo(_, tab) => *tab,
         }
     }
@@ -171,23 +159,8 @@ impl Engine {
             .remove(&token)
             .ok_or_else(|| CoreError::NotFound(format!("question {token}")))?;
         match action {
-            PendingAction::Op(op) => self.run_pending_op(op, true),
+            PendingAction::Op(op) => self.run_pending_op(*op, true),
             PendingAction::Redo(op, tab) => self.redo_op(Some(op), tab),
-            PendingAction::NewFolderWith {
-                tab,
-                parent,
-                name,
-                items,
-            } => {
-                if let Some(why) = first_change(&items) {
-                    return Ok(Outcome::message(why).with_tab(tab));
-                }
-                let t = self
-                    .tab(tab)
-                    .ok_or_else(|| CoreError::NotFound(format!("tab {tab}")))?;
-                let sel = items.into_iter().map(|(p, _)| p).collect();
-                self.new_folder_with(&t, parent, name, sel)
-            }
         }
     }
 

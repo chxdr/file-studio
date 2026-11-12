@@ -74,6 +74,7 @@ private func kindSymbol(_ k: OpKind) -> String {
     case .newFolder: "folder.badge.plus"
     case .newFile: "doc.badge.plus"
     case .rename: "pencil"
+    case .compound: "square.stack.3d.down.right"
     }
 }
 

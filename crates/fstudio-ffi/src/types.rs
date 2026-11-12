@@ -1387,6 +1387,8 @@ pub enum FfiOpKind {
     Rename,
     Duplicate,
     MoveTo,
+    /// Several steps as one op (New Folder with Selection, a chain of folders).
+    Compound,
 }
 
 impl From<core::OpKind> for FfiOpKind {
@@ -1401,6 +1403,7 @@ impl From<core::OpKind> for FfiOpKind {
             core::OpKind::Rename => FfiOpKind::Rename,
             core::OpKind::Duplicate => FfiOpKind::Duplicate,
             core::OpKind::MoveTo => FfiOpKind::MoveTo,
+            core::OpKind::Compound => FfiOpKind::Compound,
         }
     }
 }

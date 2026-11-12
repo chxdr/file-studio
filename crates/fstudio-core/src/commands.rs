@@ -836,40 +836,38 @@ impl Engine {
         Ok(Outcome::op(self.enqueue(req)?))
     }
 
-    /// New Folder with Selection: creates `parent/name`, then moves `sel`
-    /// into it.
-    pub(crate) fn new_folder_with(
-        &self,
-        t: &Tab,
+    /// New Folder with Selection as one journaled op (S12): create
+    /// `parent/name`, then move `sel` into it, with one undo entry. What is
+    /// asked about (F-023) and queued is exactly `sel`.
+    pub(crate) fn new_folder_with_op(
+        tab: TabId,
         parent: PathBuf,
         name: String,
         sel: Vec<PathBuf>,
-    ) -> Result<Outcome> {
-        let tid = t.id();
-        let ops = self.ops();
-        let first = ops.enqueue(OpRequest::NewFolder {
-            parent: parent.clone(),
-            name: name.clone(),
-        })?;
+    ) -> PendingOp {
         let dest = parent.join(&name);
-        // The move needs the folder to exist (it picks its volume from it).
-        std::thread::Builder::new()
-            .name("fstudio-new-folder-with-items".into())
-            .spawn(move || {
-                ops.wait(first, Duration::from_secs(30));
-                if dest.is_dir() {
-                    let _ = ops.enqueue(OpRequest::Move {
-                        sources: sel,
+        PendingOp {
+            req: OpRequest::Compound {
+                label: "New Folder with Items".into(),
+                steps: vec![
+                    OpRequest::NewFolder {
+                        parent,
+                        name: name.clone(),
+                    },
+                    OpRequest::Move {
+                        sources: sel.clone(),
                         dest_dir: dest,
-                    });
-                }
-            })?;
-        t.select_when_present(vec![name.clone()]);
-        Ok(Outcome {
-            ops: vec![first],
-            shell: Some(ShellRequest::BeginRename { tab: tid, name }),
-            ..Outcome::none().with_tab(tid)
-        })
+                    },
+                ],
+            },
+            items: snapshot(&sel),
+            tab: Some(tab),
+            after: After {
+                begin_rename: Some((tab, name)),
+                ..After::default()
+            },
+            toast: None,
+        }
     }
 
     /// A cut was used up: forget it and redraw its cut marks.
@@ -1350,18 +1348,9 @@ impl Engine {
                 let name = Self::free_name(&t, NEW_FOLDER_WITH_ITEMS);
                 let parent = t.location_path();
                 let dest = parent.join(&name);
-                let ask = self.guard_move(&sel, &dest, || PendingAction::NewFolderWith {
-                    tab: tid,
-                    parent: parent.clone(),
-                    name: name.clone(),
-                    items: snapshot(&sel),
-                });
-                if let Some(ask) = ask {
-                    // The question carries the exact items; on yes they move
-                    // into the new folder (see `confirm`).
-                    return Ok(ask.with_tab(tid));
-                }
-                self.new_folder_with(&t, parent, name, sel)?
+                let op = Self::new_folder_with_op(tid, parent, name, sel.clone());
+                // Runs through move protection like F6 (F-023, S12).
+                self.move_or_ask(&sel, &dest, op)?.with_tab(tid)
             }
             "file.trash" => {
                 if matches!(inv.arg, Some(CommandArg::Confirmed)) {
@@ -1388,7 +1377,7 @@ impl Engine {
                     }),
                 };
                 if ask {
-                    let token = self.ask(PendingAction::Op(op));
+                    let token = self.ask(PendingAction::Op(Box::new(op)));
                     return Ok(Outcome::shell(ShellRequest::ConfirmTrash {
                         token,
                         paths: strings(&sel),
@@ -1410,7 +1399,7 @@ impl Engine {
                     ));
                 }
                 // Always asked, whatever the argument: there is no undo.
-                let token = self.ask(PendingAction::Op(PendingOp {
+                let token = self.ask(PendingAction::Op(Box::new(PendingOp {
                     req: OpRequest::DeleteImmediately { paths: sel.clone() },
                     items: snapshot(&sel),
                     tab: Some(tid),
@@ -1423,7 +1412,7 @@ impl Engine {
                         button: None,
                         command: None,
                     }),
-                }));
+                })));
                 Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
                     token,
                     paths: strings(&sel),

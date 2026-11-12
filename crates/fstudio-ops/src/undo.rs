@@ -220,6 +220,10 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
         OpKind::DeleteImmediately => {
             return Err("Delete Immediately can't be undone".into());
         }
+        OpKind::Compound => {
+            // The queue undoes a compound op step by step (see `OpQueue::undo`).
+            return Err("a compound op is undone by its steps".into());
+        }
     }
     if out.is_empty() {
         return Err("nothing was changed".into());
@@ -231,7 +235,10 @@ pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> 
 /// (copies). New folders and files have none.
 pub fn sources(req: &OpRequest) -> Vec<PathBuf> {
     match req {
-        OpRequest::NewFolder { .. } | OpRequest::NewFile { .. } => Vec::new(),
+        OpRequest::NewFolder { .. } | OpRequest::NewFile { .. } | OpRequest::UndoOf { .. } => {
+            Vec::new()
+        }
+        OpRequest::Compound { steps, .. } => steps.iter().flat_map(sources).collect(),
         _ => crate::plan::targets(req)
             .into_iter()
             .map(|(src, _, _)| src)

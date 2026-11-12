@@ -764,3 +764,53 @@ fn s11_trash_undo_and_redo_show_toasts_naming_where() {
 fn t_select_all(t: &Tab) {
     t.set_selection(SelectionChange::All);
 }
+
+// ───────────────────────── S12 ─────────────────────────
+
+/// p7: New Folder with Selection is one op the shell can follow, with one
+/// undo entry that puts the items back and removes the folder.
+#[test]
+fn s12_p7_new_folder_with_selection_is_one_op_with_one_undo() {
+    let h = harness();
+    touch(&h.p("a"));
+    touch(&h.p("b"));
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["a".into(), "b".into()]));
+    let out = run(&h, &t, "file.new_folder_with_selection", None).unwrap();
+    assert_eq!(out.ops.len(), 1);
+    assert!(matches!(
+        out.shell,
+        Some(ShellRequest::BeginRename { ref name, .. }) if name == "New Folder With Items"
+    ));
+    ok(&h, &out);
+    assert!(h.p("New Folder With Items/a").exists() && h.p("New Folder With Items/b").exists());
+    assert_eq!(
+        h.engine.undo_state().undo.as_deref(),
+        Some("Undo New Folder with Items")
+    );
+    let u = h.engine.undo().unwrap();
+    ok(&h, &u);
+    assert!(h.p("a").exists() && h.p("b").exists());
+    assert!(!h.p("New Folder With Items").exists());
+    assert_eq!(h.engine.undo_state().undo, None);
+}
+
+/// It goes through move protection: a protected folder in the selection asks.
+#[test]
+fn s12_new_folder_with_a_protected_folder_asks_first() {
+    let h = harness();
+    mkdirs(&h.p("Documents"));
+    touch(&h.p("x"));
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["Documents".into(), "x".into()]));
+    let out = run(&h, &t, "file.new_folder_with_selection", None).unwrap();
+    let Some(ShellRequest::ConfirmMove { token, .. }) = out.shell else {
+        panic!("expected a question, got {:?}", out.shell);
+    };
+    assert!(out.ops.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!h.p("New Folder With Items").exists());
+    let out = h.engine.confirm(token).unwrap();
+    ok(&h, &out);
+    assert!(h.p("New Folder With Items/Documents").is_dir());
+}

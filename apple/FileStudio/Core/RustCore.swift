@@ -432,6 +432,7 @@ extension OpKind {
         case .rename: self = .rename
         case .duplicate: self = .duplicate
         case .moveTo: self = .moveTo
+        case .compound: self = .compound
         }
     }
 }

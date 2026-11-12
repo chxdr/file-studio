@@ -236,7 +236,7 @@ impl Engine {
     ) -> Result<Outcome> {
         let mut slot = Some(op);
         if let Some(ask) = self.guard_move(sources, dest, || {
-            PendingAction::Op(slot.take().expect("taken once"))
+            PendingAction::Op(Box::new(slot.take().expect("taken once")))
         }) {
             return Ok(ask);
         }
