@@ -184,9 +184,7 @@ impl Image {
                 "-fs",
                 fs,
                 "-volname",
-                "fstudio-test",
-                "-layout",
-                "NONE",
+                "FSTEST",
                 img.to_str().unwrap(),
             ],
         );
@@ -264,6 +262,24 @@ pub fn make(p: &Path, k: K, tag: &str) {
         K::Link => {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::os::unix::fs::symlink(format!("target-{tag}"), p).unwrap();
+        }
+    }
+}
+
+/// Fails `step` for any source whose path contains `needle`.
+pub struct FailAt {
+    pub step: FaultStep,
+    pub needle: String,
+}
+
+impl FaultHook for FailAt {
+    fn check(&self, step: FaultStep, path: &Path) -> std::io::Result<()> {
+        if step == self.step && path.to_string_lossy().contains(&self.needle) {
+            Err(std::io::Error::other(format!(
+                "injected failure at {step:?}"
+            )))
+        } else {
+            Ok(())
         }
     }
 }

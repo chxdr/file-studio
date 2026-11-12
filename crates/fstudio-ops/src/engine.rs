@@ -492,7 +492,10 @@ impl Env<'_> {
         match self.finish_partial(item, src, &partial, &dest, cloned, hash) {
             Ok(()) => Ok(()),
             Err(e) => {
-                tap.rollback();
+                // A copy that landed keeps its bytes even if a later step failed.
+                if item.state != ItemState::Placed {
+                    tap.rollback();
+                }
                 if item.partial.is_some() {
                     let _ = remove::remove_partial(&partial);
                 }
@@ -1044,6 +1047,7 @@ fn copy_loop(src: &Path, partial: &Path, tap: &Tap<'_>) -> io::Result<String> {
             Err(e) => return Err(e),
         };
         let mut z = data - off;
+        tap.add(z);
         while z > 0 {
             let n = z.min(zeros().len() as u64) as usize;
             h.update(&zeros()[..n]);
