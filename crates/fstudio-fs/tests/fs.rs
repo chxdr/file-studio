@@ -73,6 +73,9 @@ fn streams_in_chunks_and_never_repeats() {
         }
     }
     assert_eq!(names.len(), 3000);
+    // The chunk-count check below is macOS-only (getattrlistbulk); this keeps Linux lint-clean.
+    #[cfg(not(target_os = "macos"))]
+    let _ = chunks;
     #[cfg(target_os = "macos")]
     assert!(
         chunks > 1,
