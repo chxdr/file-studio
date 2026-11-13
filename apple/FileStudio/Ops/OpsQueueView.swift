@@ -21,6 +21,15 @@ struct OpsQueueContent: View {
     let finished: [OpStatus]
     let interrupted: [OpStatus]
     let ops: OpsModel?
+    /// Each row's laid-out height, keyed by section and op (rows grow when
+    /// their failed items are shown). Rows not drawn yet use an estimate.
+    @State private var rowHeights: [String: CGFloat] = [:]
+
+    /// The tallest the popover gets; past this the list scrolls.
+    static let maxHeight: CGFloat = 560
+    static let headerHeight: CGFloat = 42
+    /// A section title's height in the plain list.
+    static let sectionHeight: CGFloat = 29
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,12 +51,12 @@ struct OpsQueueContent: View {
                 List {
                     if !interrupted.isEmpty {
                         Section("Interrupted — from the last time") {
-                            ForEach(interrupted) { InterruptedRow(op: $0, ops: ops) }
+                            ForEach(interrupted) { InterruptedRow(op: $0, ops: ops).modifier(RowHeight(key: "i\($0.id)", into: $rowHeights)) }
                         }
                     }
                     if !active.isEmpty {
                         Section("In progress") {
-                            ForEach(active) { ActiveRow(op: $0, ops: ops) }
+                            ForEach(active) { ActiveRow(op: $0, ops: ops).modifier(RowHeight(key: "a\($0.id)", into: $rowHeights)) }
                                 .onMove { from, to in
                                     var ids = active.map(\.id)
                                     guard let f = from.first else { return }
@@ -59,7 +68,7 @@ struct OpsQueueContent: View {
                     }
                     if !finished.isEmpty {
                         Section("Finished") {
-                            ForEach(finished) { FinishedRow(op: $0, ops: ops) }
+                            ForEach(finished) { FinishedRow(op: $0, ops: ops).modifier(RowHeight(key: "f\($0.id)", into: $rowHeights)) }
                         }
                     }
                 }
@@ -67,13 +76,31 @@ struct OpsQueueContent: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .frame(width: 440, height: height(active.count, finished.count, interrupted.count))
+        .frame(width: 440, height: height)
     }
 
-    private func height(_ a: Int, _ f: Int, _ i: Int) -> CGFloat {
-        let rows = CGFloat(a) * 92 + CGFloat(f) * 62 + CGFloat(i) * 70
-        let heads = CGFloat((a > 0 ? 1 : 0) + (f > 0 ? 1 : 0) + (i > 0 ? 1 : 0)) * 26
-        return min(520, max(150, 48 + rows + heads + 12))
+    /// Fits the ops, up to `maxHeight`.
+    private var height: CGFloat {
+        if active.isEmpty && finished.isEmpty && interrupted.isEmpty { return 150 }
+        func sum(_ ops: [OpStatus], _ k: String, _ guess: CGFloat) -> CGFloat {
+            ops.reduce(0) { $0 + (rowHeights["\(k)\($1.id)"] ?? guess) }
+        }
+        let rows = sum(interrupted, "i", 70) + sum(active, "a", 80) + sum(finished, "f", 46)
+        let sections = CGFloat([interrupted, active, finished].filter { !$0.isEmpty }.count)
+        return min(Self.maxHeight, max(150, Self.headerHeight + sections * Self.sectionHeight + rows + 8))
+    }
+
+}
+
+/// Reports a list row's full height (its cell, padding included) through
+/// the row background, which spans the whole cell.
+private struct RowHeight: ViewModifier {
+    let key: String
+    @Binding var into: [String: CGFloat]
+    func body(content: Content) -> some View {
+        content.listRowBackground(Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+            if abs((into[key] ?? 0) - h) > 0.5 { into[key] = h }
+        })
     }
 }
 
