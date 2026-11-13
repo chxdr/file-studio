@@ -28,6 +28,21 @@ The yank tests are all `#[ignore]`d, so a plain `cargo test` never touches a dis
 3. It re-attaches the image (once at a different mount point, as a card coming back as "Untitled 1" would). It then checks that every real file name holds the complete file, resumes the job, and compares the whole tree with the originals.
 4. Images are detached and deleted when the test ends, including on failure.
 
+**Guards against a stuck disk-image service:**
+- **Every external tool call has a 60 s limit.** This covers `hdiutil`, `diskutil`, `ps` and `kill`. A call that runs over is stopped, and the test fails with a message saying so, instead of hanging.
+- **The helper to kill is found from `hdiutil info -plist`.** The harness matches the image path and reads its `hdid-pid`. It then refuses to kill unless:
+  - that process is a `diskimages-helper`,
+  - it is run by the user who owns the image,
+  - and it serves no other image.
+
+  A shared daemon such as `diskimagesiod` is never killed.
+- **A yank counts only once it has fully taken effect:** the helper has exited and the image has left `hdiutil info`, each within 30 s.
+  - A yank that fails inside a fault hook is recorded. The next `put_back` fails the test with the reason.
+  - `put_back` also refuses to attach while the image is still listed. Attaching an image that its old helper still serves waits forever; that is how a run once hung for more than 70 minutes.
+- **Clean-up runs on drop, including on panic.** It force-detaches the image. If the image is still listed after that, it kills the image's own helper with the same checks. It never panics, and it prints a warning if an image is left behind.
+
+If a run still fails with "didn't finish in 60 s", the disk-image service itself is stuck (even `hdiutil create` becomes slow). Restart the Mac before running the yank tests again.
+
 The tests only touch the images they create, found by their own image path, never volumes you mounted (cards, drives, other images). They list mounted volumes to find their own by UUID; that only reads `getmntinfo`.
 
 **Expect notifications.** macOS shows a **"Disk Not Ejected Properly"** notification for every yank (the volumes are called `STTEST`). That's the point of the test, not a problem. A full `--ignored` run yanks about **40** times:

@@ -163,6 +163,27 @@ fn reread_mode_catches_an_original_that_reads_differently() {
     assert!(names(d.path()).is_empty());
 }
 
+#[test]
+fn the_harness_stops_a_tool_that_hangs() {
+    let t = std::time::Instant::now();
+    let e = run_limited("sleep", &["30"], None, Duration::from_secs(1)).unwrap_err();
+    assert!(e.contains("didn't finish in 1 s"), "{e}");
+    assert!(t.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn the_harness_never_picks_a_helper_for_an_image_that_isnt_attached() {
+    let d = tempfile::tempdir().unwrap();
+    let img = d.path().join("vol.dmg");
+    std::fs::write(&img, b"not an image").unwrap();
+    assert_eq!(attachments(&img).unwrap(), vec![]);
+    let e = helper_pid(&img).unwrap_err();
+    assert!(e.contains("isn't attached"), "{e}");
+    // A failed yank is reported, not silently ignored.
+    let e = try_yank(&img, &d.path().join("mnt")).unwrap_err();
+    assert!(e.contains("isn't attached"), "{e}");
+}
+
 /// Pulls the image out the first time `point` is reached.
 #[derive(Debug)]
 struct Yank {
