@@ -1,0 +1,25 @@
+[package]
+name = "safe-transfer-cli"
+description = "The safe-transfer command: verified copies from the terminal and scripts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "safe-transfer"
+path = "src/main.rs"
+
+[features]
+fault-injection = ["safe-transfer/fault-injection"]
+
+[dependencies]
+safe-transfer = { path = "../safe-transfer" }
+clap.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 # Safe Transfer: design proposal (pre-code)
 
-Status: **waiting for your OK.** No code has been written. The only new files are this document and a small measurement probe in `spikes/safe-transfer/` (`st_probe.c`, `run.sh`), whose numbers are in §12.
+Status: **approved 2026-11-13** with every §14 recommendation, plus an opt-in "re-read originals" mode that first-run setup explains (§4.6). The measurement probe is in `spikes/safe-transfer/` (`st_probe.c`, `run.sh`), and its numbers are in §12. M1 is under way in `crates/safe-transfer` and `crates/safe-transfer-cli`.
 
 **Inputs:**
 - your brief (`safe-transfer-prompt.md`)
@@ -27,19 +27,19 @@ Safe Transfer is a separate Rust library, plus a small `safe-transfer` command-l
 ### The honest limits
 
 - **A drive that lies.** `F_FULLFSYNC` asks the drive to empty its own write cache onto the storage. A few cheap USB card readers and enclosures report success without doing it. If one of those loses power within a second or so of a file finishing, that file can be damaged even though the check passed. No software can fully defend against that. The only defence is the read-back after reconnecting, which Safe Transfer's resume does.
-- **A bad read of the original.** The original is read once. Its bytes are hashed in memory, and that hash is what the copy is checked against. If the card or reader returned wrong bytes during that one read (very rare, and nothing would flag it), the copy faithfully matches the wrong bytes. An optional "re-read originals" mode closes this gap, at the cost of reading the source twice.
+- **A bad read of the original.** The original is read once. Its bytes are hashed in memory, and that hash is what the copy is checked against. If the card or reader returned wrong bytes during that one read (very rare, and nothing would flag it), the copy faithfully matches the wrong bytes. The opt-in "re-read originals" mode (§4.6) closes this gap by reading the original a second time, at the cost of roughly twice the reading time from the source.
 - **exFAT's rename isn't strictly exclusive.** macOS can't do a "rename only if the name is free" on exFAT. Safe Transfer checks that the name is free and then renames, which leaves a window of a few microseconds. Another app writing the exact same name into the same folder in that window could be overwritten. File Studio has the same limit today.
 - **exFAT has no journal.** If power is lost during the instant of the rename itself, the card's folder entry can be damaged. Disk Utility's First Aid repairs it. The file's data is already safe on the card at that point, because the rename only happens after the flush and the check.
 - **Checking costs time.** Copying from a card to the Mac costs an estimated 5–15 % more. Copying from the Mac to a card costs an estimated 60–85 % more, because the copy has to be read back from the slow card. See §12.
 
-### What I need you to decide (details in §14)
+### What was decided (2026-11-13; details in §14)
 
-1. Default chunk size: **64 MB** (recommended).
-2. Verify policy: **always, except instant clones** (recommended). Or allow turning it off for internal-to-internal copies.
-3. Journal format: **JSON** (recommended) or binary.
-4. Same-volume copies: **keep the instant APFS clone** (recommended).
-5. Whether to **fix fstudio-ops' flushing now**, as a small separate task, before Safe Transfer replaces it. Reading the code turned up a gap (§0.2).
-6. Plus some smaller ones: the crate name, moves off a card, small-file batching, and keeping finished journals.
+1. Chunk size: **64 MB**.
+2. Verify: **always, except instant clones**, with no off switch in v1.
+3. Journal: **JSON**.
+4. Same-volume copies: **keep the instant APFS clone**.
+5. The fstudio-ops flush gap (§0.2) is being fixed separately, now, by the coordinator.
+6. The smaller ones as recommended. In addition, **"re-read originals"** is an opt-in mode (off by default), explained in first-run setup (§4.6).
 
 ---
 
@@ -285,9 +285,9 @@ pub enum Item {
 pub struct Options {
     pub chunk_size: u64,              // 64 MiB (§14 Q1); 16 MiB..=256 MiB
     pub verify: Verify,               // Always (default; clones excepted) | SkipInternalToInternal
-    pub reread_source: bool,          // false; true = hash the original a second time (paranoid)
+    pub reread_source: bool,          // false; true = read the original a second time, separately (§4.6)
     pub flush_each_chunk: bool,       // true for files over one chunk (§3.6)
-    pub small_file_batch: Batch,      // group commit for files < 8 MiB: ≤ 64 MiB or 256 files per flush (§4.1)
+    pub small_file_batch: Batch,      // group commit for files < 8 MiB: ≤ 256 files, 64 MiB or 1 s per drive flush (§4.7)
     pub on_conflict: ConflictPolicy,  // per class (files / folders): Ask | Skip | Replace | KeepBoth | Merge(folders)
     pub symlinks: Symlinks,           // CopyLink (default) | Follow
     pub allow_dataless: bool,         // false: iCloud placeholders are skipped, never downloaded (F-016)
@@ -347,6 +347,7 @@ pub struct JobReport {
     pub failed: Vec<(FileRef, String)>,    // per-file reason
     pub metadata_lost: Vec<MetaLoss>, // grouped: "exFAT can't store permissions: 812 files"
     pub flush_level: FlushLevel,      // Device everywhere, or which volume only managed OsOnly
+    pub source_reread: u32,           // files whose original was read twice and matched (§4.6)
     pub sources_trashed: Vec<(FileRef, PathBuf)>,   // for undo
     pub replaced_trashed: Vec<(FileRef, PathBuf)>,  // old files sent to the Trash by Replace
     pub bytes: u64, pub duration: Duration, pub verify_duration: Duration,
@@ -425,7 +426,7 @@ Every file is **two lines**: the JSON body, then a trailer holding the body's le
 {"format":"safe-transfer/manifest","version":1,"job":"k3f9q2xm","created":"2026-11-13T10:42:07Z",
  "label":"Smith wedding → CLIENT_A","host_ref":"fstudio-op:1234","mode":"copy",
  "options":{"chunk_size":67108864,"verify":"always","flush_each_chunk":true,"symlinks":"copy_link",
-            "on_conflict":{"files":"ask","folders":"merge"},"disposal":"trash","allow_dataless":false},
+            "on_conflict":{"files":"ask","folders":"merge"},"disposal":"trash","allow_dataless":false,"reread_source":false},
  "dest":{"path":"/Volumes/CLIENT_A/2026-11-13 Smith","volume":{"uuid":"15F49193-C24C-395C-999A-615DCE8F315F",
          "fs":"exfat","name":"CLIENT_A","capacity":128043712512,"case_sensitive":false}},
  "sources":[{"volume":{"uuid":"…","fs":"exfat","name":"Untitled","capacity":…},"root":"/Volumes/Untitled/DCIM"}],
@@ -442,7 +443,7 @@ Every file is **two lines**: the JSON body, then a trailer holding the body's le
 ```json
 {"format":"safe-transfer/segment","version":1,"job":"k3f9q2xm","seg":0,"gen":418,
  "files":{
-  "1":{"st":"done","outcome":"verified","hash":"<xxh3-128>","chunks":["<xxh3-64>"],"meta_lost":["acl","owner"]},
+  "1":{"st":"done","outcome":"verified","hash":"<xxh3-128>","chunks":["<xxh3-64>"],"reread":"match","meta_lost":["acl","owner"]},
   "2":{"st":"copying","chunks":["<xxh3-64>","<xxh3-64>"],"partial_vol":"15F49193-…"},
   "3":{"st":"conflict","conflict":{"existing_size":52428800,"existing_mtime_ns":…}}}}
 {"len":512,"xxh3":"…"}
@@ -565,7 +566,7 @@ Recording a chunk late is safe (§3.3), so the write frequency only decides how 
 
 If `F_FULLFSYNC` is refused and only `fsync` works (some network filesystems), the report says "this disk only confirmed an OS-level flush" instead of claiming more.
 
-**Small files (group commit).** Flushing each tiny file separately made ops' verified small-file copies about 50× slower (F-020). Because `F_FULLFSYNC` is drive-wide, Safe Transfer writes a batch of small files (under 8 MB each, up to 64 MB or 256 files), `fsync`s each one, issues **one** `F_FULLFSYNC`, and then verifies and renames the batch. Every file still gets its real name only after it is flushed and verified. The batch only shares the flush.
+**Small files (group commit)** are a first-class part of the pipeline: see §4.7, which has the measurements, the exact ordering and how it is proved.
 
 ### 4.2 Making the read-back really come from the drive (measured)
 
@@ -616,6 +617,118 @@ A note on the measurements: a disk image's own "device" is a file on the interna
 - The copy never goes through `copyfile(ALL)`'s data path, which fills holes in.
 - exFAT and FAT can't store holes, so the zeros are written out. The report says "written in full: this disk can't store sparse files". The space check (§10) counts the full logical size for those disks.
 - Sparse files are rare in photo work (they are mostly VM disks and some databases), but this keeps a 32 KB file from silently becoming 1 GB.
+
+### 4.6 Re-read originals (opt-in, off by default)
+
+**What it protects against.** Normally the original is read once. Its bytes are hashed in memory, written to the destination, and the copy is checked against that hash. If the card or the card reader returned a wrong byte during that one read, the copy is a faithful copy of the wrong byte, and the check passes. With this mode on, the original is read a **second time, separately**, and the two reads must agree before the copy gets its real name.
+
+**How it works.**
+1. Before the first read, any cached pages of the original are evicted (§4.2). This is read-only for the original: `msync` with `MS_SYNC|MS_INVALIDATE` writes back anything another app has pending before dropping it, so nothing of the original's content can be lost.
+2. The copy is made, flushed and read back as usual.
+3. The original's cache is evicted again, and the original is read a second time with `F_NOCACHE`. Its xxh3-128 must equal the first read's.
+4. **If they agree**, the file is placed, and the report counts it under `source_reread`.
+5. **If they don't**, the partial is removed and the file fails with "the original read differently twice; the card or reader may be failing". It is never retried in a loop, and the original is never touched.
+
+**The cost.** Roughly twice the reading time from the source. Copying from a card means reading the card twice: a 30 GB job at 161 MB/s takes about 3 minutes longer. From the internal SSD the cost is small.
+
+**Where it shows up.**
+- `Options.reread_source`
+- the manifest's `options.reread_source`
+- the per-file `"reread": "match"` in the journal
+- `JobReport.source_reread`
+- the CLI's `--reread-source`
+
+**Settings key (File Studio):** `operations.reread_originals`, a bool, default `false`, under Settings › Operations › Copying. Import Studio would keep its own.
+
+**First-run setup text** (spec for M4; the page is core-driven, and Swift only shows it):
+
+> **Read originals twice?**
+>
+> File Studio always checks every copy against the original before giving it its real name. That catches a copy that went wrong on the way to the disk.
+>
+> It can't catch a copy that was wrong from the start: if a failing card or card reader hands over a bad byte while the original is being read, the copy matches that bad byte perfectly.
+>
+> **Turn this on to read each original a second time** and make sure both reads agree. If they don't, the file is flagged and your original is left untouched.
+>
+> **Who it's for:**
+> - copying straight off camera cards that have shown errors
+> - ageing or unreliable card readers
+> - archives and client deliveries, where a second read is worth the time
+>
+> **The cost:** copies take longer, about twice the reading time from the original's disk. From a card, a 30 GB job takes about 3 minutes more.
+>
+> [ Read originals twice ]   [ Not now ]   You can change this any time in Settings › Operations.
+
+### 4.7 Small files: one drive flush per group (M2, first-class)
+
+**Why it matters.** A drive flush (`F_FULLFSYNC`) costs about the same whether it covers one byte or a thousand files:
+- ≈ 7.7 ms on the internal SSD
+- ≈ 20 ms on an APFS disk image
+- ≈ 16 ms on an exFAT disk image
+
+fstudio-ops now flushes every copied file before its rename, and that took 5,000 small files from 1.2 s to 48 s (≈ 9.3 ms per flush, the coordinator's measurement). The probe below measured the same pattern, per-file barriers, at 39–101 s. Photo jobs have plenty of small files: XMP sidecars, JPEG previews, `.THM`, catalogue folders.
+
+**The rule stays exact:** nothing gets its real name before a drive flush that covers its data, and nothing is reported done before a drive flush that covers its rename. A group only shares the flushes. Each file is still written, hashed, read back from the drive and compared on its own.
+
+**Which files are grouped.**
+- **Eligible:** files smaller than 8 MiB, which is one-eighth of a chunk.
+- **A group closes** at the first of: 256 files, 64 MiB of data, 1 second of writing (so a slow card never holds many unnamed files), or the end of the job.
+- **Not grouped:** larger files keep the per-chunk pipeline of §4.1–4.2.
+
+**The order, for one group:**
+1. **Write each file.** For every file: write its partial with `F_NOCACHE`, hash it while writing, copy its xattrs and dates, clear immutable flags and ACLs, then **`fsync(fd)`** and close.
+   - `fsync` has no drive barrier, so it is cheap (0.27 s for 5,000 files on the internal SSD), but it is documented to send that file's data *and attributes* to the drive.
+   - The journal records `written`.
+2. **One drive barrier:** `F_FULLFSYNC` on the last file's descriptor. It is documented to "ask the drive to flush all buffered data to permanent storage". The drive flush command carries no file scope (SCSI SYNCHRONIZE CACHE over the whole device, NVMe Flush per namespace), so it covers every write the drive has already received, from any descriptor.
+   - The journal marks the group `flushed`. This is when its chunks count as complete.
+3. **Check and name each file:** evict it from the cache, confirm with `mincore` that nothing is left, read it back uncached and compare the hashes. In re-read mode the original is read again here too. Then `renamex_np(RENAME_EXCL)`.
+   - A file that fails its check is **not** renamed. It goes back for one retry in the next group, and the rest of the group carries on.
+4. **One folder barrier:** `fsync` on each destination folder touched by the group (usually one), then one `F_FULLFSYNC`. Only now are the group's files `done`.
+5. **ACLs and immutable flags**, then the metadata check, as for any file.
+
+**If the barrier fails** (EIO, or the card was pulled), none of the group is renamed. The partials stay, and the job waits for the destination (§3.5).
+
+**Why `fsync` each file, rather than relying on `F_NOCACHE` writes.** An uncached write sends the *data*, but the file's size and its directory entry stay in the filesystem's memory. In the harness below, files written uncached with no flush were **all lost** on APFS. Experimentally, a single `F_FULLFSYNC` alone covered all 2,000 files even without the per-file `fsync`. That relies on undocumented filesystem behaviour, though, and the per-file `fsync` costs almost nothing. So the design uses both: per-file `fsync` plus a group `F_FULLFSYNC`. That is the fallback you suggested, adopted as the primary design.
+
+**How it is proved:**
+1. **By documentation.** `fsync(2)` moves each file's data and attributes to the drive. `F_FULLFSYNC` then moves everything the drive holds to permanent storage. Together they cover every file in the group, whichever descriptor wrote it.
+2. **By a yank harness that can tell the difference (measured today).**
+   - `hdiutil detach -force` is **not** a yank: it writes cached data back first. Even files that were never flushed survive it (2,000 of 2,000 intact on both filesystems), so it can't prove anything about flushing.
+   - The harness instead does `kill -9` on the image's own `diskimages-helper`, the process that plays the drive. That makes the drive vanish with whatever it wasn't told to flush.
+   - Results for 2,000 small files written then yanked (two runs each; the five modes are `st_probe batchwrite` modes):
+
+     | Mode | APFS image | exFAT image |
+     |---|---|---|
+     | cached writes, no flush | **2,000 missing** | **46–70 missing, 1 short file under its real name** |
+     | `F_NOCACHE` writes, no flush | **2,000 missing** | 46–56 missing |
+     | `fsync` each file | all intact | all intact |
+     | cached writes + **one** group `F_FULLFSYNC` | all intact | all intact |
+     | `F_NOCACHE` + one group `F_FULLFSYNC` | all intact | all intact |
+
+   - The negative controls lose data, so the harness is real. The group barrier covered files written through other, already-closed descriptors on both filesystems.
+3. **In the M2 test suite.**
+   - New stop points: `BeforeGroupBarrier`, `AfterGroupBarrier`, `MidGroupRename(k)` and `BeforeFolderBarrier`.
+   - At each one, the helper-kill yank runs on APFS, exFAT, FAT and HFS+ images. Every file of the group is checked: it must be absent, or complete under its real name, never short.
+   - Each filesystem also gets a negative-control test that must lose data without the barrier. The M1 suite already has one for APFS, `the_yank_harness_loses_unflushed_writes`.
+   - The M1 yank tests have been switched to this harness and still pass.
+4. **On real hardware (M5):** your card and reader, pulling the reader's USB cable during a 5,000-file copy, ten times.
+
+**What it doesn't prove:** a disk-image helper behaves like a drive that honours flushes. A reader that acknowledges a flush without doing it isn't modelled (§4.1). Only the real-card runs in M5 can catch that.
+
+**Cost, measured with `st_probe batch`.** 5,000 files of 1–64 KiB (≈ 160 MB). Every row includes the uncached read-back of every file, the exclusive rename and the folder flush:
+
+| Destination | No flush (unsafe, for reference) | Flush each file | Groups of 64 | **Groups of 256** | Groups of 1,024 |
+|---|---|---|---|---|---|
+| Internal SSD (APFS) | 0.91 s | 38.6 s | 2.09 s | **1.53 s** | 1.32 s |
+| APFS disk image | 1.50 s | 100.9 s | 3.13 s | **1.82 s** | 1.43 s |
+| exFAT disk image | 13.5 s | 78.5 s | 15.8 s | **14.2 s** | 14.8 s |
+
+exFAT is slow at creating small files whether or not anything is flushed (12.8 s with no flush and no verify), so batching adds about 5 % there. Going from 256 to 1,024 files per group saves little and leaves four times as many files waiting unnamed, so the group stays at 256.
+
+**Benchmark targets (M2 gate, `fstudio-bench` rows):**
+- **5,000 small files, internal SSD → APFS disk image, verified: ≤ 2.4 s.** That is 2× the old 1.2 s unflushed ops number. The probe does 1.82 s, which leaves room for the engine's own overhead (journal writes, events).
+- **The same onto an exFAT image: ≤ 1.25× the unflushed exFAT time.**
+- **On your card (M5): within 1.3× of today's 73.9 s,** which was measured without flushes, so ≤ 96 s.
 
 ---
 
@@ -823,7 +936,7 @@ Each point can do one of three things: return an error, **pause** (the engine wr
 - **Destinations:** a 2 GB `hdiutil` image as APFS, as exFAT, and (smaller) as FAT32. The source is a temp folder on the internal disk, and for one case a second exFAT image as a "source card".
 - **For each stop point above, on each filesystem:**
   1. Start a job of 40 files of 5–90 MB plus one 2.1 GB file.
-  2. Wait for `REACHED`, then `detach -force`.
+  2. Wait for `REACHED`, then yank: `kill -9` the image's `diskimages-helper` (the "drive") and clear the dead mount. `detach -force` alone doesn't count as a yank, because it writes cached data back first (§4.7).
   3. Re-attach.
   4. Check the invariants below.
   5. Resume and check again.
@@ -888,7 +1001,7 @@ The card (`W2`, exFAT, USB reader) wrote at about 119 MB/s and read at about 161
 | Card → Mac: a 600 × 50 MB job, 30 GB | ≈ 3.1 min | ≈ 3.3–3.5 min | +6–12 % |
 | Mac → card: 1 GiB file | 9.0 s | ≈ 16–17 s (read-back from the card ≈ 6.7 s, 16 flushes ≈ 0.3–0.8 s) | **+75–85 %** |
 | Mac → card: 600 × 50 MB, 30 GB | ≈ 4.2 min | ≈ 7.5 min | ≈ +80 % |
-| Mac → card: 5,000 small files, 168 MB | 73.9 s | ≈ 85–95 s with group commit (≈ 20 flushes instead of 5,000) | +15–30 % |
+| Mac → card: 5,000 small files, 168 MB | 73.9 s | target ≤ 96 s with group commit (20 drive flushes instead of 5,000; §4.7) | ≤ +30 % |
 | Same APFS volume, 1 GiB (clone) | 0.4 ms | 0.4 ms + one folder flush | – |
 | Mac → external USB SSD (≈ 1 GB/s each way) | – | the read-back roughly doubles the time for big files | +60–100 % (to be measured) |
 
@@ -924,29 +1037,25 @@ Safe Transfer is a separate track you asked for. File Studio's own M3 hasn't sta
 
 ---
 
-## 14. Decisions for you
+## 14. Decisions (taken 2026-11-13)
 
-Each comes with my recommendation; "as recommended" is a fine answer to all of them.
+The user approved every recommendation, and added the opt-in re-read mode.
 
-1. **Default chunk size.** *Recommend 64 MB.* A typical raw is one chunk (one flush). The measured flush cost is about 0.15 s per GiB for big files. An interruption repeats at most about 0.5 s of card writing. 16 MB quadruples the flushes; 256 MB saves little and loses more per interruption.
-2. **Verify policy.** *Recommend: always verify, except instant clones, with no off switch in v1.* If you want a switch, limit it to internal-to-internal copies, where the risk is lowest. Card and USB copies always verify.
-3. **Journal format.** *Recommend JSON*: two-line files with a checksum trailer, A/B slots, and segments of 1,024 files. It's readable when something goes wrong, uses no new dependency, and is a few hundred KB per big job. Binary would save size and CPU that don't matter at these scales.
-4. **Same-volume APFS clones.** *Recommend keeping `copyfile(CLONE_FORCE)`.* It's instant, and there is nothing to check (§4.4). The report says "cloned", not "verified".
-5. **Close the ops flush gap now?** *Recommend yes, as a small separate task, now:*
-   - always `F_FULLFSYNC` before renaming a copy into place, and the folder after it
-   - flush before the verify read
-   - evict before the verify read
-
-   This costs about 10 ms per file. Otherwise the gap stays until Safe Transfer's M4.
-6. **Smaller decisions:**
-   - a. **Crate name** `safe-transfer` / `safe_transfer`, an exception to F-003's `fstudio-` prefix because it's meant to be shared. *Recommend yes,* logged as a new F-entry.
-   - b. **Moves off a card:** originals go to the card's own Trash (`.Trashes`), as the brief says. *Recommend yes,* with a one-time report line explaining it.
-   - c. **Small-file group commit** (one drive flush per batch of files under 8 MB, each still verified before it's named). *Recommend yes;* without it, 5,000 small files would take minutes longer.
-   - d. **"Skip if identical"** as a conflict choice (hashes the existing file). *Recommend offering it, not as the default.*
-   - e. **"Re-read originals"** (paranoid mode, about 2× source reads). *Recommend: offered, off by default.*
-   - f. **Keeping finished journals** (for "what happened to that job"). *Recommend 30 days,* then delete the job folder, keeping nothing on the destination.
-   - g. **Two destinations from one card read** (Import Studio). *Recommend later (v2),* when Import Studio adopts the crate.
-   - h. **Workers on removable media.** *Recommend one file copying while the previous one is checked,* and four for small files. M5 measures alternatives.
+| # | Decision | Value |
+|---|---|---|
+| 1 | Default chunk size | **64 MB** (16–256 MB configurable) |
+| 2 | Verify policy | **Always, except instant APFS clones.** No off switch in v1 |
+| 3 | Journal format | **JSON**: two-line files with a checksum trailer, A/B slots, segments of 1,024 files |
+| 4 | Same-volume APFS copies | **Keep `copyfile(CLONE_FORCE)`**; reported as "cloned", not "verified" |
+| 5 | The fstudio-ops flush gap | Being fixed now by the coordinator, separately: `F_FULLFSYNC` before the rename, eviction before the verify read, and the leftover sweep keyed by volume UUID |
+| 6a | Crate name | **`safe-transfer` / `safe_transfer`** (an exception to F-003's prefix) |
+| 6b | Moves off a card | Originals go to the **card's own Trash**, with a one-time report line |
+| 6c | Small-file group commit | **Yes, first-class in M2** (§4.7): files under 8 MiB, per-file `fsync` plus one `F_FULLFSYNC` per group of ≤ 256 files, 64 MiB or 1 s; target 5,000 files ≤ 2.4 s |
+| 6d | "Skip if identical" | **Offered**, not the default (M3) |
+| 6e | Re-read originals | **Opt-in, off by default**, explained in first-run setup (§4.6); key `operations.reread_originals` |
+| 6f | Finished journals | **Kept 30 days** |
+| 6g | Two destinations from one read | **Later (v2)**, with Import Studio |
+| 6h | Workers on removable media | **One copying while the previous file is checked**; four for small files; M5 measures |
 
 ---
 

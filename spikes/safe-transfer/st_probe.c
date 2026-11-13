@@ -11,6 +11,20 @@
 //   st_probe resident <file>         % of the file's pages in the unified buffer cache
 //   st_probe evict <file>            try to drop the file's cached pages (msync MS_INVALIDATE),
 //                                    printing residency before and after
+//   st_probe batch <dir> <n> <group> <mode> [verify 0|1]
+//                                    the small-file pipeline for n files of 1-64 KiB
+//                                    (deterministic sizes and content): write partials with
+//                                    F_NOCACHE, then per <mode>, then evict + read back +
+//                                    compare + renamex_np(RENAME_EXCL) + one dir flush per group.
+//                                    modes: perfile_full (F_FULLFSYNC each file),
+//                                    fsync_group (fsync each, one F_FULLFSYNC per group),
+//                                    nocache_group (no per-file call, one F_FULLFSYNC per group),
+//                                    none (no flush at all; for comparison only)
+//   st_probe batchwrite <dir> <n> <mode>
+//                                    writes final-named files only (no verify/rename), for
+//                                    yank checks: modes cached_none | nocache_none | fsync_each
+//                                    | cached_group_full | nocache_group_full
+//   st_probe batchcheck <dir> <n>    counts files that are missing, short or wrong
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -161,7 +175,129 @@ static int cmd_evict(const char *p) {
   return 0;
 }
 
+static size_t small_size(int i) { return 1024 + (size_t)((i * 2654435761u) % (63 * 1024)); }
+static void small_fill(char *b, size_t n, int i) {
+  uint32_t x = 2166136261u ^ (uint32_t)i;
+  for (size_t k = 0; k < n; k++) { x = x * 16777619u + 7; b[k] = (char)(x >> 13); }
+}
+
+static int cmd_batch(const char *dir, int n, int group, const char *mode, int verify) {
+  char *buf = malloc(65536), *back = malloc(65536);
+  int perfile = !strcmp(mode, "perfile_full"), fs = !strcmp(mode, "fsync_group"),
+      nc = !strcmp(mode, "nocache_group"), none = !strcmp(mode, "none");
+  if (!(perfile || fs || nc || none)) { fprintf(stderr, "bad mode\n"); return 2; }
+  double t0 = now(), tsync = 0, tverify = 0;
+  int barriers = 0;
+  char p[1024], q[1024];
+  for (int g = 0; g < n; g += group) {
+    int end = g + group < n ? g + group : n;
+    int lastfd = -1;
+    for (int i = g; i < end; i++) {
+      size_t sz = small_size(i);
+      small_fill(buf, sz, i);
+      snprintf(p, sizeof p, "%s/.f%05d.st-partial", dir, i);
+      int fd = open(p, O_CREAT | O_EXCL | O_WRONLY, 0600);
+      if (fd < 0) { perror("open"); return 1; }
+      fcntl(fd, F_NOCACHE, 1);
+      if (write(fd, buf, sz) != (ssize_t)sz) { perror("write"); return 1; }
+      double ts = now();
+      if (perfile) { fcntl(fd, F_FULLFSYNC); barriers++; }
+      if (fs) fsync(fd);
+      tsync += now() - ts;
+      if (lastfd >= 0) close(lastfd);
+      lastfd = fd;
+    }
+    double ts = now();
+    if ((fs || nc) && lastfd >= 0) { fcntl(lastfd, F_FULLFSYNC); barriers++; }
+    tsync += now() - ts;
+    if (lastfd >= 0) close(lastfd);
+    for (int i = g; i < end; i++) {
+      snprintf(p, sizeof p, "%s/.f%05d.st-partial", dir, i);
+      snprintf(q, sizeof q, "%s/f%05d.bin", dir, i);
+      if (verify) {
+        double tv = now();
+        size_t sz = small_size(i);
+        int fd = open(p, O_RDONLY);
+        void *m = mmap(NULL, sz, PROT_READ, MAP_SHARED, fd, 0);
+        msync(m, sz, MS_SYNC | MS_INVALIDATE);
+        munmap(m, sz);
+        fcntl(fd, F_NOCACHE, 1);
+        ssize_t r = pread(fd, back, sz, 0);
+        close(fd);
+        small_fill(buf, sz, i);
+        if (r != (ssize_t)sz || memcmp(buf, back, sz)) { fprintf(stderr, "verify failed %d\n", i); return 1; }
+        tverify += now() - tv;
+      }
+      if (renamex_np(p, q, RENAME_EXCL)) {
+        if (errno != ENOTSUP && errno != EINVAL) { perror("renamex_np"); return 1; }
+        rename(p, q);
+      }
+    }
+    int dfd = open(dir, O_RDONLY);
+    ts = now();
+    if (!none) fcntl(dfd, F_FULLFSYNC);
+    tsync += now() - ts;
+    close(dfd);
+  }
+  double t = now() - t0;
+  printf("batch n=%d group=%d mode=%-13s verify=%d: %.2f s total (sync %.2f s, verify %.2f s), "
+         "%d data barriers + %d dir flushes, %.2f ms/file\n",
+         n, group, mode, verify, t, tsync, tverify, barriers, none ? 0 : (n + group - 1) / group,
+         1000 * t / n);
+  return 0;
+}
+
+static int cmd_batchwrite(const char *dir, int n, const char *mode) {
+  char *buf = malloc(65536);
+  int nocache = strstr(mode, "nocache") != NULL, each = !strcmp(mode, "fsync_each"),
+      group = strstr(mode, "group_full") != NULL;
+  char p[1024];
+  int lastfd = -1;
+  for (int i = 0; i < n; i++) {
+    size_t sz = small_size(i);
+    small_fill(buf, sz, i);
+    snprintf(p, sizeof p, "%s/f%05d.bin", dir, i);
+    int fd = open(p, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    if (fd < 0) { perror("open"); return 1; }
+    if (nocache) fcntl(fd, F_NOCACHE, 1);
+    write(fd, buf, sz);
+    if (each) fsync(fd);
+    if (lastfd >= 0) close(lastfd);
+    lastfd = fd;
+  }
+  if (group && lastfd >= 0) fcntl(lastfd, F_FULLFSYNC);
+  if (lastfd >= 0) close(lastfd);
+  if (group || each) { int d = open(dir, O_RDONLY); fcntl(d, F_FULLFSYNC); close(d); }
+  printf("wrote %d files, mode %s\n", n, mode);
+  fflush(stdout);
+  return 0;
+}
+
+static int cmd_batchcheck(const char *dir, int n) {
+  char *buf = malloc(65536), *back = malloc(65536);
+  int missing = 0, shortf = 0, wrong = 0;
+  char p[1024];
+  for (int i = 0; i < n; i++) {
+    size_t sz = small_size(i);
+    snprintf(p, sizeof p, "%s/f%05d.bin", dir, i);
+    int fd = open(p, O_RDONLY);
+    if (fd < 0) { missing++; continue; }
+    ssize_t r = pread(fd, back, sz, 0);
+    close(fd);
+    small_fill(buf, sz, i);
+    if (r != (ssize_t)sz) shortf++;
+    else if (memcmp(buf, back, sz)) wrong++;
+  }
+  printf("check %d files: %d missing, %d short, %d wrong content, %d intact\n", n, missing, shortf,
+         wrong, n - missing - shortf - wrong);
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc >= 6 && !strcmp(argv[1], "batch"))
+    return cmd_batch(argv[2], atoi(argv[3]), atoi(argv[4]), argv[5], argc >= 7 ? atoi(argv[6]) : 1);
+  if (argc >= 5 && !strcmp(argv[1], "batchwrite")) return cmd_batchwrite(argv[2], atoi(argv[3]), argv[4]);
+  if (argc >= 4 && !strcmp(argv[1], "batchcheck")) return cmd_batchcheck(argv[2], atoi(argv[3]));
   if (argc >= 3 && !strcmp(argv[1], "evict")) return cmd_evict(argv[2]);
   if (argc >= 3 && !strcmp(argv[1], "volid")) return cmd_volid(argv[2]);
   if (argc >= 3 && !strcmp(argv[1], "fullfsync")) return cmd_fullfsync(argv[2]);
