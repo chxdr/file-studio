@@ -1,0 +1,85 @@
+# CI is the referee: it builds from scratch on a clean machine and runs every
+# test that is not #[ignore]d. See DECISIONS.md (F-024) for why the jobs are
+# split the way they are. The repo is private, so macOS minutes are scarce
+# (billed at 10x Linux): Linux runs on every push, macOS only on PRs and main.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch cancels the older run (saves minutes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # Proves the core builds and passes its tests without macOS.
+  core-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the channel and adds clippy + rustfmt.
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  # Same tests on the real platform, including macOS-only behaviour.
+  core-macos:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  # Builds the app against the real core and runs the Swift tests.
+  app-macos:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      # The RustCore target runs scripts/build-core-apple.sh (the same script
+      # the local build uses; it also writes the UniFFI Swift bindings).
+      # No signing and no secrets.
+      - name: Generate the project, build and run the Swift tests
+        working-directory: apple
+        run: |
+          xcodegen
+          xcodebuild test \
+            -project FileStudio.xcodeproj -scheme "File Studio" \
+            -destination 'platform=macOS' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+  # Licences (GPLv3-compatible only) and known security advisories.
+  licences:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses advisories

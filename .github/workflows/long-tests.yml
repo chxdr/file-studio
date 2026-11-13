@@ -1,0 +1,43 @@
+# Manual only (workflow_dispatch): the long tests and the benchmarks, which are
+# too slow or too noisy to run on every push.
+#   gh workflow run long-tests.yml --ref <branch>
+name: Long tests and benchmarks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # #[ignore]d tests: 100k-entry folders, hdiutil disk images (full disk), timing.
+  ignored-tests:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # --ignored runs ONLY the ignored tests; the normal ones run in ci.yml.
+      - run: cargo test --workspace --release -- --ignored --nocapture
+      - name: Make sure no disk image is left attached
+        if: always()
+        run: hdiutil info
+
+  bench:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --release -p fstudio-bench -- --quick --json bench-result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-result
+          path: bench-result.json

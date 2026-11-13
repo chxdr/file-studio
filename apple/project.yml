@@ -67,7 +67,30 @@ targets:
           INFOPLIST_KEY_CFBundleDisplayName: File Studio Debug
     dependencies:
       - target: RustCore
-    scheme: {}
+    scheme:
+      testTargets:
+        - FileStudioTests
+      commandLineArguments:
+        # The tests run inside the app, so keep it off the user's real data.
+        "-FSMockCore": true
+
+  # XCTest bundle, hosted inside the app so `@testable import FileStudio` works.
+  # Run it with: xcodebuild test -project FileStudio.xcodeproj -scheme "File Studio"
+  FileStudioTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: FileStudioTests
+    dependencies:
+      - target: File Studio
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.filestudio.mac.tests
+        # Debug builds are named "File Studio Debug" (see the app target).
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/File Studio Debug.app/Contents/MacOS/File Studio Debug"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../target/uniffi-headers"
 
   # Builds the Rust core (static lib + Swift bindings + headers).
   RustCore:
