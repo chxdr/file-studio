@@ -26,15 +26,15 @@ use crate::copy::{
     resume_from,
 };
 use crate::engine::{
-    GROUP_BYTES, GROUP_FILES, GROUP_TIME, Inner, Job, SMALL_FILE, find, hex128, lock, remap,
-    set_state, weight,
+    GROUP_BYTES, GROUP_FILES, GROUP_TIME, Inner, Job, SMALL_FILE, find, hex128, list_volumes, lock,
+    remap, set_state, weight,
 };
 use crate::events::{FileProgress, FileReport, MetaLoss, Outcome, Phase, ProgressSink};
 use crate::job::{self, ConflictInfo, Event, JobProgress};
 use crate::journal::{Entry, EntryKind, FileRec, FileSt, Found, JobState, Manifest};
 use crate::names::{self, JobId};
 use crate::options::{Control, Decision, Disposal, Options, Symlinks};
-use crate::platform::{FlushLevel, Platform};
+use crate::platform::{FlushLevel, Platform, VolumeInfo};
 use crate::remove::{self, PartialOwner};
 
 /// Why a run stopped.
@@ -327,7 +327,7 @@ impl<'a> Runner<'a> {
     }
 
     pub(crate) fn go(&mut self) -> Stop {
-        let vols = self.p().volumes.mounted().unwrap_or_default();
+        let vols = self.volumes();
         let m = &self.job.m;
         let Some(dv) = find(&vols, &m.dest.volume) else {
             return Stop::DestGone;
@@ -697,8 +697,27 @@ impl<'a> Runner<'a> {
     }
 
     fn source_gone(&self, src_vol: u32) -> bool {
-        let vols = self.p().volumes.mounted().unwrap_or_default();
-        find(&vols, &self.job.m.sources[src_vol as usize]).is_none()
+        find(&self.volumes(), &self.job.m.sources[src_vol as usize]).is_none()
+    }
+
+    /// The mounted volumes; when the list can't be read, the volumes of the
+    /// job's own destination and sources, asked by path. An unreadable list
+    /// never makes a connected disk look gone.
+    fn volumes(&self) -> Vec<VolumeInfo> {
+        if let Some(v) = list_volumes(self.p()) {
+            return v;
+        }
+        let m = &self.job.m;
+        let mut out: Vec<VolumeInfo> = Vec::new();
+        let paths = std::iter::once(&m.dest.path).chain(m.sources.iter().map(|s| &s.mount));
+        for path in paths {
+            if let Ok(v) = self.p().volumes.volume_of(path)
+                && !out.iter().any(|o| o.mount == v.mount)
+            {
+                out.push(v);
+            }
+        }
+        out
     }
 
     /// A free "keep both" name next to `dest` ("photo 2.ARW").

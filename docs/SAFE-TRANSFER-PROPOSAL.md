@@ -1456,6 +1456,25 @@ The default is unchanged: `operations.copy_backend` is `"ops"` until the user si
       - every other cleanup in that step now runs whether or not the data partial is there, so a stray companion can't lend old attributes to a new copy.
     - **Regression test:** `a_card_pulled_between_a_file_and_its_appledouble_rename_leaves_nothing_behind` builds that half-renamed state deterministically, then pulls the card. It failed before the fix, leaving the same kind of file behind. After the fix nothing is left, and every file has its extended attributes. The original test then passed 20 runs in a row.
 
+11. **The mount list wasn't safe to read from several threads** (found by the coordinator: on the safe_transfer backend, fstudio-ops' `moves` tests sometimes ended an op Interrupted instead of "completed with errors", and once the whole binary died with SIGABRT, leaking its disk images).
+    - **Cause:** `mounted_volumes()` used `getmntinfo`, whose buffer is shared by the whole process and is reallocated when the number of mounts changes. The list is read from many threads at once: job threads, the bridge's once-a-second check, and several engines in one test process. With disks attached and detached alongside, two readers corrupted it:
+      - a double free inside `getmntinfo` (the crash report: `___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED` under `Runner::go`);
+      - or a failed or empty list, which the runner read as "nothing connected". A job then stopped at its start "waiting for its destination", with the destination right there.
+
+      It was older than M4 (M2's code), and M4's extra readers made it show. GitHub CI hit it too, before the in-flight fix: `queue::ops_on_other_volumes_dont_wait` saw an op go straight to Interrupted at the start of its job, with nothing copied.
+    - **Fix:**
+      - the list is read with `getfsstat` into a buffer of our own;
+      - a list that can't be read is retried, and is otherwise "unknown", never "not connected": the runner then asks its destination's and sources' volumes by path.
+    - **Tests:**
+      - `the_mount_list_is_safe_to_read_while_disks_come_and_go` (yank suite): 16 readers while four threads attach and detach images. It failed before the fix with an empty, failed list.
+      - `an_unreadable_mount_list_never_makes_a_job_wait_for_a_disk_that_is_there` (deterministic, not ignored). It failed before the fix with WaitingForDestination and nothing copied, which is the CI case: the wrong verdict came at the start of the job.
+      - `a_files_own_error_never_makes_the_job_wait_while_disks_come_and_go` (yank suite): the fault case end to end under churn. It passed before the fix too, being too rarely in the race; it guards the behaviour.
+    - **Not changed here:** fstudio-fs's `volumes()` still uses `getmntinfo`. It is the only remaining caller, so it can only race with itself. That is the owner's call.
+    - **The ops tests' disk images:**
+      - every `hdiutil` call has a 60 s limit;
+      - `Drop` detaches (forced if refused), checks the image is gone, and never panics;
+      - each image records its test process. An abort or kill skips `Drop`, so the next test process detaches and deletes images whose owner is dead (`image_sweep.rs` aborts a child that holds an image and checks the next one removes it).
+
 ### 18.3 Where the backends deliberately differ (tests assert the stricter result on Safe Transfer)
 
 - **The 100 MB free-space margin (§10):** ops' disk-image tests get more room on the Safe Transfer run. The 8 MB full-disk test asserts the up-front refusal instead.

@@ -1139,3 +1139,171 @@ fn a_card_pulled_between_a_file_and_its_appledouble_rename_leaves_nothing_behind
     let diffs = safe_transfer::compare::compare(&Platform::native(), &src, &dest).unwrap();
     assert!(diffs.is_empty(), "{diffs:?}");
 }
+
+/// Attaches and detaches small disk images until `stop`, so the system's
+/// mount list keeps changing size (what other tests, cards and drives do).
+fn churn_mounts(stop: &std::sync::atomic::AtomicBool, problems: &Mutex<Vec<String>>) {
+    while !stop.load(Ordering::Acquire) {
+        let img = Image::new("APFS", 16);
+        std::thread::sleep(Duration::from_millis(50));
+        drop(img);
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+    }
+    let _ = problems;
+}
+
+/// The mount list is read from many threads at once (job threads, the
+/// host's checks, several engines in one process) while disks come and
+/// go. `getmntinfo` shares one buffer across the whole process: under
+/// that load it freed a buffer another thread was reading (the ops
+/// tests' SIGABRT) and returned garbled lists (a destination "gone" that
+/// was still there).
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn the_mount_list_is_safe_to_read_while_disks_come_and_go() {
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let problems = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(|| churn_mounts(&stop, &problems));
+        }
+        let readers: Vec<_> = (0..16)
+            .map(|_| {
+                s.spawn(|| {
+                    let t = std::time::Instant::now();
+                    while t.elapsed() < Duration::from_secs(30) {
+                        match Platform::native().volumes.mounted() {
+                            Ok(v) if v.iter().any(|x| x.mount == Path::new("/")) => {}
+                            other => problems.lock().unwrap().push(format!(
+                                "the startup disk is missing: {:?}",
+                                other.map(|v| v.len())
+                            )),
+                        }
+                    }
+                })
+            })
+            .collect();
+        for r in readers {
+            r.join().unwrap();
+        }
+        stop.store(true, Ordering::Release);
+    });
+    let p = problems.into_inner().unwrap();
+    assert!(
+        p.is_empty(),
+        "{} bad lists, first: {:?}",
+        p.len(),
+        p.first()
+    );
+}
+
+/// Fails `victim` with an error that has nothing to do with any disk.
+#[derive(Debug)]
+struct FailOne;
+impl FaultHook for FailOne {
+    fn at(&self, point: FaultPoint, src: &Path) -> io::Result<()> {
+        if point.name() == "before_copy" && src.ends_with("victim.bin") {
+            return Err(io::Error::other("injected failure"));
+        }
+        Ok(())
+    }
+}
+
+/// A file's own error fails that file only, also while other disks are
+/// attached and detached and the mount list is read from many threads: the
+/// job never stops to wait for a destination that is still there (seen in
+/// the ops tests on the safe_transfer backend: "Interrupted" instead of
+/// "completed with errors").
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn a_files_own_error_never_makes_the_job_wait_while_disks_come_and_go() {
+    let s = tempfile::tempdir().unwrap();
+    let src = s.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("victim.bin"), bytes(1 << 20, 1)).unwrap();
+    for i in 0..4 {
+        std::fs::write(src.join(format!("ok{i}.txt")), format!("ok {i}")).unwrap();
+    }
+    let dest = Image::new("APFS", 256);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let problems = Mutex::new(Vec::new());
+    std::thread::scope(|sc| {
+        for _ in 0..4 {
+            sc.spawn(|| churn_mounts(&stop, &problems));
+        }
+        for _ in 0..16 {
+            sc.spawn(|| {
+                while !stop.load(Ordering::Acquire) {
+                    let _ = Platform::native().volumes.mounted();
+                }
+            });
+        }
+        for round in 0..150 {
+            let j = tempfile::tempdir().unwrap();
+            let d = dest.mount.join(format!("r{round}"));
+            std::fs::create_dir_all(&d).unwrap();
+            let e = job_engine(j.path(), Arc::new(FailOne), &Events::default());
+            let id = e.create(job_spec(&src, &d)).unwrap();
+            e.start(id).unwrap();
+            let info = e.wait(id, Duration::from_secs(120)).unwrap();
+            let r = e.report(id).unwrap();
+            if info.state != JobState::Finished || r.failed.len() != 1 {
+                problems.lock().unwrap().push(format!(
+                    "round {round}: {:?}, failed {:?}",
+                    info.state, r.failed
+                ));
+            }
+        }
+        stop.store(true, Ordering::Release);
+    });
+    let p = problems.into_inner().unwrap();
+    assert!(p.is_empty(), "{p:#?}");
+}
+
+/// Volume lookups whose mount list can't be read (what a garbled or failed
+/// `getmntinfo` gave), while each path's own volume still answers.
+#[derive(Debug)]
+struct UnreadableList;
+impl safe_transfer::VolumeIdentity for UnreadableList {
+    fn volume_of(&self, p: &Path) -> io::Result<safe_transfer::VolumeInfo> {
+        Platform::native().volumes.volume_of(p)
+    }
+    fn mounted(&self) -> io::Result<Vec<safe_transfer::VolumeInfo>> {
+        Err(io::Error::other("the mount list couldn't be read"))
+    }
+    fn case_sensitive(&self, dir: &Path) -> io::Result<bool> {
+        Platform::native().volumes.case_sensitive(dir)
+    }
+}
+
+/// A mount list that can't be read is "unknown", never "not connected": a
+/// file's own error still fails just that file, and the job finishes
+/// instead of waiting for a destination that is right there.
+#[test]
+fn an_unreadable_mount_list_never_makes_a_job_wait_for_a_disk_that_is_there() {
+    let (s, d, j) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let src = s.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("victim.bin"), bytes(1 << 20, 1)).unwrap();
+    std::fs::write(src.join("ok.txt"), b"ok").unwrap();
+    let mut cfg = EngineConfig::new(j.path());
+    cfg.journal_interval = Duration::ZERO;
+    cfg.faults = Some(Arc::new(FailOne));
+    let mut p = Platform::native();
+    p.volumes = Arc::new(UnreadableList);
+    let e = Engine::open(cfg, p, Events::default().sink()).unwrap();
+    let id = e.create(job_spec(&src, d.path())).unwrap();
+    e.start(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(60)).unwrap();
+    assert_eq!(info.state, JobState::Finished, "{info:?}");
+    let r = e.report(id).unwrap();
+    assert_eq!(r.failed.len(), 1, "{r:?}");
+    assert!(r.failed[0].path.ends_with("victim.bin"), "{r:?}");
+    assert_eq!(std::fs::read(d.path().join("src/ok.txt")).unwrap(), b"ok");
+}

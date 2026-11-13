@@ -157,7 +157,9 @@ pub fn sh(cmd: &str, args: &[&str]) {
 /// card or external drive. Detached and deleted on drop, including when the
 /// test panics.
 pub struct Image {
-    _dir: tempfile::TempDir,
+    dir: Option<tempfile::TempDir>,
+    /// Set when it couldn't be detached: its folder is kept for the sweep.
+    dir_keep: Mutex<bool>,
     pub img: PathBuf,
     pub mount: PathBuf,
     /// Where it is attached now (`put_back_at` can move it).
@@ -167,10 +169,14 @@ pub struct Image {
 impl Image {
     /// `fs` is an hdiutil filesystem name: "APFS", "ExFAT", "MS-DOS".
     pub fn new(fs: &str, megabytes: u32) -> Image {
+        sweep_orphaned_images();
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("vol.dmg");
         let mount = dir.path().join("mnt");
         std::fs::create_dir(&mount).unwrap();
+        // Before anything is attached: a later test process removes this
+        // image if this one dies without detaching it (an abort skips Drop).
+        std::fs::write(dir.path().join(OWNER), std::process::id().to_string()).unwrap();
         sh(
             "hdiutil",
             &[
@@ -187,7 +193,8 @@ impl Image {
         );
         // From here on, a panic drops `im`, which detaches it.
         let im = Image {
-            _dir: dir,
+            dir: Some(dir),
+            dir_keep: Mutex::new(false),
             img,
             now: Mutex::new(mount.clone()),
             mount,
@@ -261,10 +268,12 @@ impl Image {
     /// plain forced detach doesn't work. Never panics; problems are printed.
     fn clean_up(&self) {
         let now = self.now.lock().map(|m| m.clone()).unwrap_or_default();
-        match attachments(&self.img) {
-            Ok(a) if a.is_empty() => return,
-            Ok(_) => {}
-            Err(e) => eprintln!("cleaning up {}: {e}", self.img.display()),
+        // Two signals, because `hdiutil info` can miss an image for a moment
+        // while other images come and go: listed, or still a mount point.
+        let attached =
+            || mounted_at(&now) || attachments(&self.img).map_or(true, |a| !a.is_empty());
+        if !attached() {
+            return;
         }
         let _ = run_limited(
             "hdiutil",
@@ -277,14 +286,23 @@ impl Image {
             None,
             TOOL_LIMIT,
         );
-        if attachments(&self.img).is_ok_and(|a| a.is_empty()) {
-            return;
-        }
-        if let Err(e) = try_yank(&self.img, &now) {
+        if !wait_until(Duration::from_secs(5), || !attached())
+            && let Err(e) = try_yank(&self.img, &now)
+        {
             eprintln!(
                 "WARNING: couldn't detach {}: {e}. Check `hdiutil info`.",
                 self.img.display()
             );
+        }
+        if attached() {
+            eprintln!(
+                "WARNING: {} is still attached; the next test run removes it",
+                self.img.display()
+            );
+            // Keep its folder (and owner file) for that sweep.
+            if let Ok(mut d) = self.dir_keep.lock() {
+                *d = true;
+            }
         }
     }
 }
@@ -292,6 +310,11 @@ impl Image {
 impl Drop for Image {
     fn drop(&mut self) {
         self.clean_up();
+        if self.dir_keep.lock().map(|k| *k).unwrap_or(false)
+            && let Some(d) = self.dir.take()
+        {
+            let _ = d.keep();
+        }
         // A failure recorded by a hook that no `put_back` saw is dropped
         // here so it can't leak into the next test's image.
         if let Some(e) = take_yank_failure()
@@ -549,4 +572,67 @@ pub fn try_yank_stale(
             last.err().map(|e| format!(" ({e})")).unwrap_or_default()
         ))
     }
+}
+
+/// The file next to each test image naming the test process that owns it.
+const OWNER: &str = "owner.pid";
+
+/// Whether something is mounted at `dir` (it is on another device than the
+/// folder holding it).
+fn mounted_at(dir: &Path) -> bool {
+    let dev = |p: &Path| std::fs::metadata(p).map(|m| m.dev()).ok();
+    match (dev(dir), dir.parent().and_then(dev)) {
+        (Some(a), Some(b)) => a != b,
+        _ => false,
+    }
+}
+
+/// Detaches and deletes images an earlier test process left attached when
+/// it died without unwinding. Only `vol.dmg` in a temporary folder with an
+/// owner file naming a process that no longer runs. Once per process.
+fn sweep_orphaned_images() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Ok(info) = hdiutil_info() else { return };
+        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_default();
+        for (img, _) in listed(&info) {
+            let Some(dir) = img.parent() else { continue };
+            if img.file_name() != Some(OsStr::new("vol.dmg"))
+                || !std::fs::canonicalize(dir).is_ok_and(|c| c.starts_with(&tmp))
+            {
+                continue;
+            }
+            let Some(pid) = std::fs::read_to_string(dir.join(OWNER))
+                .ok()
+                .and_then(|t| t.trim().parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if pid == std::process::id() || alive(pid) {
+                continue;
+            }
+            eprintln!(
+                "removing a test image left by dead process {pid}: {}",
+                img.display()
+            );
+            let mnt = dir.join("mnt");
+            let _ = run_limited(
+                "hdiutil",
+                &[
+                    OsStr::new("detach"),
+                    OsStr::new("-force"),
+                    OsStr::new("-quiet"),
+                    mnt.as_os_str(),
+                ],
+                None,
+                TOOL_LIMIT,
+            );
+            if attachments(&img).is_ok_and(|a| a.is_empty()) && !mounted_at(&mnt) {
+                let _ = std::fs::remove_file(&img);
+                let _ = std::fs::remove_file(dir.join(OWNER));
+                let _ = std::fs::remove_dir(&mnt);
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    });
 }
