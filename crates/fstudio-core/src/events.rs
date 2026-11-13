@@ -151,6 +151,9 @@ pub enum CoreEvent {
     SettingsChanged,
     /// The sidebar favourites changed; re-read [`crate::Engine::favourites`].
     FavouritesChanged,
+    /// Workspaces were added, removed, renamed, reordered or switched;
+    /// re-read [`crate::Engine::workspaces`].
+    WorkspacesChanged,
 }
 
 /// Receives core events. Implemented by the shell. Called on one pump
@@ -183,6 +186,7 @@ enum Key {
     Volumes,
     Settings,
     Favourites,
+    Workspaces,
 }
 
 fn key_of(e: &CoreEvent) -> Option<Key> {
@@ -195,6 +199,7 @@ fn key_of(e: &CoreEvent) -> Option<Key> {
         CoreEvent::VolumesChanged { .. } => Key::Volumes,
         CoreEvent::SettingsChanged => Key::Settings,
         CoreEvent::FavouritesChanged => Key::Favourites,
+        CoreEvent::WorkspacesChanged => Key::Workspaces,
         _ => return None,
     })
 }

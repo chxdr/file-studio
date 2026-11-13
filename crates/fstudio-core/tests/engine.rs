@@ -489,13 +489,15 @@ fn saved_workspaces() {
     h.engine.open_tab(Some(h.s("w2"))).unwrap();
     let id = h.engine.save_workspace("Work").unwrap();
     assert!(h.engine.save_workspace("  ").is_err());
+    // The open windows became "Everyday"; the snapshot comes after it.
     let list = h.engine.saved_workspaces().unwrap();
-    assert_eq!(list.len(), 1);
-    assert_eq!((list[0].name.as_str(), list[0].tabs), ("Work", 2));
-    // Saving again under the same name replaces it.
-    assert_eq!(h.engine.save_workspace("Work").unwrap(), id);
+    assert_eq!(list.len(), 2);
+    assert_eq!((list[0].name.as_str(), list[0].active), ("Everyday", true));
+    assert_eq!((list[1].name.as_str(), list[1].tabs), ("Work", 2));
+    // Saving again under the same name (any case) replaces it.
+    assert_eq!(h.engine.save_workspace("work").unwrap(), id);
 
-    // Change the session, then open the saved workspace.
+    // Change the session, then load the saved layout.
     let w = h.engine.workspace_state().windows[0].id;
     h.engine.close_window(w).unwrap();
     h.engine.new_window(Some(h.s(""))).unwrap();
@@ -507,16 +509,19 @@ fn saved_workspaces() {
         .collect();
     assert_eq!(locs, [h.s("w1"), h.s("w2")]);
     h.engine.rename_workspace(id, "Home").unwrap();
-    assert_eq!(h.engine.saved_workspaces().unwrap()[0].name, "Home");
+    assert_eq!(h.engine.saved_workspaces().unwrap()[1].name, "Home");
     // Switching by number.
     h.engine
         .perform(
-            CommandInvocation::new("workspace.switch").with_arg(CommandArg::Index(0)),
+            CommandInvocation::new("workspace.switch").with_arg(CommandArg::Index(1)),
             Via::Palette,
         )
         .unwrap();
+    assert!(h.engine.saved_workspaces().unwrap()[1].active);
     h.engine.delete_workspace(id).unwrap();
-    assert!(h.engine.saved_workspaces().unwrap().is_empty());
+    let list = h.engine.saved_workspaces().unwrap();
+    assert_eq!(list.len(), 1);
+    assert!(list[0].active);
     assert!(h.engine.open_workspace(id).is_err());
 }
 

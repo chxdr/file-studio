@@ -271,9 +271,19 @@ fn table() -> Vec<B> {
         c("pane.same_folder_reverse", "Same Folder as Other Pane", Panes, "Show the other pane's folder here").ctx(When::DualPane),
         c("pane.equalize", "Equalise Panes", Panes, "Give both panes the same width").ctx(When::DualPane),
         // ── Workspaces ──
-        c("workspace.save", "Save Workspace…", Workspaces, "Save the open tabs and panes as a workspace").global(),
-        c("workspace.switch", "Switch Workspace", Workspaces, "Switch to a saved workspace").global().arg(ArgKind::Index),
-        c("workspace.manage", "Manage Workspaces…", Workspaces, "Rename, reorder or delete saved workspaces").global(),
+        // `workspace.save` keeps its id so saved rebindings still apply.
+        c("workspace.save", "New Workspace…", Workspaces, "Make a workspace with its own tabs and layout").global(),
+        c("workspace.switch", "Switch to Workspace", Workspaces, "Switch to a workspace by its place in the switcher").global().arg(ArgKind::Index).nomenu().nohint()
+            .sa(When::Always, "⌃⌘1", CommandArg::Index(0)).sa(When::Always, "⌃⌘2", CommandArg::Index(1))
+            .sa(When::Always, "⌃⌘3", CommandArg::Index(2)).sa(When::Always, "⌃⌘4", CommandArg::Index(3))
+            .sa(When::Always, "⌃⌘5", CommandArg::Index(4)).sa(When::Always, "⌃⌘6", CommandArg::Index(5))
+            .sa(When::Always, "⌃⌘7", CommandArg::Index(6)).sa(When::Always, "⌃⌘8", CommandArg::Index(7))
+            .sa(When::Always, "⌃⌘9", CommandArg::Index(8)),
+        c("workspace.next", "Next Workspace", Workspaces, "Switch to the next workspace").global(),
+        c("workspace.previous", "Previous Workspace", Workspaces, "Switch to the previous workspace").global(),
+        c("workspace.duplicate", "Duplicate Workspace", Workspaces, "Copy this workspace's tabs and layout to a new workspace").global().arg(ArgKind::Index),
+        c("workspace.delete", "Delete Workspace…", Workspaces, "Forget this workspace's tabs and layout (no files are touched)").global().arg(ArgKind::Index),
+        c("workspace.manage", "Manage Workspaces…", Workspaces, "Rename, reorder, change icons or delete workspaces").global(),
         // ── Quick Look and Get Info ──
         c("preview.quick_look", "Quick Look", Preview, "Preview the selection").s("Space|⌘Y"),
         c("preview.get_info", "Get Info", Preview, "Show details about the selection").s("⌘I"),

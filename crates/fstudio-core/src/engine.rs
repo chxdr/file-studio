@@ -30,8 +30,8 @@ use crate::shared::{self, Shared};
 use crate::tab::{Tab, TabState};
 use crate::view::ViewState;
 use crate::workspace::{
-    Closed, Model, Orientation, PaneRt, PaneState, WindowRt, WindowState, WorkspaceState,
-    WorkspaceSummary,
+    Closed, DEFAULT_SIDEBAR_WIDTH, Model, Orientation, PaneRt, PaneState, WindowRt, WindowState,
+    WorkspaceState, clamp_sidebar,
 };
 
 const SESSION_KEY: &str = "core.session";
@@ -40,6 +40,15 @@ const MARKS_KEY: &str = "core.marks";
 const SAVE_QUIET: Duration = Duration::from_millis(250);
 /// The longest a busy session goes unsaved.
 const SAVE_MAX_DELAY: Duration = Duration::from_secs(2);
+
+/// Which ids a loaded workspace keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IdMode {
+    /// The saved ids (session restore).
+    Keep,
+    /// New tab and pane ids; the windows take these ids, in order, then new ones.
+    Reuse(Vec<WindowId>),
+}
 
 /// How the engine is set up.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +94,9 @@ pub struct Engine {
     pub(crate) favourites: Mutex<Vec<crate::favourites::Favourite>>,
     /// Questions waiting for the user's yes, by token (S1, F-023).
     pub(crate) pending: Mutex<crate::confirm::Pending>,
+    /// The active workspace and per-workspace memory. Held for a whole
+    /// switch, and by every session save, so the two never interleave.
+    pub(crate) live: Mutex<crate::workspaces::Live>,
     last_saved: Mutex<String>,
 }
 
@@ -96,7 +108,7 @@ impl std::fmt::Debug for Engine {
     }
 }
 
-fn now_ns() -> i64 {
+pub(crate) fn now_ns() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as i64)
@@ -113,6 +125,7 @@ impl Engine {
         std::fs::create_dir_all(&data_dir)?;
         let db = Db::open(&data_dir.join("fstudio.sqlite3"))?;
         db.migrate(&shared::MIGRATIONS)?;
+        db.migrate(&crate::workspaces::MIGRATIONS)?;
         db.migrate(&fstudio_ops::MIGRATIONS)?;
         db.migrate(&fstudio_keymap::MIGRATIONS)?;
         db.migrate(&fstudio_path::frecency::MIGRATIONS)?;
@@ -202,6 +215,7 @@ impl Engine {
             marks: Mutex::new(marks),
             favourites: Mutex::new(favourites),
             pending: Mutex::new(crate::confirm::Pending::default()),
+            live: Mutex::new(crate::workspaces::Live::default()),
             last_saved: Mutex::new(String::new()),
         });
         let weak = Arc::downgrade(&engine);
@@ -473,24 +487,36 @@ impl Engine {
 
     /// Restores the last session (or opens one window at the start folder)
     /// and returns it. Missing folders fall back to the nearest existing parent.
+    ///
+    /// The session is the active workspace's live state. On first launch the
+    /// session becomes a workspace called "Everyday"; every other workspace
+    /// keeps its own state in the database until it is switched to.
     pub fn restore_session(&self) -> WorkspaceState {
+        let mut live = self.live.lock();
+        let (active, stored) = self.active_workspace_or_create(&mut live);
         let saved = if self.settings().general.restore_session {
-            self.db
-                .kv_get(SESSION_KEY)
-                .ok()
-                .flatten()
-                .and_then(|t| serde_json::from_str::<WorkspaceState>(&t).ok())
+            stored
+                .or_else(|| {
+                    self.db
+                        .kv_get(SESSION_KEY)
+                        .ok()
+                        .flatten()
+                        .and_then(|t| serde_json::from_str::<WorkspaceState>(&t).ok())
+                })
                 .filter(|w| w.tab_count() > 0)
         } else {
             None
         };
         match saved {
-            Some(ws) => self.load_workspace(ws, true),
+            Some(ws) => self.load_workspace(ws, IdMode::Keep),
             None => {
                 self.close_all();
                 self.new_window(None).ok();
             }
         }
+        self.save_session_locked(&live, active);
+        drop(live);
+        self.workspaces_changed();
         self.workspace_state()
     }
 
@@ -518,6 +544,8 @@ impl Engine {
                     orientation: w.orientation,
                     split_ratio: w.split_ratio,
                     hidden_pane: w.hidden.as_ref().map(pane),
+                    sidebar_width: w.sidebar_width,
+                    sidebar_hidden: w.sidebar_hidden,
                 })
                 .collect(),
             active_window: m.active_window,
@@ -567,7 +595,7 @@ impl Engine {
         }
     }
 
-    fn tab_state_at(&self, raw: Option<&str>) -> Result<TabState> {
+    pub(crate) fn tab_state_at(&self, raw: Option<&str>) -> Result<TabState> {
         let (dir, select) = match raw {
             Some(r) => self.resolve_dir(r)?,
             None => (self.start_dir(), None),
@@ -594,7 +622,7 @@ impl Engine {
         Tab::create(self.shared.clone(), state)
     }
 
-    fn changed(&self) {
+    pub(crate) fn changed(&self) {
         self.shared.emit(CoreEvent::TabsChanged);
         self.shared.mark_dirty();
     }
@@ -629,6 +657,11 @@ impl Engine {
             for t in new_tabs {
                 m.tabs.insert(t.id(), t);
             }
+            // A new window takes the sidebar of the focused one.
+            let (sidebar_width, sidebar_hidden) = m
+                .active_window_index()
+                .map(|wi| (m.windows[wi].sidebar_width, m.windows[wi].sidebar_hidden))
+                .unwrap_or((DEFAULT_SIDEBAR_WIDTH, false));
             m.windows.push(WindowRt {
                 id,
                 panes,
@@ -636,6 +669,8 @@ impl Engine {
                 orientation: Orientation::Horizontal,
                 split_ratio: 0.5,
                 hidden: None,
+                sidebar_width,
+                sidebar_hidden,
             });
             m.active_window = Some(id);
         }
@@ -941,7 +976,7 @@ impl Engine {
         Ok(())
     }
 
-    fn close_all(&self) {
+    pub(crate) fn close_all(&self) {
         let tabs: Vec<Arc<Tab>> = {
             let mut m = self.model.lock();
             m.windows.clear();
@@ -953,10 +988,13 @@ impl Engine {
         }
     }
 
-    /// Replaces the open windows with `ws`. `keep_ids` keeps tab, pane and
-    /// window ids (session restore); otherwise fresh ids are used.
-    fn load_workspace(&self, ws: WorkspaceState, keep_ids: bool) {
+    /// Replaces the open windows with `ws`. With [`IdMode::Keep`] tab, pane
+    /// and window ids stay (session restore); otherwise tabs and panes get
+    /// fresh ids, and [`IdMode::Reuse`] gives the windows the listed ids in
+    /// order (a workspace switch keeps the shell's windows open).
+    pub(crate) fn load_workspace(&self, ws: WorkspaceState, ids: IdMode) {
         self.close_all();
+        let keep_ids = matches!(ids, IdMode::Keep);
         let fresh = |id: u64| {
             if keep_ids {
                 self.shared.ids.bump_past(id);
@@ -965,14 +1003,14 @@ impl Engine {
                 self.shared.ids.next()
             }
         };
+        let mut reuse: std::collections::VecDeque<WindowId> = match ids {
+            IdMode::Reuse(list) => list.into(),
+            _ => Default::default(),
+        };
         let mut m_windows = Vec::new();
         let mut tabs = Vec::new();
         let mut active_window = None;
         for w in ws.windows {
-            let wid = WindowId(fresh(w.id.0));
-            if ws.active_window == Some(w.id) {
-                active_window = Some(wid);
-            }
             let mut pane = |p: PaneState| -> Option<PaneRt> {
                 let ids: Vec<TabId> = p
                     .tabs
@@ -998,6 +1036,10 @@ impl Engine {
             if panes.is_empty() {
                 continue;
             }
+            let wid = reuse.pop_front().unwrap_or_else(|| WindowId(fresh(w.id.0)));
+            if ws.active_window == Some(w.id) {
+                active_window = Some(wid);
+            }
             m_windows.push(WindowRt {
                 id: wid,
                 active_pane: (w.active_pane as usize).min(panes.len() - 1),
@@ -1005,6 +1047,8 @@ impl Engine {
                 orientation: w.orientation,
                 split_ratio: w.split_ratio.clamp(0.1, 0.9),
                 hidden,
+                sidebar_width: clamp_sidebar(w.sidebar_width),
+                sidebar_hidden: w.sidebar_hidden,
             });
         }
         {
@@ -1022,7 +1066,20 @@ impl Engine {
     }
 
     /// Saves the session now (normally this happens a moment after each change).
+    /// It is the active workspace's state, written with it in one transaction.
     pub fn save_session_now(&self) {
+        let live = self.live.lock();
+        let active = live.active;
+        self.save_session_locked(&live, active);
+    }
+
+    /// Writes the open windows as the session and as `active`'s state. The
+    /// caller holds the workspace lock, so a switch can't interleave.
+    pub(crate) fn save_session_locked(
+        &self,
+        _live: &crate::workspaces::Live,
+        active: Option<WorkspaceId>,
+    ) {
         let ws = self.workspace_state();
         if ws.windows.is_empty() {
             return;
@@ -1030,104 +1087,29 @@ impl Engine {
         let Ok(json) = serde_json::to_string(&ws) else {
             return;
         };
+        let key = format!("{}:{json}", active.map(|a| a.0).unwrap_or(0));
         let mut last = self.last_saved.lock();
-        if *last == json {
+        if *last == key {
             return;
         }
-        if self.db.kv_set(SESSION_KEY, &json).is_ok() {
-            *last = json;
-        }
-    }
-
-    // ───────────────────────── saved workspaces ─────────────────────────
-
-    /// Saves the open windows under `name`, replacing a workspace of that name.
-    pub fn save_workspace(&self, name: &str) -> Result<WorkspaceId> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(CoreError::InvalidName("the name is empty".into()));
-        }
-        let json = serde_json::to_string(&self.workspace_state())?;
-        let now = now_ns();
-        let id: i64 = self.db.with(|c| {
-            c.execute(
-                "INSERT INTO core_workspaces(name, state, created_ns, updated_ns) VALUES (?1, ?2, ?3, ?3)
-                 ON CONFLICT(name) DO UPDATE SET state = excluded.state, updated_ns = excluded.updated_ns",
-                fstudio_db::rusqlite::params![name, json, now],
+        let res = self.db.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute(
+                "INSERT INTO db_kv(key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                fstudio_db::rusqlite::params![SESSION_KEY, json],
             )?;
-            c.query_row("SELECT id FROM core_workspaces WHERE name = ?1", [name], |r| r.get(0))
-        })?;
-        Ok(WorkspaceId(id as u64))
-    }
-
-    /// Saved workspaces, by name.
-    pub fn saved_workspaces(&self) -> Result<Vec<WorkspaceSummary>> {
-        let rows: Vec<(i64, String, String, i64)> = self.db.with(|c| {
-            let mut st = c.prepare(
-                "SELECT id, name, state, updated_ns FROM core_workspaces ORDER BY name COLLATE NOCASE",
-            )?;
-            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-                .collect()
-        })?;
-        Ok(rows
-            .into_iter()
-            .map(|(id, name, state, updated_ns)| {
-                let ws: WorkspaceState = serde_json::from_str(&state).unwrap_or_default();
-                WorkspaceSummary {
-                    id: WorkspaceId(id as u64),
-                    name,
-                    windows: ws.windows.len() as u32,
-                    tabs: ws.tab_count() as u32,
-                    updated_ns,
-                }
-            })
-            .collect())
-    }
-
-    /// Replaces the open windows with a saved workspace.
-    pub fn open_workspace(&self, id: WorkspaceId) -> Result<WorkspaceState> {
-        let state: String = self
-            .db
-            .with(|c| {
-                c.query_row(
-                    "SELECT state FROM core_workspaces WHERE id = ?1",
-                    [id.0 as i64],
-                    |r| r.get(0),
-                )
-            })
-            .map_err(|_| CoreError::NotFound(format!("workspace {id}")))?;
-        let ws: WorkspaceState = serde_json::from_str(&state)?;
-        self.load_workspace(ws, false);
-        Ok(self.workspace_state())
-    }
-
-    /// Renames a saved workspace.
-    pub fn rename_workspace(&self, id: WorkspaceId, name: &str) -> Result<()> {
-        let name = name.trim();
-        if name.is_empty() {
-            return Err(CoreError::InvalidName("the name is empty".into()));
+            if let Some(a) = active {
+                tx.execute(
+                    "UPDATE core_workspaces SET state = ?1, updated_ns = ?2 WHERE id = ?3",
+                    fstudio_db::rusqlite::params![json, now_ns(), a.0 as i64],
+                )?;
+            }
+            tx.commit()
+        });
+        if res.is_ok() {
+            *last = key;
         }
-        let n = self.db.with(|c| {
-            c.execute(
-                "UPDATE core_workspaces SET name = ?1 WHERE id = ?2",
-                fstudio_db::rusqlite::params![name, id.0 as i64],
-            )
-        })?;
-        if n == 0 {
-            return Err(CoreError::NotFound(format!("workspace {id}")));
-        }
-        Ok(())
-    }
-
-    /// Deletes a saved workspace (only the saved layout; no files are touched).
-    pub fn delete_workspace(&self, id: WorkspaceId) -> Result<()> {
-        let n = self
-            .db
-            .with(|c| c.execute("DELETE FROM core_workspaces WHERE id = ?1", [id.0 as i64]))?;
-        if n == 0 {
-            return Err(CoreError::NotFound(format!("workspace {id}")));
-        }
-        Ok(())
     }
 
     // ───────────────────────── path engine ─────────────────────────

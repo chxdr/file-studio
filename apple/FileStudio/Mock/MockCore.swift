@@ -283,13 +283,80 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
         workspace.windows[w].panes.reverse()
         emit(.tabsChanged)
     }
-    func saveWorkspace(name: String) throws -> WorkspaceID { 1 }
-    func savedWorkspaces() throws -> [WorkspaceSummary] {
-        [WorkspaceSummary(id: 1, name: "Photo work", windows: 1, tabs: 3, updatedNs: 0)]
+    // Workspaces: names and icons only (the mock keeps one set of windows).
+    private var mockWorkspaces: [WorkspaceSummary] = [
+        WorkspaceSummary(id: 1, name: "Everyday", icon: "house", active: true, windows: 1, tabs: 1, updatedNs: 0),
+        WorkspaceSummary(id: 2, name: "Photo work", icon: "camera", windows: 1, tabs: 3, updatedNs: 0),
+    ]
+    private func renumberWorkspaces() {
+        for i in mockWorkspaces.indices {
+            mockWorkspaces[i].position = UInt32(i)
+            mockWorkspaces[i].shortcut = i < 9 ? "⌃⌘\(i + 1)" : nil
+        }
+        emit(.workspacesChanged)
     }
+    func saveWorkspace(name: String) throws -> WorkspaceID { try createWorkspace(name: name, icon: "", copyCurrent: true) }
+    func savedWorkspaces() throws -> [WorkspaceSummary] { try workspaces() }
     func openWorkspace(_ id: WorkspaceID) throws -> WorkspaceState { workspaceState() }
-    func renameWorkspace(_ id: WorkspaceID, name: String) throws {}
-    func deleteWorkspace(_ id: WorkspaceID) throws {}
+    func renameWorkspace(_ id: WorkspaceID, name: String) throws {
+        guard let i = mockWorkspaces.firstIndex(where: { $0.id == id }) else { return }
+        mockWorkspaces[i].name = name
+        renumberWorkspaces()
+    }
+    func deleteWorkspace(_ id: WorkspaceID) throws {
+        guard mockWorkspaces.count > 1 else { return }
+        let wasActive = mockWorkspaces.first { $0.id == id }?.active ?? false
+        mockWorkspaces.removeAll { $0.id == id }
+        if wasActive { mockWorkspaces[0].active = true }
+        renumberWorkspaces()
+    }
+    func workspaces() throws -> [WorkspaceSummary] {
+        if mockWorkspaces.first?.shortcut == nil { renumberWorkspaces() }
+        return mockWorkspaces
+    }
+    func workspaceIcons() -> [String] { ["house", "sun.max", "camera", "photo.on.rectangle", "film", "briefcase"] }
+    func createWorkspace(name: String, icon: String, copyCurrent: Bool) throws -> WorkspaceID {
+        let id = (mockWorkspaces.map(\.id).max() ?? 0) + 1
+        mockWorkspaces.append(WorkspaceSummary(id: id, name: name, icon: icon.isEmpty ? "square.grid.2x2" : icon,
+                                               windows: 1, tabs: 1, updatedNs: 0))
+        _ = try switchWorkspace(id)
+        return id
+    }
+    func switchWorkspace(_ id: WorkspaceID) throws -> WorkspaceState {
+        for i in mockWorkspaces.indices { mockWorkspaces[i].active = mockWorkspaces[i].id == id }
+        renumberWorkspaces()
+        return workspaceState()
+    }
+    func setWorkspaceIcon(_ id: WorkspaceID, icon: String) throws {
+        guard let i = mockWorkspaces.firstIndex(where: { $0.id == id }) else { return }
+        mockWorkspaces[i].icon = icon
+        renumberWorkspaces()
+    }
+    func moveWorkspace(_ id: WorkspaceID, to index: UInt32) throws {
+        guard let i = mockWorkspaces.firstIndex(where: { $0.id == id }) else { return }
+        let w = mockWorkspaces.remove(at: i)
+        mockWorkspaces.insert(w, at: min(Int(index), mockWorkspaces.count))
+        renumberWorkspaces()
+    }
+    func duplicateWorkspace(_ id: WorkspaceID) throws -> WorkspaceID {
+        guard let i = mockWorkspaces.firstIndex(where: { $0.id == id }) else { return 0 }
+        var w = mockWorkspaces[i]
+        w.id = (mockWorkspaces.map(\.id).max() ?? 0) + 1
+        w.name += " copy"
+        w.active = false
+        mockWorkspaces.insert(w, at: i + 1)
+        renumberWorkspaces()
+        return w.id
+    }
+    func askDeleteWorkspace(_ id: WorkspaceID) throws -> Outcome {
+        try deleteWorkspace(id)
+        return Outcome()
+    }
+    func setSidebar(window: WindowID, width: Double, hidden: Bool) throws {
+        guard let w = workspace.windows.firstIndex(where: { $0.id == window }) else { return }
+        workspace.windows[w].sidebarWidth = width
+        workspace.windows[w].sidebarHidden = hidden
+    }
 
     // MARK: Commands
 

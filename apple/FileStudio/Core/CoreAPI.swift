@@ -466,10 +466,14 @@ public struct WindowState: Equatable, Sendable, Identifiable {
     public var activePane: Int
     public var orientation: Orientation
     public var splitRatio: Double
+    /// The sidebar's width for this window in this workspace (points).
+    public var sidebarWidth: Double
+    /// Whether the sidebar is collapsed.
+    public var sidebarHidden: Bool
     public init(id: WindowID, panes: [PaneState], activePane: Int, orientation: Orientation = .horizontal,
-                splitRatio: Double = 0.5) {
+                splitRatio: Double = 0.5, sidebarWidth: Double = 200, sidebarHidden: Bool = false) {
         self.id = id; self.panes = panes; self.activePane = activePane; self.orientation = orientation
-        self.splitRatio = splitRatio
+        self.splitRatio = splitRatio; self.sidebarWidth = sidebarWidth; self.sidebarHidden = sidebarHidden
     }
     public var activeTabID: TabID? {
         panes.indices.contains(activePane) ? panes[activePane].activeTabID : panes.first?.activeTabID
@@ -485,14 +489,25 @@ public struct WorkspaceState: Equatable, Sendable {
     }
 }
 
+/// A workspace: its own windows, tabs and layout (the core keeps them).
 public struct WorkspaceSummary: Equatable, Sendable, Identifiable {
     public var id: WorkspaceID
     public var name: String
+    /// SF Symbol name.
+    public var icon: String
+    /// Place in the switcher, from 0.
+    public var position: UInt32
+    /// The one on screen now.
+    public var active: Bool
+    /// The key that switches to it (`⌃⌘1`), as key-cap text.
+    public var shortcut: String?
     public var windows: UInt32
     public var tabs: UInt32
     public var updatedNs: Int64
-    public init(id: WorkspaceID, name: String, windows: UInt32, tabs: UInt32, updatedNs: Int64) {
-        self.id = id; self.name = name; self.windows = windows; self.tabs = tabs; self.updatedNs = updatedNs
+    public init(id: WorkspaceID, name: String, icon: String = "square.grid.2x2", position: UInt32 = 0,
+                active: Bool = false, shortcut: String? = nil, windows: UInt32, tabs: UInt32, updatedNs: Int64) {
+        self.id = id; self.name = name; self.icon = icon; self.position = position; self.active = active
+        self.shortcut = shortcut; self.windows = windows; self.tabs = tabs; self.updatedNs = updatedNs
     }
 }
 
@@ -948,6 +963,8 @@ public enum CoreEvent: Equatable, Sendable {
     case settingsChanged
     /// Re-read `favourites()`.
     case favouritesChanged
+    /// Re-read `workspaces()`.
+    case workspacesChanged
 }
 
 // MARK: - Protocols
@@ -1031,6 +1048,21 @@ public protocol EngineAPI: AnyObject, Sendable {
     func openWorkspace(_ id: WorkspaceID) throws -> WorkspaceState
     func renameWorkspace(_ id: WorkspaceID, name: String) throws
     func deleteWorkspace(_ id: WorkspaceID) throws
+    /// Every workspace, in switcher order (at least one).
+    func workspaces() throws -> [WorkspaceSummary]
+    /// The SF Symbols the New Workspace sheet offers.
+    func workspaceIcons() -> [String]
+    /// Makes a workspace (empty: one tab at Home; or a copy of the active one) and switches to it.
+    func createWorkspace(name: String, icon: String, copyCurrent: Bool) throws -> WorkspaceID
+    /// Saves the active workspace's windows, then shows another's.
+    func switchWorkspace(_ id: WorkspaceID) throws -> WorkspaceState
+    func setWorkspaceIcon(_ id: WorkspaceID, icon: String) throws
+    func moveWorkspace(_ id: WorkspaceID, to index: UInt32) throws
+    func duplicateWorkspace(_ id: WorkspaceID) throws -> WorkspaceID
+    /// A `confirm` request asking before a workspace is deleted.
+    func askDeleteWorkspace(_ id: WorkspaceID) throws -> Outcome
+    /// Records the sidebar's width and collapsed state for a window (per workspace).
+    func setSidebar(window: WindowID, width: Double, hidden: Bool) throws
 
     // Commands and keys
     /// What a key press means. `nil`: not ours, let the focused control have it.

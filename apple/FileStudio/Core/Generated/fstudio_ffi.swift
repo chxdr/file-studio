@@ -687,6 +687,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func appWillQuit() 
     
+    /**
+     * Asks before deleting (a `Confirm` request; the answer goes to `confirm`).
+     */
+    func askDeleteWorkspace(id: UInt64) throws  -> FfiOutcome
+    
     func breadcrumbs(path: String)  -> [FfiCrumb]
     
     /**
@@ -752,6 +757,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func createFolderAndGo(tab: UInt64, path: String) throws  -> FfiOutcome
     
+    /**
+     * Makes a workspace (empty, or a copy of the active one) and switches to it.
+     */
+    func createWorkspace(name: String, icon: String, copyCurrent: Bool) throws  -> UInt64
+    
     func dataDir()  -> String
     
     func deleteWorkspace(id: UInt64) throws 
@@ -776,6 +786,8 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      * Decides the drop and queues the copy or move.
      */
     func dropItems(sources: [String], dest: String, mods: FfiMods) throws  -> FfiOutcome
+    
+    func duplicateWorkspace(id: UInt64) throws  -> UInt64
     
     /**
      * Queues an operation (drag and drop).
@@ -858,6 +870,8 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func moveProtection(path: String)  -> String?
     
     func moveTab(id: UInt64, pane: UInt64, index: UInt32) throws 
+    
+    func moveWorkspace(id: UInt64, index: UInt32) throws 
     
     func newWindow(path: String?) throws  -> UInt64
     
@@ -973,6 +987,13 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func setSetting(key: String, value: String) throws 
     
     /**
+     * Records the sidebar's width and collapsed state for a window.
+     */
+    func setSidebar(window: UInt64, width: Double, hidden: Bool) throws 
+    
+    func setWorkspaceIcon(id: UInt64, icon: String) throws 
+    
+    /**
      * One setting as JSON, by dotted key (`view.show_hidden`).
      */
     func setting(key: String) throws  -> String
@@ -990,6 +1011,11 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func subfolders(path: String)  -> [FfiCrumb]
     
     func swapPanes(window: UInt64) throws 
+    
+    /**
+     * Saves the active workspace, then shows another.
+     */
+    func switchWorkspace(id: UInt64) throws  -> FfiWorkspaceState
     
     /**
      * The system pasteboard's `changeCount` and file paths, before a key or
@@ -1022,7 +1048,17 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func volumesChanged() 
     
+    /**
+     * The SF Symbols offered for workspaces.
+     */
+    func workspaceIcons()  -> [String]
+    
     func workspaceState()  -> FfiWorkspaceState
+    
+    /**
+     * Every workspace, in switcher order (at least one).
+     */
+    func workspaces() throws  -> [FfiWorkspaceSummary]
     
 }
 /**
@@ -1131,6 +1167,19 @@ open func appWillQuit()  {try! rustCall() {
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Asks before deleting (a `Confirm` request; the answer goes to `confirm`).
+     */
+open func askDeleteWorkspace(id: UInt64)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_ask_delete_workspace(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
 }
     
 open func breadcrumbs(path: String) -> [FfiCrumb]  {
@@ -1332,6 +1381,21 @@ open func createFolderAndGo(tab: UInt64, path: String)throws  -> FfiOutcome  {
 })
 }
     
+    /**
+     * Makes a workspace (empty, or a copy of the active one) and switches to it.
+     */
+open func createWorkspace(name: String, icon: String, copyCurrent: Bool)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_create_workspace(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),
+        FfiConverterString.lower(icon),
+        FfiConverterBool.lower(copyCurrent),uniffiCallStatus
+    )
+})
+}
+    
 open func dataDir() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
         uniffiCallStatus in
@@ -1407,6 +1471,16 @@ open func dropItems(sources: [String], dest: String, mods: FfiMods)throws  -> Ff
         FfiConverterSequenceString.lower(sources),
         FfiConverterString.lower(dest),
         FfiConverterTypeFfiMods_lower(mods),uniffiCallStatus
+    )
+})
+}
+    
+open func duplicateWorkspace(id: UInt64)throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_duplicate_workspace(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
     )
 })
 }
@@ -1687,6 +1761,16 @@ open func moveTab(id: UInt64, pane: UInt64, index: UInt32)throws   {try rustCall
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(id),
         FfiConverterUInt64.lower(pane),
+        FfiConverterUInt32.lower(index),uniffiCallStatus
+    )
+}
+}
+    
+open func moveWorkspace(id: UInt64, index: UInt32)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_move_workspace(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
         FfiConverterUInt32.lower(index),uniffiCallStatus
     )
 }
@@ -2074,6 +2158,30 @@ open func setSetting(key: String, value: String)throws   {try rustCallWithError(
 }
     
     /**
+     * Records the sidebar's width and collapsed state for a window.
+     */
+open func setSidebar(window: UInt64, width: Double, hidden: Bool)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_set_sidebar(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(window),
+        FfiConverterDouble.lower(width),
+        FfiConverterBool.lower(hidden),uniffiCallStatus
+    )
+}
+}
+    
+open func setWorkspaceIcon(id: UInt64, icon: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_set_workspace_icon(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),
+        FfiConverterString.lower(icon),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * One setting as JSON, by dotted key (`view.show_hidden`).
      */
 open func setting(key: String)throws  -> String  {
@@ -2129,6 +2237,19 @@ open func swapPanes(window: UInt64)throws   {try rustCallWithError(FfiConverterT
         FfiConverterUInt64.lower(window),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Saves the active workspace, then shows another.
+     */
+open func switchWorkspace(id: UInt64)throws  -> FfiWorkspaceState  {
+    return try  FfiConverterTypeFfiWorkspaceState_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_switch_workspace(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(id),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2227,10 +2348,34 @@ open func volumesChanged()  {try! rustCall() {
 }
 }
     
+    /**
+     * The SF Symbols offered for workspaces.
+     */
+open func workspaceIcons() -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_workspace_icons(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
 open func workspaceState() -> FfiWorkspaceState  {
     return try!  FfiConverterTypeFfiWorkspaceState_lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_workspace_state(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every workspace, in switcher order (at least one).
+     */
+open func workspaces()throws  -> [FfiWorkspaceSummary]  {
+    return try  FfiConverterSequenceTypeFfiWorkspaceSummary.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_workspaces(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -6922,15 +7067,31 @@ public struct FfiWindowState: Equatable, Hashable {
     public var activePane: UInt32
     public var orientation: FfiOrientation
     public var splitRatio: Double
+    /**
+     * The sidebar's width in points, for this window in this workspace.
+     */
+    public var sidebarWidth: Double
+    /**
+     * Whether the sidebar is collapsed.
+     */
+    public var sidebarHidden: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: UInt64, panes: [FfiPaneState], activePane: UInt32, orientation: FfiOrientation, splitRatio: Double) {
+    public init(id: UInt64, panes: [FfiPaneState], activePane: UInt32, orientation: FfiOrientation, splitRatio: Double, 
+        /**
+         * The sidebar's width in points, for this window in this workspace.
+         */sidebarWidth: Double, 
+        /**
+         * Whether the sidebar is collapsed.
+         */sidebarHidden: Bool) {
         self.id = id
         self.panes = panes
         self.activePane = activePane
         self.orientation = orientation
         self.splitRatio = splitRatio
+        self.sidebarWidth = sidebarWidth
+        self.sidebarHidden = sidebarHidden
     }
 
     
@@ -6953,7 +7114,9 @@ public struct FfiConverterTypeFfiWindowState: FfiConverterRustBuffer {
                 panes: FfiConverterSequenceTypeFfiPaneState.read(from: &buf), 
                 activePane: FfiConverterUInt32.read(from: &buf), 
                 orientation: FfiConverterTypeFfiOrientation.read(from: &buf), 
-                splitRatio: FfiConverterDouble.read(from: &buf)
+                splitRatio: FfiConverterDouble.read(from: &buf), 
+                sidebarWidth: FfiConverterDouble.read(from: &buf), 
+                sidebarHidden: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6963,6 +7126,8 @@ public struct FfiConverterTypeFfiWindowState: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.activePane, into: &buf)
         FfiConverterTypeFfiOrientation.write(value.orientation, into: &buf)
         FfiConverterDouble.write(value.splitRatio, into: &buf)
+        FfiConverterDouble.write(value.sidebarWidth, into: &buf)
+        FfiConverterBool.write(value.sidebarHidden, into: &buf)
     }
 }
 
@@ -7040,20 +7205,52 @@ public func FfiConverterTypeFfiWorkspaceState_lower(_ value: FfiWorkspaceState) 
 
 
 /**
- * A saved workspace.
+ * A workspace, for the switcher and the manager.
  */
 public struct FfiWorkspaceSummary: Equatable, Hashable {
     public var id: UInt64
     public var name: String
+    /**
+     * SF Symbol name.
+     */
+    public var icon: String
+    /**
+     * Place in the switcher, from 0.
+     */
+    public var position: UInt32
+    /**
+     * The one on screen now.
+     */
+    public var active: Bool
+    /**
+     * The key that switches to it (`⌃⌘1`).
+     */
+    public var shortcut: String?
     public var windows: UInt32
     public var tabs: UInt32
     public var updatedNs: Int64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: UInt64, name: String, windows: UInt32, tabs: UInt32, updatedNs: Int64) {
+    public init(id: UInt64, name: String, 
+        /**
+         * SF Symbol name.
+         */icon: String, 
+        /**
+         * Place in the switcher, from 0.
+         */position: UInt32, 
+        /**
+         * The one on screen now.
+         */active: Bool, 
+        /**
+         * The key that switches to it (`⌃⌘1`).
+         */shortcut: String?, windows: UInt32, tabs: UInt32, updatedNs: Int64) {
         self.id = id
         self.name = name
+        self.icon = icon
+        self.position = position
+        self.active = active
+        self.shortcut = shortcut
         self.windows = windows
         self.tabs = tabs
         self.updatedNs = updatedNs
@@ -7077,6 +7274,10 @@ public struct FfiConverterTypeFfiWorkspaceSummary: FfiConverterRustBuffer {
             try FfiWorkspaceSummary(
                 id: FfiConverterUInt64.read(from: &buf), 
                 name: FfiConverterString.read(from: &buf), 
+                icon: FfiConverterString.read(from: &buf), 
+                position: FfiConverterUInt32.read(from: &buf), 
+                active: FfiConverterBool.read(from: &buf), 
+                shortcut: FfiConverterOptionString.read(from: &buf), 
                 windows: FfiConverterUInt32.read(from: &buf), 
                 tabs: FfiConverterUInt32.read(from: &buf), 
                 updatedNs: FfiConverterInt64.read(from: &buf)
@@ -7086,6 +7287,10 @@ public struct FfiConverterTypeFfiWorkspaceSummary: FfiConverterRustBuffer {
     public static func write(_ value: FfiWorkspaceSummary, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.id, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.icon, into: &buf)
+        FfiConverterUInt32.write(value.position, into: &buf)
+        FfiConverterBool.write(value.active, into: &buf)
+        FfiConverterOptionString.write(value.shortcut, into: &buf)
         FfiConverterUInt32.write(value.windows, into: &buf)
         FfiConverterUInt32.write(value.tabs, into: &buf)
         FfiConverterInt64.write(value.updatedNs, into: &buf)
@@ -8203,6 +8408,10 @@ public enum FfiEvent: Equatable, Hashable {
     )
     case settingsChanged
     case favouritesChanged
+    /**
+     * Re-read the workspaces list.
+     */
+    case workspacesChanged
 
 
 
@@ -8256,6 +8465,8 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
         case 11: return .settingsChanged
         
         case 12: return .favouritesChanged
+        
+        case 13: return .workspacesChanged
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8328,6 +8539,10 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
         
         case .favouritesChanged:
             writeInt(&buf, Int32(12))
+        
+        
+        case .workspacesChanged:
+            writeInt(&buf, Int32(13))
         
         }
     }
@@ -12338,6 +12553,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_app_will_quit() != 24454) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_ask_delete_workspace() != 44795) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_breadcrumbs() != 32063) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12389,6 +12607,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_create_folder_and_go() != 10495) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_create_workspace() != 15642) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_data_dir() != 13648) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12405,6 +12626,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_drop_items() != 29777) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_duplicate_workspace() != 58468) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_enqueue() != 44324) {
@@ -12480,6 +12704,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_move_tab() != 12332) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_move_workspace() != 42482) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_new_window() != 37329) {
@@ -12584,6 +12811,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_set_setting() != 20396) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_set_sidebar() != 31886) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_set_workspace_icon() != 57614) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_setting() != 28387) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12597,6 +12830,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_swap_panes() != 52422) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_switch_workspace() != 38843) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_sync_pasteboard() != 38285) {
@@ -12626,7 +12862,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_volumes_changed() != 39853) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspace_icons() != 35575) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspace_state() != 29148) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspaces() != 24606) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffieventsink_on_event() != 3498) {

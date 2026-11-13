@@ -95,6 +95,10 @@ pane.same_folder_reverse
 pane.equalize
 workspace.save
 workspace.switch
+workspace.next
+workspace.previous
+workspace.duplicate
+workspace.delete
 workspace.manage
 preview.quick_look
 preview.get_info

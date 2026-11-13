@@ -120,6 +120,8 @@ pub(crate) enum PendingAction {
     /// Undo this op (still the top of the undo stack), recreating the
     /// folders it puts items back into (S14).
     UndoRecreating(fstudio_ops::OpId, Option<TabId>),
+    /// Forget a workspace's saved layout (no files are touched).
+    DeleteWorkspace(crate::ids::WorkspaceId),
 }
 
 impl PendingAction {
@@ -128,6 +130,7 @@ impl PendingAction {
         match self {
             PendingAction::Op(op) => op.tab,
             PendingAction::Redo(_, tab) | PendingAction::UndoRecreating(_, tab) => *tab,
+            PendingAction::DeleteWorkspace(_) => None,
         }
     }
 }
@@ -165,6 +168,7 @@ impl Engine {
             PendingAction::Op(op) => self.run_pending_op(*op, true),
             PendingAction::Redo(op, tab) => self.redo_op(Some(op), tab),
             PendingAction::UndoRecreating(op, tab) => self.undo_run(tab, Some(op)),
+            PendingAction::DeleteWorkspace(id) => self.confirmed_delete_workspace(id),
         }
     }
 
