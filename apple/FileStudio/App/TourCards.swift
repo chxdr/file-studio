@@ -72,7 +72,7 @@ struct TourCard: Identifiable, Equatable {
             keys: [.command("edit.undo", caption: "undo"),
                    .command("edit.redo", caption: "redo")],
             demo: .queue,
-            demoDescription: "The operation queue: one copy paused, two reordered, then a conflict sheet offering Replace, which moves the old item to the Trash."),
+            demoDescription: "The operation queue popover: a copy running, a move paused, two reordered; then the conflict sheet on the window, offering Skip, Replace or Keep Both."),
         TourCard(
             id: "cut", short: "Cut", symbol: "scissors",
             title: "Cut and paste to move",
@@ -80,16 +80,16 @@ struct TourCard: Identifiable, Equatable {
             keys: [.command("edit.cut", caption: "mark to move"),
                    .command("edit.paste", caption: "move here")],
             demo: .cutPaste,
-            demoDescription: "A file is cut and shows dimmed, still in place; pasting in another folder moves it there."),
+            demoDescription: "A file is cut and shows dimmed, still in place, with a marked-to-move message; pasting in the other pane moves it there and a toast offers Undo."),
         TourCard(
             id: "find", short: "Find", symbol: "line.3.horizontal.decrease.circle",
             title: "Type to select, or filter",
             body: "Just type a name to jump to it, as in Finder. The filter narrows the list to what matches, and {filter.clear} clears it.",
-            keys: [.typed("rep", caption: "jump to “Report”"),
+            keys: [.typed("no", caption: "jump to “Notes”"),
                    .command("filter.focus", caption: "filter"),
                    .command("filter.clear", caption: "clear")],
             demo: .typeSelect,
-            demoDescription: "On the left, typing rep selects Report.pdf in the full list. On the right, the filter rep shows only the matching files."),
+            demoDescription: "Typing no selects Notes.txt in the list. Then the Filter field in the toolbar, with rep typed, narrows the list to Reports 2025 and Report.pdf."),
         TourCard(
             id: "overlay", short: "Hold ⌘", symbol: "command",
             title: "Hold ⌘ to see what you can press",
@@ -97,7 +97,7 @@ struct TourCard: Identifiable, Equatable {
             keys: [.literal("hold ⌘", caption: "shortcut overlay"),
                    .command("palette.open", caption: "every command")],
             demo: .overlay,
-            demoDescription: "Holding Command shows a panel of Command shortcuts; a Did you know hint suggests a key for something done with the mouse."),
+            demoDescription: "Holding Command shows the panel of Command shortcuts, which the mouse wheel scrolls; after a file is duplicated with the mouse, a Did you know hint suggests Command D."),
         TourCard(
             id: "rebind", short: "Yours", symbol: "keyboard",
             title: "Every key is yours to change",
@@ -105,7 +105,7 @@ struct TourCard: Identifiable, Equatable {
             keys: [.command("app.settings", caption: "Settings"),
                    .command("palette.open", caption: "every command")],
             demo: .rebind,
-            demoDescription: "A shortcut row being rebound from F5 to a new key, and the Standard and Vim profiles."),
+            demoDescription: "Settings, Shortcuts: Copy to Other Pane is rebound from F5 to Control Option C; then the Keyboard tab switches the profile to Vim."),
     ]
 }
 

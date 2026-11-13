@@ -1,5 +1,5 @@
 // TourView.swift — the power tour sheet: a step pill, one card per signature
-// feature (a live-drawn demo, the title, two lines, and the keys to press as
+// feature (a demo drawn by the feature’s own views, the title, two lines, and the keys to press as
 // key caps read from the core's current bindings), and Close / Back / Next.
 // Motion follows setup (Import Studio's D-026): spring card transitions in
 // the direction of travel and a sliding step pill; fades only under Reduce
@@ -62,7 +62,7 @@ struct TourView: View {
             }
             .padding(16)
         }
-        .frame(width: 680, height: 560)
+        .frame(width: 760, height: 640)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("File Studio Power Tour")
     }
@@ -141,7 +141,7 @@ private struct TourCardView: View {
         let keysFor = { (id: String) in model.engine.commandKeys(id) }
         VStack(alignment: .leading, spacing: 12) {
             TourDemoStage(demo: card.demo, keysFor: keysFor, model: model, frozenPhase: frozenPhase)
-                .frame(height: 236)
+                .frame(height: 300)
                 .frame(maxWidth: .infinity)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Demo")

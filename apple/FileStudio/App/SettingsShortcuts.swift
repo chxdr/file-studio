@@ -229,7 +229,8 @@ struct SettingsShortcutsPane: View {
 
 // MARK: - Key slot
 
-private struct KeySlot: View {
+/// One key cell of the Shortcuts table (also drawn by the power tour's demo).
+struct KeySlot: View {
     let text: String?
     let recording: Bool
     let customised: Bool
