@@ -216,6 +216,36 @@ pub(crate) fn warning_toast(text: String) -> ShellRequest {
     }
 }
 
+/// "Removed an unfinished copy of “bigfile” (1.6 GB) left behind when its
+/// disk was disconnected", or `None` when nothing was removed.
+pub(crate) fn swept_text(swept: &[fstudio_ops::SweptPartial]) -> Option<String> {
+    let bytes: u64 = swept.iter().map(|s| s.bytes).sum();
+    let size = fstudio_view::format::format_size(bytes, &Default::default());
+    Some(match swept {
+        [] => return None,
+        [one] => {
+            // `.<name>.<item>.fstudio-partial` → `<name>`.
+            let n = one
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let name = n
+                .strip_prefix('.')
+                .and_then(|n| n.strip_suffix(".fstudio-partial"))
+                .and_then(|n| n.rsplit_once('.').map(|(a, _)| a.to_string()))
+                .unwrap_or(n);
+            format!(
+                "Removed an unfinished copy of “{name}” ({size}) left behind when its disk was disconnected"
+            )
+        }
+        many => format!(
+            "Removed {} unfinished copies ({size}) left behind when their disk was disconnected",
+            many.len()
+        ),
+    })
+}
+
 // ───────────────────────── toasts from outcomes ─────────────────────────
 
 /// What an operation is, for the words of its toast.
@@ -665,6 +695,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn cleanup_after_a_pulled_card_is_worded_plainly() {
+        let one = fstudio_ops::SweptPartial {
+            path: "/Volumes/SD/.bigfile.1.fstudio-partial".into(),
+            bytes: 1_600_000_000,
+        };
+        assert_eq!(swept_text(&[]), None);
+        assert_eq!(
+            swept_text(std::slice::from_ref(&one)).unwrap(),
+            "Removed an unfinished copy of “bigfile” (1.6 GB) left behind when its disk was disconnected"
+        );
+        assert!(
+            swept_text(&[one.clone(), one])
+                .unwrap()
+                .starts_with("Removed 2 unfinished copies (3.2 GB)")
+        );
+    }
 
     #[test]
     fn texts_name_what_and_where() {

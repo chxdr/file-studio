@@ -209,6 +209,8 @@ impl Engine {
         });
         let weak = Arc::downgrade(&engine);
         engine.ops_bridge.toaster.attach(weak.clone());
+        // Unfinished copies a pulled-out disk left behind, if it is back.
+        engine.sweep_leftover_partials();
         std::thread::Builder::new()
             .name("fstudio-session-saver".into())
             .spawn(move || session_saver(weak, dirty_rx))?;
@@ -1270,6 +1272,7 @@ impl Engine {
     /// The shell saw a volume mount or unmount. Re-reads volumes, emits
     /// `VolumesChanged` and re-lists tabs whose folder is gone.
     pub fn volumes_changed(&self) {
+        self.sweep_leftover_partials();
         let vols = fstudio_fs::volumes().unwrap_or_default();
         *self.shared.volumes.write() = vols;
         self.shared.emit(CoreEvent::VolumesChanged {
@@ -1281,6 +1284,33 @@ impl Engine {
                 t.refresh();
             }
         }
+    }
+
+    /// On a background thread: removes the temporary files of failed
+    /// copies whose disk was disconnected at the time, once that disk is
+    /// back (only files the journal records, with our exact temporary name;
+    /// see `OpQueue::sweep_leftover_partials`), and says so in a toast.
+    pub(crate) fn sweep_leftover_partials(&self) {
+        let ops = self.ops();
+        let hub = self.shared.hub.clone();
+        let _ = std::thread::Builder::new()
+            .name("fstudio-sweep-partials".into())
+            .spawn(move || {
+                let Ok(swept) = ops.sweep_leftover_partials() else {
+                    return;
+                };
+                if let Some(text) = crate::feedback::swept_text(&swept) {
+                    hub.emit(CoreEvent::Shell {
+                        tab: None,
+                        request: ShellRequest::Toast {
+                            text,
+                            button: None,
+                            command: None,
+                            style: crate::outcome::ToastStyle::Info,
+                        },
+                    });
+                }
+            });
     }
 
     /// Mounted volumes.

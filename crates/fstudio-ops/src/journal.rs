@@ -72,6 +72,9 @@ pub const MIGRATIONS: Migrations = Migrations {
             "ALTER TABLE ops_ops ADD COLUMN part_of INTEGER;
         ALTER TABLE ops_ops ADD COLUMN part_step INTEGER;",
         ),
+        // The device of the folder a temporary file was written in, so a
+        // leftover is only taken as gone once that same volume is back.
+        (3, "ALTER TABLE ops_items ADD COLUMN partial_dev INTEGER;"),
     ],
 };
 
@@ -166,6 +169,8 @@ pub struct ItemRow {
     /// The destination once placed.
     pub dest_ident: Option<Ident>,
     pub partial_ino: Option<u64>,
+    /// The device of the folder `partial` was written in.
+    pub partial_dev: Option<u64>,
     /// Where "Replace" sent the item that was in the way.
     pub replaced_trash: Option<PathBuf>,
     /// For Trash ops: where the item went.
@@ -259,7 +264,7 @@ fn parse_ident(s: Option<String>) -> Option<Ident> {
 const ITEM_COLS: &str =
     "id, op_id, parent, kind, source, dest_dir, dest_name, dest, partial, state,
     created, merged, expanded, bytes, hash, error, src_ident, dest_ident, partial_ino,
-    replaced_trash, trash_loc";
+    replaced_trash, trash_loc, partial_dev";
 
 fn item_from_row(r: &Row<'_>) -> rusqlite::Result<ItemRow> {
     Ok(ItemRow {
@@ -284,6 +289,7 @@ fn item_from_row(r: &Row<'_>) -> rusqlite::Result<ItemRow> {
         partial_ino: r.get::<_, Option<i64>>(18)?.map(|v| v as u64),
         replaced_trash: r.get::<_, Option<Vec<u8>>>(19)?.map(b2p),
         trash_loc: r.get::<_, Option<Vec<u8>>>(20)?.map(b2p),
+        partial_dev: r.get::<_, Option<i64>>(21)?.map(|v| v as u64),
     })
 }
 
@@ -497,6 +503,27 @@ impl Journal {
         raws.into_iter().map(Self::build_op).collect()
     }
 
+    /// Items of finished ops (completed, with errors, cancelled or failed)
+    /// that still record a temporary file: the removal after a failure
+    /// couldn't reach it (a card pulled out mid-copy). Ops that are running,
+    /// queued or interrupted are left to the queue and to resume/cancel.
+    pub fn leftover_partials(&self) -> Result<Vec<ItemRow>> {
+        Ok(self.db.with(|c| {
+            let mut st = c.prepare(&format!(
+                "SELECT {} FROM ops_items i JOIN ops_ops o ON o.id = i.op_id
+                 WHERE i.partial IS NOT NULL
+                   AND o.state IN ('completed', 'completed_with_errors', 'cancelled', 'failed')
+                 ORDER BY i.id",
+                ITEM_COLS
+                    .split(',')
+                    .map(|c| format!("i.{}", c.trim()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))?;
+            st.query_map([], item_from_row)?.collect()
+        })?)
+    }
+
     /// All items of an op, in insertion order (parents before children).
     pub fn load_items(&self, op: OpId) -> Result<Vec<ItemRow>> {
         Ok(self.db.with(|c| {
@@ -514,7 +541,7 @@ impl Journal {
                 "UPDATE ops_items SET dest_name = ?2, dest = ?3, partial = ?4, state = ?5,
                     created = ?6, merged = ?7, expanded = ?8, bytes = ?9, hash = ?10, error = ?11,
                     src_ident = ?12, dest_ident = ?13, partial_ino = ?14, replaced_trash = ?15,
-                    trash_loc = ?16, kind = ?17
+                    trash_loc = ?16, kind = ?17, partial_dev = ?18
                  WHERE id = ?1",
             )?
             .execute(params![
@@ -535,6 +562,7 @@ impl Journal {
                 opt_p2b(&it.replaced_trash),
                 opt_p2b(&it.trash_loc),
                 kind_str(it.kind),
+                it.partial_dev.map(|v| v as i64),
             ])
         })?;
         Ok(())
@@ -580,6 +608,7 @@ impl Journal {
                 src_ident: ch.src_ident,
                 dest_ident: None,
                 partial_ino: None,
+                partial_dev: None,
                 replaced_trash: None,
                 trash_loc: None,
             })

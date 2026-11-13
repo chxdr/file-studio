@@ -245,6 +245,15 @@ impl OpQueue {
         })
     }
 
+    /// Removes temporary files that failed copies left behind because their
+    /// volume was gone at the time, now that it is back (call at launch and
+    /// when volumes change, off the main thread: it touches the disk). Only
+    /// files the journal records for an item of a finished op, named exactly
+    /// as that item's temporary file, are removed. Returns what was removed.
+    pub fn sweep_leftover_partials(&self) -> Result<Vec<crate::recover::SweptPartial>> {
+        crate::recover::sweep_leftovers(&self.inner.journal)
+    }
+
     /// The queue's settings.
     pub fn config(&self) -> &OpsConfig {
         &self.inner.cfg

@@ -206,9 +206,14 @@ impl Env<'_> {
             Err(Stop::Cancelled) => (ItemState::Pending, Some(Err(()))),
         };
         item.state = state;
-        if state != ItemState::Done {
-            // Anything we wrote for an unfinished item is gone by now.
-            item.partial = None;
+        if state != ItemState::Done
+            && let Some(p) = item.partial.take()
+            && !crate::recover::drop_failed_partial(&p, item.partial_dev)
+        {
+            // Our temporary file couldn't be removed or its folder can't be
+            // reached (a card pulled out mid-copy): the journal keeps the
+            // record, and `sweep_leftovers` removes it once it can.
+            item.partial = Some(p);
         }
         if let Err(Stop::Fail(m)) = self.save(&item) {
             item.state = ItemState::Failed;
@@ -481,6 +486,7 @@ impl Env<'_> {
         }
         item.dest = Some(dest.clone());
         item.partial = Some(partial.clone());
+        item.partial_dev = crate::recover::folder_dev(&partial);
         item.state = ItemState::InProgress;
         self.save(item)?;
 
@@ -697,6 +703,7 @@ impl Env<'_> {
             }
             item.dest = Some(dest.clone());
             item.partial = Some(partial.clone());
+            item.partial_dev = crate::recover::folder_dev(&partial);
             item.state = ItemState::InProgress;
             self.save(item)?;
             std::fs::DirBuilder::new().mode(0o700).create(&partial)?;
@@ -919,6 +926,7 @@ impl Env<'_> {
         item.source = dest.clone();
         item.dest = Some(dest.clone());
         item.partial = Some(partial.clone());
+        item.partial_dev = crate::recover::folder_dev(&partial);
         item.kind = if is_dir {
             EntryKind::Dir
         } else {

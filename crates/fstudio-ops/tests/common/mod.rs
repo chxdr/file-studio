@@ -162,6 +162,8 @@ pub fn sh(cmd: &str, args: &[&str]) -> String {
 pub struct Image {
     _dir: tempfile::TempDir,
     pub mount: PathBuf,
+    /// The image file (to attach it again after a forced detach).
+    pub img: PathBuf,
 }
 
 impl Image {
@@ -202,7 +204,37 @@ impl Image {
         }
         args.push(img.to_str().unwrap());
         sh("hdiutil", &args);
-        Image { _dir: dir, mount }
+        Image {
+            _dir: dir,
+            mount,
+            img,
+        }
+    }
+
+    /// Pulls the "card" out: `hdiutil detach -force`, as a card pulled out
+    /// mid-copy would leave things.
+    pub fn pull_out(&self) {
+        sh(
+            "hdiutil",
+            &["detach", "-force", "-quiet", self.mount.to_str().unwrap()],
+        );
+    }
+
+    /// Puts it back at the same mount point.
+    pub fn put_back(&self) {
+        sh(
+            "hdiutil",
+            &[
+                "attach",
+                "-quiet",
+                "-nobrowse",
+                "-noverify",
+                "-noautoopen",
+                "-mountpoint",
+                self.mount.to_str().unwrap(),
+                self.img.to_str().unwrap(),
+            ],
+        );
     }
 }
 

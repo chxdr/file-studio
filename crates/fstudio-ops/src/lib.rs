@@ -46,6 +46,7 @@ mod undo;
 
 pub use journal::MIGRATIONS;
 pub use queue::OpQueue;
+pub use recover::SweptPartial;
 pub use trash::{DirTrasher, SystemTrasher, Trasher};
 pub use types::*;
 
