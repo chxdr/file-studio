@@ -84,6 +84,8 @@ pub fn mounts() -> io::Result<Vec<StatFs>> {
 }
 
 /// Minimal fallback: report the volume of `path` through `statvfs`.
+// `f_flag`/`ST_RDONLY` widths differ by platform, so the casts are needed.
+#[allow(clippy::unnecessary_cast)]
 #[cfg(not(target_os = "macos"))]
 pub fn statfs(path: &Path) -> io::Result<StatFs> {
     let c = cpath(path)?;

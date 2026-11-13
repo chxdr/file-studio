@@ -289,6 +289,8 @@ pub fn on_disk_name(path: impl AsRef<Path>) -> Result<String> {
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
+// The libc mode types differ by platform (u16 on macOS, u32 on Linux), so the casts are needed.
+#[allow(clippy::unnecessary_cast)]
 fn kind_from_mode(mode: u32) -> EntryKind {
     match mode & libc::S_IFMT as u32 {
         m if m == libc::S_IFREG as u32 => EntryKind::File,

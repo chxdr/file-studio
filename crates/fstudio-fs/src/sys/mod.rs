@@ -20,6 +20,7 @@ pub fn cpath(path: &Path) -> io::Result<CString> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))
 }
 
+#[cfg(target_os = "macos")]
 /// `fstatat(dirfd, name, AT_SYMLINK_NOFOLLOW)`: stats `name` inside an open directory without following links.
 pub fn lstat_at(dirfd: i32, name: &[u8]) -> io::Result<libc::stat> {
     let c = CString::new(name)
