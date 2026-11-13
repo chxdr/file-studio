@@ -367,6 +367,43 @@ fn tags_acls_and_locks_survive() {
     );
 }
 
+/// `UF_COMPRESSED`: an APFS/HFS+ transparently compressed (decmpfs) file.
+const UF_COMPRESSED: u32 = 0x20;
+
+fn is_compressed(p: &Path) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    std::fs::symlink_metadata(p).is_ok_and(|m| m.st_flags() & UF_COMPRESSED != 0)
+}
+
+/// A compressed original's data fork is reported as one big hole (its
+/// content lives in a resource fork). The copy must still carry every byte:
+/// this once copied such files as zeros and "verified" them, because both
+/// sides were hashed from the same zeros. `/usr/share/dict/web2` ships
+/// compressed with every macOS, so this needs no tool to make one.
+#[test]
+fn a_compressed_system_file_is_copied_byte_for_byte() {
+    let src = Path::new("/usr/share/dict/web2");
+    assert!(
+        is_compressed(src),
+        "{} is no longer compressed on this macOS; pick another compressed file to test with",
+        src.display()
+    );
+    let d = tempfile::tempdir().unwrap();
+    let r = copy(src, d.path(), &no_clone()).unwrap();
+    assert_eq!(r.outcome, Outcome::Verified, "{r:?}");
+    let want = std::fs::read(src).unwrap();
+    assert_eq!(
+        std::fs::read(&r.dest).unwrap(),
+        want,
+        "the copy's bytes differ"
+    );
+    assert_eq!(r.hashes.file, xxh(src), "{r:?}");
+    assert!(want.iter().any(|b| *b != 0));
+}
+
+/// The same with a file compressed by `ditto --hfsCompression`. Recent
+/// macOS versions may leave the file uncompressed; the content check holds
+/// either way, and the compressed case is covered above.
 #[test]
 fn compressed_originals_copy_correctly() {
     let (s, d) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
@@ -382,10 +419,17 @@ fn compressed_originals_copy_correctly() {
         ],
     );
     let r = copy(&src, d.path(), &no_clone()).unwrap();
-    assert_eq!(r.outcome, Outcome::Verified);
     assert_eq!(
         std::fs::read(&r.dest).unwrap(),
-        std::fs::read(&plain).unwrap()
+        std::fs::read(&plain).unwrap(),
+        "compressed source: {}; {r:?}",
+        is_compressed(&src)
+    );
+    assert_eq!(
+        r.outcome,
+        Outcome::Verified,
+        "compressed source: {}; {r:?}",
+        is_compressed(&src)
     );
 }
 
