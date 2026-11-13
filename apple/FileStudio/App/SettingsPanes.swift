@@ -352,7 +352,7 @@ struct KeyedPicker<Options: View>: View {
     @State private var value: String?
 
     var body: some View {
-        Picker(title, selection: Binding(get: { value ?? load() }, set: save), content: options)
+        Picker(title, selection: Binding(get: { value ?? load() }, set: { save($0) }), content: options)
             .onAppear { value = load() }
     }
 
@@ -377,7 +377,7 @@ struct KeyedToggle: View {
     @State private var value: Bool?
 
     var body: some View {
-        Toggle(title, isOn: Binding(get: { value ?? load() }, set: save))
+        Toggle(title, isOn: Binding(get: { value ?? load() }, set: { save($0) }))
             .onAppear { value = load() }
     }
 
