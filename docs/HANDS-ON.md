@@ -38,7 +38,7 @@ Under the session scratchpad: `testtree/flat10k` (10,000 empty files), `Pictures
 
 Segment click behaviour I saw: clicking a Marta segment (or its separator) goes there and **selects the child you came from**; a QSpace segment click also navigates.
 
-Screenshots: `hands-on/qspace-tab-completion.jpg` (QSpace edit mode after Tab), `hands-on/forklift-go-to-folder.jpg` (ForkLift popup).
+The screenshots taken during these trials were kept out of the repository: they show other companies' apps.
 
 ## 2. Completion
 
@@ -303,8 +303,6 @@ Notes:
 
 The user likes ForkLift's look most and QSpace Pro's second. Measurements are read off 1x window screenshots (window size equals point size), so row and bar heights are accurate to about ±1 pt; **font sizes and materials are estimates**, not read from the apps. ForkLift was captured with a single tab, so **tab styling and the queue/progress UI were not seen** (its right-hand inspector has three icon tabs: info, transfers, warnings, which is where progress lives).
 
-![ForkLift chrome](hands-on/forklift-chrome.jpg) ![ForkLift toolbar](hands-on/forklift-toolbar.jpg)
-
 ### ForkLift 4 (dark theme "ForkLift")
 
 | Element | What it looks like |
@@ -319,8 +317,6 @@ The user likes ForkLift's look most and QSpace Pro's second. Measurements are re
 | Materials | Looks **flat and opaque** (dark grey, content slightly lighter than the sidebar); I saw no visible blur or glass. Accent is **ForkLift's own orange** from its built-in theme (chosen in the welcome dialog), not the system accent. Folder icons are custom magenta. |
 
 ### QSpace Pro 7 (where it differs, and what is worth borrowing)
-
-![QSpace chrome](hands-on/qspace-chrome.jpg)
 
 - **Denser and busier:** rows are ~20 pt with zebra striping, ~12 pt text, toolbar ~50 pt with around 15 glyphs in several groups plus a layout popup ("Default") and a Buy button; opens as **four** panes.
 - **Active pane:** a **violet 2 pt rounded outline around the whole pane**, path bar included. At four panes this reads much better than ForkLift's single bar.
