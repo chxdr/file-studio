@@ -16,7 +16,7 @@ use crate::copy::{
 use crate::events::{FileProgress, FileReport, Outcome, Phase, ProgressSink};
 use crate::job::{
     self, EngineError, Event, JobInfo, JobPlan, JobProgress, JobReport, JobSpec, MissingSource,
-    Note, SharedSink, io_ctx,
+    Note, Resumability, SharedSink, io_ctx,
 };
 use crate::journal::{
     Dest, Entry, EntryKind, FileRec, FileSt, Head, JobFiles, JobOptions, JobState, Manifest,
@@ -235,8 +235,54 @@ impl Job {
         st.last_save = Instant::now();
     }
 
+    /// Whether it can be resumed by hand now, given the mounted volumes.
+    fn resumability(&self, st: &St, vols: &[VolumeInfo]) -> Resumability {
+        if st.state == JobState::RunningElsewhere {
+            return Resumability::InUseElsewhere;
+        }
+        if st.running || !st.state.needs_resume() {
+            return Resumability::NotNeeded;
+        }
+        let dest = &self.m.dest.volume;
+        if find(vols, dest).is_none() {
+            return Resumability::NeedsVolumes(vec![dest.name.clone()]);
+        }
+        let mut have = false;
+        let mut missing: BTreeSet<u32> = BTreeSet::new();
+        for (e, r) in self.m.files.iter().zip(&st.recs) {
+            if r.st.is_terminal() || e.kind == EntryKind::Dir || e.src.is_none() {
+                continue;
+            }
+            if find(vols, &self.m.sources[e.src_vol as usize]).is_some() {
+                have = true;
+            } else {
+                missing.insert(e.src_vol);
+            }
+        }
+        let names: Vec<String> = missing
+            .iter()
+            .map(|i| self.m.sources[*i as usize].name.clone())
+            .collect();
+        if have || names.is_empty() {
+            Resumability::Ready {
+                still_missing: names,
+            }
+        } else {
+            Resumability::NeedsVolumes(names)
+        }
+    }
+
     fn info(&self) -> JobInfo {
+        self.info_with(&[], false)
+    }
+
+    fn info_with(&self, vols: &[VolumeInfo], with_volumes: bool) -> JobInfo {
         let st = lock(&self.st);
+        let resume = if with_volumes {
+            self.resumability(&st, vols)
+        } else {
+            Resumability::NotNeeded
+        };
         let mut info = JobInfo {
             id: self.id,
             label: self.m.label.clone(),
@@ -250,6 +296,8 @@ impl Job {
             bytes_total: 0,
             bytes_done: 0,
             missing: missing(&self.m, &st.recs),
+            dest_uuid: self.m.dest.volume.uuid.clone(),
+            resume,
         };
         for (e, r) in self.m.files.iter().zip(&st.recs) {
             if e.kind == EntryKind::Dir {
@@ -597,6 +645,9 @@ impl Engine {
         }
         *lock(&job.ctl) = Arc::new(Control::new());
         job.close.store(false, Ordering::Release);
+        // Running before the thread exists, so a pause() right after start()
+        // can't be overwritten by the thread saying "running".
+        set_state(&self.inner, &job, JobState::Running);
         let inner = self.inner.clone();
         std::thread::Builder::new()
             .name(format!("safe-transfer {id}"))
@@ -645,6 +696,14 @@ impl Engine {
         if state.is_final() {
             return Err(EngineError::Final(state.as_str()));
         }
+        if how == Cancel::Close {
+            // Discarding removes this job's partials on its destination; with
+            // the disk away they can't be removed, so ask for it first.
+            let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+            if find(&vols, &job.m.dest.volume).is_none() {
+                return Err(EngineError::NeedsVolume(job.m.dest.volume.name.clone()));
+            }
+        }
         let l = job
             .files
             .lock()
@@ -656,16 +715,55 @@ impl Engine {
         Ok(())
     }
 
-    /// The job, at a glance.
+    /// The job, at a glance, including whether it can be resumed now.
     pub fn job(&self, id: JobId) -> Option<JobInfo> {
-        self.get(&id).ok().map(|j| j.info())
+        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        self.get(&id).ok().map(|j| j.info_with(&vols, true))
     }
 
     /// Every job the engine knows (unfinished ones, and finished ones kept
-    /// for `keep_finished_days`).
+    /// for `keep_finished_days`), each with whether it can be resumed now.
     pub fn jobs(&self) -> Vec<JobInfo> {
+        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
         let jobs: Vec<Arc<Job>> = lock(&self.inner.jobs).values().cloned().collect();
-        jobs.iter().map(|j| j.info()).collect()
+        jobs.iter().map(|j| j.info_with(&vols, true)).collect()
+    }
+
+    /// Jobs waiting for a resume (§6.1): the operations list's "Interrupted"
+    /// rows and the toolbar badge's count.
+    pub fn resumable(&self) -> Vec<JobInfo> {
+        self.jobs()
+            .into_iter()
+            .filter(|j| j.resume != Resumability::NotNeeded)
+            .collect()
+    }
+
+    /// Unfinished jobs that write to, or read from, the volume `uuid` (the
+    /// sidebar's "Resume Transfer" for that card or drive).
+    pub fn jobs_on_volume(&self, uuid: &str) -> Vec<JobInfo> {
+        let ids: Vec<JobId> = lock(&self.inner.jobs)
+            .values()
+            .filter(|j| {
+                j.m.dest.volume.uuid.as_deref() == Some(uuid)
+                    || j.m.sources.iter().any(|s| s.uuid.as_deref() == Some(uuid))
+            })
+            .map(|j| j.id)
+            .collect();
+        self.resumable()
+            .into_iter()
+            .filter(|j| ids.contains(&j.id))
+            .collect()
+    }
+
+    /// Resumes every job whose disks are connected (`transfer.resume_all`,
+    /// `safe-transfer resume --all`). Returns the jobs started.
+    pub fn resume_all(&self) -> Vec<JobId> {
+        self.resumable()
+            .into_iter()
+            .filter(|j| matches!(j.resume, Resumability::Ready { .. }))
+            .filter(|j| self.resume(j.id).is_ok())
+            .map(|j| j.id)
+            .collect()
     }
 
     /// The job's report as it stands (final once the job is finished).
@@ -838,7 +936,6 @@ fn run(inner: Arc<Inner>, job: Arc<Job>) {
         st.run_started = Some(Instant::now());
         st.run_base = st.work_done;
     }
-    set_state(&inner, &job, JobState::Running);
     let t = Instant::now();
     let stop = Runner::new(&inner, &job, &ctl).go();
     lock(&job.st).seconds += t.elapsed().as_secs_f64();

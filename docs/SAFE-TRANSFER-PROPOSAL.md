@@ -360,7 +360,7 @@ pub struct JobReport {
 - `fstudio-core` owns the `Engine` and gives it to `OpQueue`.
 - Ops turns Safe Transfer events into its existing `OpEvent`s. `OpStatus` gains `phase`, `eta` and `waiting_for: Vec<…>`.
 - `fstudio-ffi` mirrors these the way it mirrors `OpEvent` today.
-- Two new `ShellRequest`s:
+- Two new `ShellRequest`s (the full manual-resume UX is §6.1):
   - `ResumePrompt { job, label, volume_name, files_left, bytes_left }`, with Resume, Not now and Discard buttons
   - `SourceMissing { job, files_by_source }`
 - The shell only draws these and calls `resume` / `cancel` back.
@@ -789,6 +789,60 @@ For every file that isn't `done`, in manifest order:
 
 **Auto-resume** is off by default (your brief). When it's on, a job resumes as soon as its destination and sources are present, and a toast says so.
 
+### 6.1 Resuming by hand (auto-resume off)
+
+Your words: *"if it's disabled but you trip it in the software there's like a resume transfer for that data."* With auto-resume off, an unfinished job never just waits out of sight. It can be resumed from the app at any time, from three places, and every manual resume ends with the same per-file report as an automatic one.
+
+**Which jobs count:** interrupted (a crash, quit or power cut), waiting for the destination (pulled mid-job), waiting for a source card, destination full, and cancelled (Cancel keeps a job resumable; only Discard ends it).
+
+**1. A prompt when the disk comes back** (`ResumeAvailable`, shown once per reconnect):
+
+> **Resume “Smith wedding → CLIENT_A”?**
+> 312 of 800 files left (11.3 GB). Files already copied are kept, and so is anything partly copied that still checks out.
+>
+> [ Resume ]   [ Later ]   [ Discard… ]
+
+- **Later** closes the prompt and changes nothing: the job stays in the operations list.
+- **Discard…** always asks first:
+
+  > **Discard the rest of this copy?** The 488 finished files on CLIENT_A stay. The 3 unfinished hidden copies are removed. Your originals aren't touched.
+  >
+  > [ Cancel ] [ Discard ]
+
+  It removes only this job's own partials (§5), and only with the destination connected. The engine refuses otherwise ("insert CLIENT_A first").
+- Cancelled jobs aren't prompted on reconnect, because you stopped them yourself. They stay in the list.
+
+**2. The operations list:**
+- The job stays as a row labelled **Interrupted** (or "Waiting for Untitled", or "CLIENT_A is full"), with the counts and a **Resume Transfer** button.
+- A **badge** on the toolbar's operations icon shows how many jobs are waiting.
+- The button's state follows the disks:
+  - destination not connected: **"Insert CLIENT_A to resume"**, disabled, and it enables itself as soon as that volume appears
+  - destination there but some source cards missing: Resume is enabled and copies what it can; the row says "212 files wait for Untitled"
+  - destination full: "Free space on CLIENT_A, then resume"
+  - running in the other app or terminal: disabled, "Running in another window"
+
+**3. The sidebar:** a card or drive with unfinished jobs gets **Resume Transfer** in its context menu (and **Resume All Transfers** when it has more than one). This matches jobs by volume UUID, as either the destination or a source, so it works even when two cards share a name.
+
+**Commands** (registry, F-006): `transfer.resume` (the selected row or sidebar disk) and `transfer.resume_all` (every job whose disks are connected). They are listed in the palette, the menus and the Settings shortcut editor.
+
+**CLI:**
+- `safe-transfer resume <job>`
+- `safe-transfer resume --all`, which also lists what the others still need ("insert CLIENT_A to resume…")
+- `safe-transfer jobs`, which shows each job's state and what it needs
+
+**What the engine provides (built in M2):**
+- `JobInfo.resume`, a `Resumability`: one of `NotNeeded`, `Ready { still_missing }`, `NeedsVolumes([names])` or `InUseElsewhere`, computed from the mounted volumes.
+- `JobInfo.dest_uuid`.
+- `Engine::resumable()` for the list and the badge, `Engine::jobs_on_volume(uuid)` for the sidebar, and `Engine::resume_all()`.
+- `cancel(Close)` refuses with `NeedsVolume` while the destination is away.
+- Tests: `a_stopped_job_stays_listed_and_can_be_resumed_by_hand`, and the CLI's `resume_all_finishes_a_crashed_copy`.
+
+**What M4 builds:**
+- In `fstudio-core`: the prompt as a `ShellRequest`, the operations-list row, the badge count and the sidebar menu items. The core recomputes them on every volume change (the host already calls `volumes_changed`).
+- In the Swift shell: drawing them, with no logic of its own (F-001).
+
+**The journal is unchanged:** the job's state already lives in its head file, and resumability is worked out from the mounted volumes each time. "Later" isn't stored. The prompt comes back on the next reconnect or launch, and the list row is always there.
+
 ---
 
 ## 7. Moves
@@ -1032,7 +1086,7 @@ Safe Transfer is a separate track you asked for. File Studio's own M3 hasn't sta
 | **M1: core copy** | The crates, the platform traits (macOS, plus Linux and Windows stubs that compile), single-file chunk pipeline (partial → chunks + hashes → flush → evict → verify → exclusive rename → folder flush), clones, symlinks, holes, `remove.rs` + grep test, CLI `copy`/`plan`/`compare`/`volumes` | unit tests; single-file fault tests; fmt, clippy and test clean |
 | **M2: journal + resume** | Multi-file jobs, the journal (§3), resume (§6), volume UUIDs, reconnect detection, `WaitingForSource`/`WaitingForDestination`, small-file group commit, CLI `jobs`/`resume`/`cancel` | **the yank suite (§11.3) and `kill -9` suite (§11.4) pass** on APFS, exFAT and FAT images |
 | **M3: moves, conflicts, metadata, space** | §7–§10, the metadata report, the exFAT `._` placement decision, the edge-case fixtures | all §11.5 fixtures pass; the metadata table is confirmed or corrected |
-| **M4: into File Studio** | the ops backend switch (§0.4 B–C), core owns the Engine, ffi mirrors, resume and source-missing prompts in Swift (display only), settings (auto-resume, verify policy) | ops' existing tests pass on both backends; app proofs of a yank and a resume; your sign-off flips the default |
+| **M4: into File Studio** | the ops backend switch (§0.4 B–C), core owns the Engine, ffi mirrors, resume and source-missing prompts plus the §6.1 manual resume (list row, badge, sidebar item, `transfer.resume`/`transfer.resume_all`) in Swift (display only), settings (auto-resume, verify policy) | ops' existing tests pass on both backends; app proofs of a yank and a resume; your sign-off flips the default |
 | **M5: benchmarks + polish** | §12.3 on your real card and drives, the real-card yank script (§11.6), removal of ops' old data path (§0.4 D), report | numbers in `bench/history.md`, known issues listed |
 
 ---

@@ -284,3 +284,58 @@ fn kill_9_at_every_point_then_resume() {
         );
     }
 }
+
+/// A crashed copy is listed as ready, and `resume --all` finishes it.
+#[cfg(feature = "fault-injection")]
+#[test]
+fn resume_all_finishes_a_crashed_copy() {
+    use std::io::{BufRead, BufReader};
+    let (s, d, j) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    shoot(s.path(), 2 << 20);
+    let src = s.path().join("DCIM");
+    let mut child = st(j.path())
+        .args(["copy", "--no-clone"])
+        .arg(&src)
+        .arg(d.path())
+        .env("ST_FAULT", "pause@before_group_barrier")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut err = BufReader::new(child.stderr.take().unwrap());
+    let mut l = String::new();
+    while !l.contains("REACHED") {
+        l.clear();
+        assert!(err.read_line(&mut l).unwrap() > 0, "never reached");
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let out = st(j.path()).args(["--json", "jobs"]).output().unwrap();
+    let jobs = json_lines(&out.stdout);
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["state"], "interrupted");
+    assert_eq!(jobs[0]["resume"], "ready");
+    let out = st(j.path()).args(["resume", "--all"]).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cmp = st(j.path())
+        .arg("compare")
+        .arg(&src)
+        .arg(d.path().join("DCIM"))
+        .output()
+        .unwrap();
+    assert!(
+        cmp.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cmp.stdout)
+    );
+    let out = st(j.path()).args(["--json", "jobs"]).output().unwrap();
+    assert_eq!(json_lines(&out.stdout)[0]["resume"], "not_needed");
+}

@@ -249,6 +249,27 @@ pub struct JobInfo {
     pub bytes_done: u64,
     /// Files waiting for source cards.
     pub missing: Vec<MissingSource>,
+    /// The destination volume's UUID (to match a sidebar disk to its jobs).
+    pub dest_uuid: Option<String>,
+    /// Whether this job is waiting for someone to resume it, and what for.
+    pub resume: Resumability,
+}
+
+/// Whether a job can be resumed by hand right now (proposal §6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resumability {
+    /// Running, planned, finished or closed: nothing to resume.
+    NotNeeded,
+    /// Its disks are connected: [`crate::Engine::resume`] makes progress now.
+    /// `still_missing` names source cards some files are still waiting for.
+    Ready {
+        /// Source disks that are still not connected (their files keep waiting).
+        still_missing: Vec<String>,
+    },
+    /// Waiting for these disks to be connected ("Insert CLIENT_A to resume").
+    NeedsVolumes(Vec<String>),
+    /// Another app or terminal is running it.
+    InUseElsewhere,
 }
 
 /// The end-of-job report (also saved as `report.json`).
@@ -318,6 +339,9 @@ pub enum EngineError {
     /// Another process runs this job.
     #[error("another app or terminal is running this job right now")]
     InUse,
+    /// A disk the job needs isn't connected.
+    #[error("insert “{0}” first")]
+    NeedsVolume(String),
     /// The job is finished or closed.
     #[error("this job is already {0}")]
     Final(&'static str),

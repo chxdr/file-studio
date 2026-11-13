@@ -397,3 +397,75 @@ fn a_damaged_journal_is_left_alone_and_listed() {
 fn tempdir() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
+
+/// Hides one volume, as if that card were out of its reader.
+struct Without(Option<String>);
+impl VolumeIdentity for Without {
+    fn volume_of(&self, p: &Path) -> io::Result<VolumeInfo> {
+        Platform::native().volumes.volume_of(p)
+    }
+    fn mounted(&self) -> io::Result<Vec<VolumeInfo>> {
+        Ok(Platform::native()
+            .volumes
+            .mounted()?
+            .into_iter()
+            .filter(|v| v.uuid != self.0)
+            .collect())
+    }
+    fn case_sensitive(&self, dir: &Path) -> io::Result<bool> {
+        Platform::native().volumes.case_sensitive(dir)
+    }
+}
+
+#[test]
+fn a_stopped_job_stays_listed_and_can_be_resumed_by_hand() {
+    use safe_transfer::Resumability;
+    let (s, d, j) = (tempdir(), tempdir(), tempdir());
+    let src = s.path().join("job");
+    std::fs::create_dir(&src).unwrap();
+    for i in 0..5 {
+        std::fs::write(src.join(format!("{i}.ARW")), bytes(200_000, i)).unwrap();
+    }
+    let dest_uuid = Platform::native().volumes.volume_of(d.path()).unwrap().uuid;
+
+    // The destination "out of its reader": listed, says what it needs, and
+    // Discard is refused until the disk is back.
+    let id = {
+        let mut p = Platform::native();
+        p.volumes = Arc::new(Without(dest_uuid.clone()));
+        let e = engine(j.path(), p, &Events::default());
+        let id = e.create(spec(&src, d.path())).unwrap();
+        assert_eq!(e.job(id).unwrap().resume, Resumability::NotNeeded);
+        e.cancel(id, Cancel::KeepResumable).unwrap();
+        let info = e.job(id).unwrap();
+        assert_eq!(info.state, JobState::Cancelled);
+        assert!(
+            matches!(&info.resume, Resumability::NeedsVolumes(v) if v.len() == 1),
+            "{:?}",
+            info.resume
+        );
+        assert_eq!(e.resumable().len(), 1);
+        assert!(e.resume_all().is_empty(), "nothing is ready");
+        let err = e.cancel(id, Cancel::Close).unwrap_err();
+        assert!(matches!(err, EngineError::NeedsVolume(_)), "{err}");
+        id
+    };
+
+    // The disk is back: ready, found from the sidebar by its UUID, resumed.
+    let e = engine(j.path(), Platform::native(), &Events::default());
+    let info = e.job(id).unwrap();
+    assert!(
+        matches!(info.resume, Resumability::Ready { .. }),
+        "{:?}",
+        info.resume
+    );
+    assert_eq!(e.jobs_on_volume(dest_uuid.as_deref().unwrap()).len(), 1);
+    assert_eq!(e.resume_all(), vec![id]);
+    assert_eq!(
+        e.wait(id, Duration::from_secs(60)).unwrap().state,
+        JobState::Finished
+    );
+    assert!(e.resumable().is_empty());
+    assert_eq!(e.report(id).unwrap().copied_verified, 5);
+    same_tree(&src, &d.path().join("job"));
+}

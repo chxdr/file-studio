@@ -182,6 +182,19 @@ impl JobState {
         }
     }
 
+    /// Whether the job stopped before finishing and waits for a resume:
+    /// interrupted, waiting for a disk, full, or cancelled (resumable).
+    pub fn needs_resume(self) -> bool {
+        matches!(
+            self,
+            JobState::Interrupted
+                | JobState::WaitingForDestination
+                | JobState::WaitingForSource
+                | JobState::DestinationFull
+                | JobState::Cancelled
+        )
+    }
+
     /// Whether the job can't do anything more.
     pub fn is_final(self) -> bool {
         matches!(self, JobState::Finished | JobState::Closed)

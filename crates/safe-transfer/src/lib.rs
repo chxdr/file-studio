@@ -62,7 +62,7 @@ pub use engine::{
 pub use events::{FileProgress, FileReport, MetaLoss, NoProgress, Outcome, Phase, ProgressSink};
 pub use job::{
     EngineError, Event, EventSink, Item, JobInfo, JobPlan, JobProgress, JobReport, JobSpec,
-    MissingSource, NoEvents, Note, human,
+    MissingSource, NoEvents, Note, Resumability, human,
 };
 pub use journal::JobState;
 pub use names::JobId;

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand};
 use safe_transfer::{
     Cancel, Engine, EngineConfig, Event, Item, JobId, JobInfo, JobReport, JobSpec, JobState,
-    Options, Platform, Symlinks, human,
+    Options, Platform, Resumability, Symlinks, human,
 };
 use serde_json::json;
 
@@ -66,10 +66,15 @@ enum Cmd {
     },
     /// List unfinished (and recently finished) jobs.
     Jobs,
-    /// Continue an interrupted, waiting, paused or cancelled job.
+    /// Continue an interrupted, waiting, paused or cancelled job (or, with
+    /// --all, every one whose disks are connected).
     Resume {
         /// The job id.
-        job: String,
+        #[arg(required_unless_present = "all")]
+        job: Option<String>,
+        /// Resume every unfinished job whose disks are connected.
+        #[arg(long, conflicts_with = "job")]
+        all: bool,
     },
     /// Cancel a job: its partial files are removed; finished files stay.
     Cancel {
@@ -467,14 +472,28 @@ fn main() -> ExitCode {
                     println!(
                         "{}",
                         json!({"job": j.id.as_str(), "label": j.label, "state": j.state.as_str(),
+                               "resume": match &j.resume {
+                                   Resumability::Ready { .. } => "ready".to_string(),
+                                   Resumability::NeedsVolumes(v) => format!("needs: {}", v.join(", ")),
+                                   Resumability::InUseElsewhere => "in_use_elsewhere".to_string(),
+                                   Resumability::NotNeeded => "not_needed".to_string(),
+                               },
                                "dest": j.dest, "dest_volume": j.dest_volume, "files_total": j.files_total,
                                "files_done": j.files_done, "files_failed": j.files_failed,
                                "files_skipped": j.files_skipped, "bytes_total": j.bytes_total,
                                "bytes_done": j.bytes_done})
                     );
                 } else {
+                    let hint = match &j.resume {
+                        Resumability::Ready { .. } => "  (ready to resume)".to_string(),
+                        Resumability::NeedsVolumes(v) => {
+                            format!("  (insert {} to resume)", v.join(", "))
+                        }
+                        Resumability::InUseElsewhere => "  (running elsewhere)".to_string(),
+                        Resumability::NotNeeded => String::new(),
+                    };
                     println!(
-                        "{}  {:<24} {}/{} files  {} left  {}",
+                        "{}  {:<24} {}/{} files  {} left  {}{hint}",
                         j.id,
                         j.state.as_str(),
                         j.files_done,
@@ -489,10 +508,42 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Cmd::Resume { job } => match find_job(&engine, job) {
-            Ok(id) => run_job(&engine, id, json_out),
+        Cmd::Resume { job: Some(job), .. } => match find_job(&engine, job) {
+            Ok(id) => {
+                if let Some(Resumability::NeedsVolumes(v)) = engine.job(id).map(|j| j.resume) {
+                    eprintln!("safe-transfer: insert {} to resume this job", v.join(", "));
+                    return ExitCode::from(1);
+                }
+                run_job(&engine, id, json_out)
+            }
             Err(c) => c,
         },
+        Cmd::Resume { job: None, .. } => {
+            let waiting = engine.resumable();
+            let ready: Vec<JobId> = waiting
+                .iter()
+                .filter(|j| matches!(j.resume, Resumability::Ready { .. }))
+                .map(|j| j.id)
+                .collect();
+            for j in waiting.iter().filter(|j| !ready.contains(&j.id)) {
+                if let Resumability::NeedsVolumes(v) = &j.resume {
+                    eprintln!("{}: insert {} to resume “{}”", j.id, v.join(", "), j.label);
+                }
+            }
+            let mut code = ExitCode::SUCCESS;
+            for id in ready {
+                if !json_out {
+                    eprintln!("resuming job {id}");
+                }
+                if run_job(&engine, id, json_out) != ExitCode::SUCCESS {
+                    code = ExitCode::from(1);
+                }
+            }
+            if !engine.resumable().is_empty() {
+                code = ExitCode::from(1);
+            }
+            code
+        }
         Cmd::Cancel { job, close } => match find_job(&engine, job) {
             Ok(id) => {
                 let how = if *close {
