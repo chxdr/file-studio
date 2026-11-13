@@ -439,3 +439,75 @@ fn two_folders_with_one_name_are_told_apart() {
             .any(|f| f.path == h.s("Applications") && f.name == "Applications")
     );
 }
+
+// ───────────────────────── fix 5: volume names ─────────────────────────
+
+/// The startup disk showed as "/" in some places. Every place gets its name
+/// from one rule: breadcrumbs, tab titles' source, toasts and questions,
+/// favourites, and the FFI's display_name.
+#[test]
+fn the_startup_disk_is_named_everywhere() {
+    let h = harness();
+    let disk = fstudio_core::display_name("/");
+    assert_ne!(disk, "/");
+    // The address bar's first crumb.
+    let t = h.window_at("");
+    t.go("/").unwrap();
+    wait_complete(&t);
+    let crumbs = t.breadcrumbs();
+    assert_eq!(crumbs[0].name, disk);
+    assert_eq!(h.engine.breadcrumbs("/")[0].name, disk);
+    // The sidebar's volume list.
+    assert!(
+        h.engine
+            .volumes()
+            .iter()
+            .all(|v| v.name != "/" && !v.name.is_empty())
+    );
+    assert!(
+        h.engine
+            .volumes()
+            .iter()
+            .any(|v| v.mount_path == "/" && v.name == disk)
+    );
+    // A favourite of the disk itself, and a same-named folder hint.
+    h.engine.add_favourite("/", None).unwrap();
+    let f = h
+        .engine
+        .favourites()
+        .into_iter()
+        .find(|f| f.path == "/")
+        .unwrap();
+    assert_eq!(f.name, disk);
+    mkdirs(&h.p("Applications"));
+    h.engine.add_favourite(&h.s("Applications"), None).unwrap();
+    if h.engine
+        .favourites()
+        .iter()
+        .any(|f| f.path == "/Applications")
+    {
+        let sys = h
+            .engine
+            .favourites()
+            .into_iter()
+            .find(|f| f.path == "/Applications")
+            .unwrap();
+        assert_eq!(sys.name, format!("Applications ({disk})"));
+    }
+    // The context-menu message for pinning it again.
+    let out = h
+        .engine
+        .perform(
+            CommandInvocation {
+                id: "favourites.add".into(),
+                arg: Some(CommandArg::Path("/".into())),
+                tab: None,
+            },
+            Via::Mouse,
+        )
+        .unwrap();
+    assert_eq!(
+        out.message,
+        Some(format!("“{disk}” is already in Favourites"))
+    );
+}

@@ -7,13 +7,12 @@ use std::path::PathBuf;
 
 use fstudio_model::EntryKind;
 
-use crate::engine::file_name;
 use crate::journal::{ItemRow, ItemState, OpRow};
 use crate::meta;
 use crate::types::{OpKind, OpRequest};
 
 fn q(p: &std::path::Path) -> String {
-    format!("“{}”", file_name(p))
+    format!("“{}”", fstudio_fs::display_name(p))
 }
 
 /// Items that are top-level results of the op: done, created by it, and not

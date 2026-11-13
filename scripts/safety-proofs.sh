@@ -238,7 +238,7 @@ e4() {
   home
   mkdir -p "$H/Applications" "$H/Work"
   ln -s "$H/Work" "$H/work-link"
-  run e4 "wait:1;go:$H;wait:1;focus:list;select:Work;key:ctrl+cmd+t;wait:0.5;key:ctrl+cmd+t;wait:0.5;foldermenu:Work|Add to Favourites;wait:0.5;favdrop:$H/Work,0;favdrop:$H/work-link,0;wait:0.5;favdrop:$H/Applications,3;favdrop:/Applications,0;wait:0.5;favlog;snap:e4-sidebar;quit"
+  run e4 "wait:1;go:$H;wait:1;focus:list;select:Work;key:ctrl+cmd+t;wait:0.5;key:ctrl+cmd+t;wait:0.5;foldermenu:Work|Add to Favourites;wait:0.5;favdrop:$H/Work,0;favdrop:$H/work-link,0;wait:0.5;favdrop:$H/Applications,3;favdrop:/Applications,0;wait:0.5;favlog;snap:e4-sidebar;go:/;wait:1;snap:e5-root;quit"
   local n; n=$(echo "$OUT" | grep -cE "^FAV [^|]* \\| $H/(Work|work-link)$")
   if [ "$n" = 1 ]; then echo "  ok   Work is pinned once (⌃⌘T twice, two drops)"; else echo "  FAIL Work is pinned $n times"; BAD=1; fi
   expect "…and its context menu offers Remove, not a second Add" "^FAVMENU folder Work: .*Remove from Favourites"
@@ -247,6 +247,7 @@ e4() {
   if [ "$n" = 1 ]; then echo "  ok   /Applications is there once"; else echo "  FAIL /Applications is there $n times"; BAD=1; fi
   expect "~/Applications says where it is" "^FAV Applications \\($(basename "$H")\\) \\| $H/Applications$"
   expect "/Applications says where it is" "^FAV Applications \\([^)]+\\) \\| /Applications$"
+  refuse "…by the disk's name, never “/”" "^FAV Applications \\(/\\)"
   keep
   finish e4
 }

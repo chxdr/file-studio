@@ -445,11 +445,8 @@ public struct TabState: Equatable, Sendable, Identifiable {
         self.id = id; self.location = location; self.back = back; self.forward = forward; self.view = view
         self.filter = filter; self.selected = selected; self.cursor = cursor; self.scroll = scroll
     }
-    /// The folder's display name.
-    public var title: String {
-        let n = (location as NSString).lastPathComponent
-        return n.isEmpty ? "/" : n
-    }
+    /// The folder's display name, worded by the core ("Macintosh HD" for `/`).
+    public var title: String { coreDisplayName(location) }
 }
 
 public struct PaneState: Equatable, Sendable, Identifiable {

@@ -482,11 +482,7 @@ impl Engine {
                 }
             }
         };
-        let name_of = |p: &Path| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| s(p))
-        };
+        let name_of = |p: &Path| fstudio_fs::display_name(p);
         if id == "favourites.add" {
             let folders: Vec<&PathBuf> = paths.iter().filter(|p| p.is_dir()).collect();
             if folders.is_empty() {
@@ -537,10 +533,7 @@ impl Engine {
                 let (path, name) = match self.favourite_for(&path) {
                     Some(f) => (f.path, f.name),
                     None => {
-                        let name = p
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        let name = fstudio_fs::display_name(p);
                         (path, name)
                     }
                 };
@@ -1747,10 +1740,7 @@ impl Engine {
             "path.copy_name" => {
                 let sel = Self::arg_or_selection(inv, &t);
                 let text = if sel.is_empty() {
-                    t.location_path()
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "/".into())
+                    fstudio_fs::display_name(&t.location_path())
                 } else {
                     sel.iter()
                         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))

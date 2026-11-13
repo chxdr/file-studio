@@ -59,9 +59,7 @@ impl Favourite {
 }
 
 fn display_name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.to_string_lossy().into_owned())
+    fstudio_fs::display_name(p)
 }
 
 /// The favourites a new install starts with (those that exist).

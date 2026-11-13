@@ -12413,6 +12413,19 @@ public func deletePathComponent(input: String, cursor: UInt32) -> FfiTextEdit  {
     )
 })
 }
+/**
+ * The name to show for a path (tab and window titles, the sidebar, sheets):
+ * "Macintosh HD" for `/`, a volume's name for its root, else the item's
+ * name. See `fstudio_core::display_name`.
+ */
+public func displayName(path: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_display_name(
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -12433,6 +12446,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_delete_path_component() != 5798) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_display_name() != 52844) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {

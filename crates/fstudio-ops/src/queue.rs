@@ -110,9 +110,12 @@ fn what(n: usize, first: &str) -> String {
 fn title_for(req: &OpRequest, origin: Origin) -> String {
     let ts = plan::targets(req);
     let n = ts.len();
-    let first = ts.first().map(|t| file_name(&t.0)).unwrap_or_default();
+    let first = ts
+        .first()
+        .map(|t| fstudio_fs::display_name(&t.0))
+        .unwrap_or_default();
     let w = what(n, &first);
-    let into = |d: &Path| quoted(&file_name(d));
+    let into = |d: &Path| quoted(&fstudio_fs::display_name(d));
     let t = match req {
         OpRequest::Copy { dest_dir, .. } => format!("Copying {w} to {}", into(dest_dir)),
         OpRequest::Move { dest_dir, .. } => format!("Moving {w} to {}", into(dest_dir)),
@@ -339,7 +342,7 @@ impl OpQueue {
             OpRequest::Compound { label, .. } => Some(label.clone()),
             _ => ts.first().map(|t| match &t.2 {
                 Some(n) if kind != OpKind::Rename => n.clone(),
-                _ => file_name(&t.0),
+                _ => fstudio_fs::display_name(&t.0),
             }),
         };
         let shared = self.make_shared(
@@ -478,7 +481,10 @@ impl OpQueue {
             .unwrap_or(src_dev);
         let first = match &row.request {
             OpRequest::Compound { label, .. } => label.clone(),
-            _ => ts.first().map(|t| file_name(&t.0)).unwrap_or_default(),
+            _ => ts
+                .first()
+                .map(|t| fstudio_fs::display_name(&t.0))
+                .unwrap_or_default(),
         };
         let key = if kind == OpKind::Compound {
             compound_key()
@@ -1151,4 +1157,23 @@ fn _assert_send_sync() {
     fn f<T: Send + Sync>() {}
     f::<OpQueue>();
     let _ = PathBuf::new();
+}
+
+#[cfg(test)]
+mod title_tests {
+    use super::*;
+
+    /// Operation titles name the startup disk, not "/".
+    #[test]
+    fn a_title_never_names_a_volume_slash() {
+        let t = title_for(
+            &OpRequest::Copy {
+                sources: vec!["/tmp/a.txt".into()],
+                dest_dir: "/".into(),
+            },
+            Origin::User,
+        );
+        assert!(!t.contains("“/”"), "{t}");
+        assert!(t.starts_with("Copying “a.txt” to “"), "{t}");
+    }
 }

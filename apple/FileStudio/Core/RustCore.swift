@@ -485,6 +485,10 @@ extension OpStatus {
     }
 }
 
+/// The core's one rule for the name shown for a path ("Macintosh HD" for
+/// `/`, a volume's name for its root, else the item's name).
+func coreDisplayName(_ path: String) -> String { displayName(path: path) }
+
 extension ToastStyle {
     init(_ s: FfiToastStyle) {
         switch s {

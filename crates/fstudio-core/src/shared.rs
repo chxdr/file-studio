@@ -176,14 +176,24 @@ impl Shared {
 
     /// Volumes as the path engine wants them.
     pub(crate) fn crumb_volumes(&self) -> Vec<Volume> {
-        self.volumes
+        let mut v: Vec<Volume> = self
+            .volumes
             .read()
             .iter()
             .map(|v| Volume {
-                name: v.name.clone(),
+                name: fstudio_fs::display_name(&v.mount_path),
                 mount: v.mount_path.clone(),
             })
-            .collect()
+            .collect();
+        // The address bar's first crumb is never "/" (it was when the volume
+        // list didn't have the startup disk).
+        if !v.iter().any(|v| v.mount == std::path::Path::new("/")) {
+            v.push(Volume {
+                name: fstudio_fs::display_name(std::path::Path::new("/")),
+                mount: "/".into(),
+            });
+        }
+        v
     }
 
     /// The paths currently cut, as `(folder, names)`.

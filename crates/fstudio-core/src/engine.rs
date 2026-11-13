@@ -1320,7 +1320,7 @@ impl Engine {
             .read()
             .iter()
             .map(|v| VolumeSummary {
-                name: v.name.clone(),
+                name: fstudio_fs::display_name(&v.mount_path),
                 mount_path: v.mount_path.to_string_lossy().into_owned(),
                 is_removable: v.is_removable,
                 is_network: v.is_network,

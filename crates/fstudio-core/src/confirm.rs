@@ -40,11 +40,10 @@ pub(crate) fn obj_id(p: &Path) -> Option<ObjId> {
     })
 }
 
-/// The name shown for a path.
+/// The name shown for a path: the one display-name rule
+/// ([`fstudio_fs::display_name`]; "Macintosh HD" for `/`, never "/").
 pub(crate) fn display_name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.to_string_lossy().into_owned())
+    fstudio_fs::display_name(p)
 }
 
 /// Each item with its identity now, for a question about them.
