@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD=1
 if [ "${1:-}" = "--no-build" ]; then BUILD=0; shift; fi
 WANT=("$@")
-[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu e1 e2)
+[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu e1 e2 e4)
 if [ "$BUILD" = 1 ]; then
   (cd "$ROOT/apple" && xcodegen -q && xcodebuild -project FileStudio.xcodeproj -scheme "File Studio" \
     -configuration Debug -derivedDataPath build/DerivedData build -quiet 2>&1 | grep -E "error:|BUILD FAILED") && exit 1
@@ -229,6 +229,26 @@ e2() {
   expect "the double-click hit the row" "^HIT .* -> .*Table"
   keep
   finish e2
+}
+
+# Edge fix 4: pinning a folder that is already a favourite does nothing,
+# by ⌃⌘T, the list's context menu, a drop on Favourites and a symlink to it;
+# ~/Applications next to /Applications gets a name that tells them apart.
+e4() {
+  home
+  mkdir -p "$H/Applications" "$H/Work"
+  ln -s "$H/Work" "$H/work-link"
+  run e4 "wait:1;go:$H;wait:1;focus:list;select:Work;key:ctrl+cmd+t;wait:0.5;key:ctrl+cmd+t;wait:0.5;foldermenu:Work|Add to Favourites;wait:0.5;favdrop:$H/Work,0;favdrop:$H/work-link,0;wait:0.5;favdrop:$H/Applications,3;favdrop:/Applications,0;wait:0.5;favlog;snap:e4-sidebar;quit"
+  local n; n=$(echo "$OUT" | grep -cE "^FAV [^|]* \\| $H/(Work|work-link)$")
+  if [ "$n" = 1 ]; then echo "  ok   Work is pinned once (⌃⌘T twice, two drops)"; else echo "  FAIL Work is pinned $n times"; BAD=1; fi
+  expect "…and its context menu offers Remove, not a second Add" "^FAVMENU folder Work: .*Remove from Favourites"
+  expect "…a second drop is refused" "^FAVDROP .*/work-link at=0 accepted=false$"
+  n=$(echo "$OUT" | grep -cE "^FAV [^|]* \\| /Applications$")
+  if [ "$n" = 1 ]; then echo "  ok   /Applications is there once"; else echo "  FAIL /Applications is there $n times"; BAD=1; fi
+  expect "~/Applications says where it is" "^FAV Applications \\($(basename "$H")\\) \\| $H/Applications$"
+  expect "/Applications says where it is" "^FAV Applications \\([^)]+\\) \\| /Applications$"
+  keep
+  finish e4
 }
 
 for p in "${WANT[@]}"; do

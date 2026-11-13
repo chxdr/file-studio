@@ -315,3 +315,127 @@ fn going_to_a_broken_symlink_says_why_it_did_not_open() {
         t.selection().names == vec!["broken-link".to_string()]
     });
 }
+
+// ───────────────────────── fix 4: favourites ─────────────────────────
+
+fn fav_paths(h: &H) -> Vec<String> {
+    h.engine.favourites().into_iter().map(|f| f.path).collect()
+}
+
+/// Pinning a folder that is already a favourite does nothing, by every pin
+/// path (the context menu's path argument, a drop at an index, ⌃⌘T on the
+/// selection, a reset of the defaults) and by every spelling (a symlink,
+/// other case, a trailing slash), and also when two pins race.
+#[test]
+fn pinning_a_favourite_again_does_nothing_by_any_path() {
+    let h = harness();
+    mkdirs(&h.p("Apps"));
+    std::os::unix::fs::symlink(h.p("Apps"), h.p("apps-link")).unwrap();
+    h.engine.add_favourite(&h.s("Apps"), None).unwrap();
+    let before = fav_paths(&h);
+    // Context menu / command with the folder as the argument.
+    let out = h
+        .engine
+        .perform(
+            CommandInvocation {
+                id: "favourites.add".into(),
+                arg: Some(CommandArg::Path(h.p("apps-link"))),
+                tab: None,
+            },
+            Via::Mouse,
+        )
+        .unwrap();
+    assert_eq!(
+        out.message.as_deref(),
+        Some("“apps-link” is already in Favourites")
+    );
+    // A drop at the top, by a spelling with other case and a trailing slash.
+    let upper = format!("{}/", h.s("APPS"));
+    if std::path::Path::new(&upper).is_dir() {
+        h.engine.add_favourite(&upper, Some(0)).unwrap();
+    }
+    h.engine
+        .add_favourite(&format!("{}/", h.s("Apps")), Some(0))
+        .unwrap();
+    // ⌃⌘T on the selected folder.
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["Apps".into()]));
+    run(&h, &t, "favourites.add").unwrap();
+    assert_eq!(fav_paths(&h), before);
+    // Two pins of a new folder at the same moment add it once.
+    mkdirs(&h.p("Race"));
+    std::os::unix::fs::symlink(h.p("Race"), h.p("race-link")).unwrap();
+    std::thread::scope(|s| {
+        for i in 0..8 {
+            let (e, p) = (
+                h.engine.clone(),
+                if i % 2 == 0 {
+                    h.s("Race")
+                } else {
+                    h.s("race-link")
+                },
+            );
+            s.spawn(move || e.add_favourite(&p, None).unwrap());
+        }
+    });
+    let n = h
+        .engine
+        .favourites()
+        .iter()
+        .filter(|f| f.path.ends_with("/Race") || f.path.ends_with("/race-link"))
+        .count();
+    assert_eq!(n, 1);
+    // Unpinning and pinning again leaves one.
+    h.engine.remove_favourite(&h.s("apps-link")).unwrap();
+    h.engine.add_favourite(&h.s("Apps"), None).unwrap();
+    h.engine.add_favourite(&h.s("apps-link"), None).unwrap();
+    let apps = h
+        .engine
+        .favourites()
+        .iter()
+        .filter(|f| f.path.ends_with("/Apps"))
+        .count();
+    assert_eq!(apps, 1);
+    // The defaults never hold one folder twice.
+    h.engine.reset_favourites().unwrap();
+    let mut seen = std::collections::HashSet::new();
+    for f in h.engine.favourites() {
+        let m = std::fs::metadata(&f.path).unwrap();
+        use std::os::unix::fs::MetadataExt;
+        assert!(seen.insert((m.dev(), m.ino())), "{} twice", f.path);
+    }
+}
+
+/// The edge-case test's "Applications twice": the store held `/Applications`
+/// and `~/Applications`, two folders with one name, drawn as two identical
+/// rows. Their shown names now say where each one is.
+#[test]
+fn two_folders_with_one_name_are_told_apart() {
+    let h = harness();
+    // Only the test's own folders (the defaults include the real one).
+    let _ = h.engine.remove_favourite("/Applications");
+    mkdirs(&h.p("Applications"));
+    mkdirs(&h.p("home/Applications"));
+    h.engine.add_favourite(&h.s("Applications"), None).unwrap();
+    h.engine
+        .add_favourite(&h.s("home/Applications"), None)
+        .unwrap();
+    let names: Vec<String> = h
+        .engine
+        .favourites()
+        .into_iter()
+        .filter(|f| f.path.starts_with(&h.s("")) && f.path.ends_with("Applications"))
+        .map(|f| f.name)
+        .collect();
+    assert_eq!(names, vec!["Applications (root)", "Applications (home)"]);
+    // Unpin one: the other goes back to its plain name.
+    h.engine
+        .remove_favourite(&h.s("home/Applications"))
+        .unwrap();
+    assert!(
+        h.engine
+            .favourites()
+            .iter()
+            .any(|f| f.path == h.s("Applications") && f.name == "Applications")
+    );
+}
