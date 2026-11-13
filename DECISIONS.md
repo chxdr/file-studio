@@ -240,3 +240,10 @@ Safe Transfer's batched barrier (one drive flush per group of files, renames onl
 - **Integration (ST M4):** fstudio-ops keeps the queue, the undo and conflict UX, F-023 and Trash/Put Back, and hands each copy or cross-volume move to Safe Transfer behind a `copy_backend` switch. The default flips after the yank and kill suites pass through the app and the user signs off. Migration steps A–D are in proposal §0.4.
 - **Unsafe code** is only in `safe-transfer/src/sys/`. Linux and Windows stubs exist under `sys/` but aren't exercised. The pipeline itself uses Unix file APIs, so a Windows build needs work there too.
 
+
+## F-027: Milestone 2 signed off (2026-11-13)
+The user tried the installed build and signed off M2 through the checklist. They checked the glass sidebar, the address bar, tab bar and dual-pane outline, Quick Look, drags to and from Finder, the Full Disk Access prompt, ejecting the SD card and LinearMouse scrolling, and all passed. The two problems they reported are fixed in the same change:
+- The toolbar workspace switcher listed the active workspace twice. A toolbar pull-down draws its title item in the open menu even when that item is hidden. The switcher now opens its own menu, which never holds the title item.
+- In edit mode, the address field's outline overlapped the folder icon. While editing, the address bar moves clear of the icon, and the icon centres on it.
+
+The user also accepted the CI rule change in deny.toml: unmaintained-crate notices apply only to crates we depend on directly. M3 (search, preview, rename tools) may start.

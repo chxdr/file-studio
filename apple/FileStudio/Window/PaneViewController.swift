@@ -197,13 +197,14 @@ final class PaneHeaderView: NSView {
         subtitle.setAccessibilityLabel("Folder summary")
         bar.wantsLayer = true
         bar.isHidden = true
+        glyphCenter = glyph.centerYAnchor.constraint(equalTo: centerYAnchor, constant: Self.restGlyphY)
         for v in [glyph, subtitle, bar] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
             glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            glyph.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 1),
+            glyphCenter,
             glyph.widthAnchor.constraint(equalToConstant: 24),
             glyph.heightAnchor.constraint(equalToConstant: 24),
             subtitle.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
@@ -224,8 +225,10 @@ final class PaneHeaderView: NSView {
     func install(pathBar: NSView) {
         pathBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(pathBar, positioned: .below, relativeTo: bar)
+        let leading = pathBar.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: Self.restLeading)
+        pathBarLeading = leading
         NSLayoutConstraint.activate([
-            pathBar.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: -4),
+            leading,
             pathBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             pathBar.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             pathBar.heightAnchor.constraint(equalToConstant: 20),
@@ -245,10 +248,23 @@ final class PaneHeaderView: NSView {
 
     /// The address field in EDIT is 20 pt tall with a border and would sit on
     /// top of the subtitle, so the subtitle steps aside while editing.
+    /// The edit capsule is drawn from the view's left edge, which at rest
+    /// sits under the glyph; while editing the view moves clear of it.
     func setEditing(_ on: Bool) {
         editing = on
+        pathBarLeading?.constant = on ? Self.editLeading : Self.restLeading
+        // The subtitle hides while editing, so the glyph centres on the
+        // capsule (the address bar's middle, 12 pt down) instead.
+        glyphCenter.constant = on ? 12 - Self.height / 2 : Self.restGlyphY
         updateSubtitleVisibility()
     }
+
+    /// The address bar's left edge relative to the glyph's right edge.
+    static let restLeading: CGFloat = -4
+    static let editLeading: CGFloat = 4
+    private var pathBarLeading: NSLayoutConstraint?
+    static let restGlyphY: CGFloat = 1
+    private var glyphCenter: NSLayoutConstraint!
 
     /// Settings → Appearance → "Show the item count and free space".
     var showSubtitle = true { didSet { updateSubtitleVisibility() } }
