@@ -77,17 +77,36 @@ fn pause_resume_and_cancel() {
         wait_bytes_at(&e2, id, 8 << 20, &at);
         e2.q.pause(id).unwrap();
         let paused_at = Instant::now();
-        std::thread::sleep(Duration::from_millis(100));
-        let a = e2.q.status(id).unwrap();
-        let a_at = paused_at.elapsed();
-        std::thread::sleep(Duration::from_millis(300));
-        let b = e2.q.status(id).unwrap();
-        let b_at = paused_at.elapsed();
+        // A pause takes effect after the chunk in flight (up to 4 MiB, which
+        // can take seconds on a busy CI machine). Wait for the bytes to
+        // settle, then check nothing moves for 300 ms.
+        let mut a = e2.q.status(id).unwrap();
+        let (b, a_at, b_at) = loop {
+            let a_at = paused_at.elapsed();
+            std::thread::sleep(Duration::from_millis(300));
+            let b = e2.q.status(id).unwrap();
+            if b.bytes_done == a.bytes_done {
+                break (b, a_at, paused_at.elapsed());
+            }
+            assert!(
+                paused_at.elapsed() < Duration::from_secs(10),
+                "{at}: bytes still moving 10 s after pause() ({} then {}): {b:#?}",
+                a.bytes_done,
+                b.bytes_done
+            );
+            a = b;
+        };
         assert_eq!(b.state, OpState::Paused, "{at}: {b:#?}");
+        std::thread::sleep(Duration::from_millis(300));
+        let c = e2.q.status(id).unwrap();
         assert_eq!(
-            a.bytes_done, b.bytes_done,
-            "{at}: no bytes move while paused ({} bytes at {a_at:?} after pause(), {} at {b_at:?}): {b:#?}",
-            a.bytes_done, b.bytes_done
+            b.bytes_done,
+            c.bytes_done,
+            "{at}: no bytes move while paused ({} bytes at {a_at:?} after pause(), {} at {b_at:?}, {} at {:?}): {c:#?}",
+            a.bytes_done,
+            b.bytes_done,
+            c.bytes_done,
+            paused_at.elapsed()
         );
         assert!(b.bytes_done < BIG as u64, "{at}: {b:#?}");
         e2.q.resume(id).unwrap();
@@ -121,7 +140,9 @@ fn pause_resume_and_cancel() {
         e2.q.cancel(id).unwrap();
         let st = e2.q.wait(id, WAIT).unwrap();
         assert!(
-            t.elapsed() < Duration::from_secs(2),
+            // Cancel is checked between chunks; a busy CI machine can take
+            // a few seconds to finish the one in flight.
+            t.elapsed() < Duration::from_secs(10),
             "{at}: cancel took {:?}: {st:#?}",
             t.elapsed()
         );

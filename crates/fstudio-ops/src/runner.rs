@@ -227,9 +227,14 @@ pub fn run(inner: &Inner, op: &OpShared) {
         let mut st = op.status.lock();
         st.files_total = files;
         st.bytes_total = bytes;
-        st.state = OpState::Running;
+        // A pause() that landed before this thread started must stick.
+        st.state = if op.ctl.paused.load(Ordering::Acquire) {
+            OpState::Paused
+        } else {
+            OpState::Running
+        };
     }
-    let _ = journal.set_op_state(op.id, OpState::Running);
+    let _ = journal.set_op_state(op.id, op.status.lock().state);
 
     let mut g = Graph::new(items);
     let workers = if op.kind.copies() {
