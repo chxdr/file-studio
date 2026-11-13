@@ -124,6 +124,9 @@ final class WorkspaceSwitcher: NSPopUpButton, NSMenuDelegate {
         let active = model.workspaces.first { $0.active }
         let title = NSMenuItem(title: active?.name ?? "Workspace", action: nil, keyEquivalent: "")
         title.image = NSImage(systemSymbolName: active?.icon ?? "square.grid.2x2", accessibilityDescription: nil)
+        // It only labels the button; hidden, so the open menu doesn't list the
+        // active workspace twice (a toolbar pull-down can show its title item).
+        title.isHidden = true
         m.insertItem(title, at: 0)
         m.delegate = self
         menu = m
@@ -137,9 +140,9 @@ final class WorkspaceSwitcher: NSPopUpButton, NSMenuDelegate {
         if menu === self.menu { DispatchQueue.main.async { [weak self] in self?.refresh() } }
     }
 
-    /// Debug: the menu as lines.
+    /// Debug: the menu as the user sees it (hidden items left out), as lines.
     var debugLines: [String] {
-        (menu?.items ?? []).dropFirst().map { $0.isSeparatorItem ? "---" : "\($0.state == .on ? "[x]" : "[ ]") \($0.title)" }
+        (menu?.items ?? []).filter { !$0.isHidden }.map { $0.isSeparatorItem ? "---" : "\($0.state == .on ? "[x]" : "[ ]") \($0.title)" }
     }
 }
 
