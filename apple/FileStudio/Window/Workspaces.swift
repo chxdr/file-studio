@@ -100,7 +100,7 @@ final class WorkspacesMenuDelegate: NSObject, NSMenuDelegate {
 /// The toolbar's workspace switcher: the active workspace's icon and name;
 /// clicking lists every workspace, then New and Manage (ForkLift-style).
 @MainActor
-final class WorkspaceSwitcher: NSPopUpButton, NSMenuDelegate {
+final class WorkspaceSwitcher: NSPopUpButton {
     private unowned let model: AppModel
     private let coreWindow: WindowID
 
@@ -117,32 +117,42 @@ final class WorkspaceSwitcher: NSPopUpButton, NSMenuDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Rebuilds the title and the menu from `model.workspaces`.
+    /// The menu that opens on a click: the workspaces, then New and Manage.
+    /// It never holds the pull-down's title item, because a toolbar
+    /// pull-down draws that item in its open menu (even when hidden) and the
+    /// active workspace showed twice.
+    private var itemsMenu = NSMenu()
+
+    /// Rebuilds the label and the menu from `model.workspaces`.
     func refresh() {
-        let m = WorkspaceMenus.switcherMenu(model: model, window: coreWindow)
-        // A pull-down's first item is its title.
         let active = model.workspaces.first { $0.active }
+        itemsMenu = WorkspaceMenus.switcherMenu(model: model, window: coreWindow)
+        // The button's own menu holds only its title item, which labels it.
         let title = NSMenuItem(title: active?.name ?? "Workspace", action: nil, keyEquivalent: "")
         title.image = NSImage(systemSymbolName: active?.icon ?? "square.grid.2x2", accessibilityDescription: nil)
-        // It only labels the button; hidden, so the open menu doesn't list the
-        // active workspace twice (a toolbar pull-down can show its title item).
-        title.isHidden = true
-        m.insertItem(title, at: 0)
-        m.delegate = self
-        menu = m
+        let label = NSMenu()
+        label.addItem(title)
+        menu = label
         toolTip = "Workspace: \(active?.name ?? "—"). Each workspace keeps its own tabs and layout."
         sizeToFit()
         frame.size.width = min(max(frame.width, 96), 220)
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        // Tab counts may have changed since the last refresh.
-        if menu === self.menu { DispatchQueue.main.async { [weak self] in self?.refresh() } }
+    /// Opens the workspace list under the button.
+    func openList() {
+        refresh()  // Tab counts may have changed since the last refresh.
+        highlight(true)
+        defer { highlight(false) }
+        itemsMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.maxY + 4), in: self)
     }
 
-    /// Debug: the menu as the user sees it (hidden items left out), as lines.
+    override func mouseDown(with event: NSEvent) { openList() }
+    override func performClick(_ sender: Any?) { openList() }
+    override func accessibilityPerformPress() -> Bool { openList(); return true }
+
+    /// Debug: the menu that opens on a click, as lines.
     var debugLines: [String] {
-        (menu?.items ?? []).filter { !$0.isHidden }.map { $0.isSeparatorItem ? "---" : "\($0.state == .on ? "[x]" : "[ ]") \($0.title)" }
+        itemsMenu.items.filter { !$0.isHidden }.map { $0.isSeparatorItem ? "---" : "\($0.state == .on ? "[x]" : "[ ]") \($0.title)" }
     }
 }
 
