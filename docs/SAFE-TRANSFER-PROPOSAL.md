@@ -1084,7 +1084,12 @@ M2 is built in `crates/safe-transfer`: multi-file jobs, the journal, resume, the
 1. **Rust's `File::sync_all()` is `F_FULLFSYNC` on macOS, not `fsync(2)`.** The first group-commit build used it for the "cheap" per-file flush, so every file still paid a full drive barrier: 5,000 files on the APFS image took 57–64 s. `sys::os_sync` now calls `fsync(2)` directly. `fstudio-ops` uses `sync_all` only as a fallback after `F_FULLFSYNC` fails (`sys/mod.rs:220`), which is harmless, but anyone writing a cheap flush should know this.
 2. **One 4 MiB write can complete several small chunks.** Only the last chunk was logged. That is harmless with 64 MB chunks, but it stopped chunk reuse in the 1 MiB-chunk tests. All completed chunks are now logged in order, and the `kill -9` test checks reuse: 9 of 9 chunks kept after a kill mid-verify or just before the big file's rename, and some kept after a kill mid-chunk.
 3. **A journal behind the disk made resume call a finished file "already exists".** Nothing was lost, but the report was wrong. Resume now compares content instead (point 3 of "Resume" above).
-4. **Small-file overheads:** a 4 MiB buffer was allocated per file, progress events walked every file, and the journal flushed each file it wrote. All three are fixed.
+4. **Compressed originals were copied as zeros, and "verified" (found by CI).**
+   - **Cause:** for an APFS-compressed (decmpfs) file, `SEEK_DATA` says the whole data fork is a hole, because the content lives in a resource fork. The loop skipped reading those "holes", so it hashed zeros, wrote zeros, and the read-back matched. `/usr/share/dict/web2` came out as 2.5 MB of zeros.
+   - **Fix (`710b3d1`):** every byte of the original is always read. Holes only decide where the destination may stay sparse, and a 64 KiB piece is left unwritten only if it is reported as a hole and reads as zeros.
+   - **The CI failure:** `ditto --hfsCompression` no longer compresses on macOS 27, so the test was vacuous locally and only bit on the macOS 26 runner. The new test copies `/usr/share/dict/web2`, which is compressed on every macOS, and compares the bytes.
+   - **Not fixed here:** `fstudio-ops`' `copy_loop` has the same logic.
+5. **Small-file overheads:** a 4 MiB buffer was allocated per file, progress events walked every file, and the journal flushed each file it wrote. All three are fixed.
 
 **Tests:** all pass, and the disk-image ones ran in one batch of about 32 yanks.
 
