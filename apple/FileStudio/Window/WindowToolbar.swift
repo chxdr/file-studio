@@ -17,6 +17,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
     private weak var dualItem: NSMenuToolbarItem?
     private weak var trashItem: NSToolbarItem?
     private weak var newFolderItem: NSToolbarItem?
+    /// The workspace switcher (icon and name of the active workspace).
+    private(set) weak var workspaceSwitcher: WorkspaceSwitcher?
     let filterField = FilterSearchField()
 
     private enum ID {
@@ -28,6 +30,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
         static let ops = NSToolbarItem.Identifier("ops")
         static let share = NSToolbarItem.Identifier("share")
         static let search = NSToolbarItem.Identifier("filter")
+        static let workspace = NSToolbarItem.Identifier("workspace")
         // Optional (customisation sheet only).
         static let up = NSToolbarItem.Identifier("up")
         static let refresh = NSToolbarItem.Identifier("refresh")
@@ -73,8 +76,8 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
     // MARK: Delegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, ID.nav, .flexibleSpace, ID.mode, ID.dual, ID.newFolder, ID.trash,
-         ID.share, ID.ops, ID.search]
+        [.toggleSidebar, .sidebarTrackingSeparator, ID.nav, ID.workspace, .flexibleSpace, ID.mode, ID.dual, ID.newFolder,
+         ID.trash, ID.share, ID.ops, ID.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -129,6 +132,15 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
             dualItem = item
             refresh()
             return item
+        case ID.workspace:
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Workspace"
+            item.paletteLabel = "Workspace Switcher"
+            item.toolTip = "Switch workspace (⌃⌘1…⌃⌘9)"
+            let sw = WorkspaceSwitcher(model: model, window: windowModel.id)
+            item.view = sw
+            workspaceSwitcher = sw
+            return item
         case ID.ops:
             let item = NSToolbarItem(itemIdentifier: id)
             item.label = "Operations"
@@ -173,6 +185,21 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
     }
 
     private var commands: [NSToolbarItem.Identifier: String] = [:]
+
+    /// Toolbars saved before workspaces existed don't have the switcher: add
+    /// it once, after Back/Forward. If the user removes it later it stays out.
+    func addWorkspaceSwitcherIfNew() {
+        let key = "FSToolbarWorkspaceSwitcherAdded"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        let ids = toolbar.items.map(\.itemIdentifier)
+        guard !ids.contains(ID.workspace) else { return }
+        let at = ids.firstIndex(of: ID.nav).map { $0 + 1 } ?? min(2, ids.count)
+        toolbar.insertItem(withItemIdentifier: ID.workspace, at: at)
+    }
+
+    /// The workspaces changed: new title and menu.
+    func workspacesChanged() { workspaceSwitcher?.refresh() }
 
     private func symbol(_ name: String, _ label: String? = nil) -> NSImage {
         NSImage(systemSymbolName: name, accessibilityDescription: label) ?? NSImage()
