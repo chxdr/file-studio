@@ -201,7 +201,7 @@ e1() {
   mkdir -p "$H/w/locked"
   for n in a b c; do echo "$n" > "$H/w/$n.txt"; done
   chmod 000 "$H/w/locked"
-  run e1 "wait:1;go:$H/w;wait:1;focus:list;select:locked;key:cmd+delete;wait:1.5;snap:e1-locked-toast;sel;opsum;ls:$H/w;perform:view.show_operations;wait:0.8;snapv:e1-queue;ops:close;wait:0.5;focus:list;key:cmd+a;key:cmd+delete;wait:1.5;snap:e1-mixed-toast;ls:$H/w;ls:$H/.Trash;quit"
+  run e1 "wait:1;go:$H/w;wait:1;focus:list;select:locked;key:cmd+delete;wait:1.5;snap:e1-locked-toast;sel;opsum;ls:$H/w;perform:view.show_operations;wait:0.8;snapv:e1-queue;ops:close;wait:0.5;focus:list;key:cmd+a;key:cmd+delete;wait:1.5;snap:e1-mixed-toast;ls:$H/w;ls:$H/.Trash;key:cmd+a;go:$H/w/locked;wait:1.5;snap:e1-locked-folder;quit"
   chmod 755 "$H/w/locked"
   expect "the locked folder's toast says it failed" "^TOAST Couldn’t move “locked” to the Trash: permission denied \\[Details\\] \\(warning\\)$"
   refuse "…never that it moved" "^MOVED Moved “locked”"

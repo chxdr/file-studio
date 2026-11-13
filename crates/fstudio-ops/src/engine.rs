@@ -131,13 +131,10 @@ impl From<io::Error> for Stop {
 /// A user-facing description of an I/O error.
 pub fn describe(e: &io::Error) -> String {
     match e.raw_os_error() {
-        Some(libc::ENOSPC) => "there isn't enough free space".into(),
-        Some(libc::EACCES) | Some(libc::EPERM) => "permission denied".into(),
-        Some(libc::EROFS) => "the volume is read-only".into(),
-        Some(libc::ENOENT) => "the item no longer exists".into(),
-        Some(libc::ENAMETOOLONG) => "the name is too long".into(),
-        Some(libc::EDQUOT) => "the disk quota is exceeded".into(),
-        _ => e.to_string(),
+        // A file operation refused by macOS privacy protection reads the
+        // same to the user as one refused by permissions.
+        Some(libc::EPERM) => "permission denied".into(),
+        _ => fstudio_fs::plain_error(e),
     }
 }
 

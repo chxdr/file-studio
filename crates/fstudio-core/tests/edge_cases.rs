@@ -511,3 +511,32 @@ fn the_startup_disk_is_named_everywhere() {
         Some(format!("“{disk}” is already in Favourites"))
     );
 }
+
+// ───────────────────────── extras ─────────────────────────
+
+/// Going from a folder with a selection into one that can't be read: the
+/// shell is told the selection is now empty (it said "1 of 0 items
+/// selected"), and the reason is in plain words, not "(os error 13)".
+#[test]
+fn an_unreadable_folder_has_no_stale_selection_or_raw_error() {
+    let h = harness();
+    mkdirs(&h.p("locked"));
+    touch(&h.p("a.txt"));
+    chmod(&h.p("locked"), 0o000);
+    let _r = Restore(&h.root.join("locked"), 0o755);
+    let t = h.window_at("");
+    t.set_selection(SelectionChange::Names(vec!["a.txt".into()]));
+    h.drain();
+    t.go(&h.s("locked")).unwrap();
+    h.expect_event(
+        "the selection count going to 0",
+        |e| matches!(e, CoreEvent::SelectionChanged { tab, count: 0, .. } if *tab == t.id()),
+    );
+    wait_complete(&t);
+    let l = t.listing();
+    assert_eq!(l.state(), ListingState::Error);
+    let err = l.error().unwrap_or_default();
+    assert!(err.ends_with(": permission denied"), "{err}");
+    assert!(!err.contains("os error"), "{err}");
+    assert_eq!(t.selection().names.len(), 0);
+}

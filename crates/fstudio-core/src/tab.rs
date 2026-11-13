@@ -485,6 +485,7 @@ impl Tab {
         partial: bool,
         keep_rows: bool,
     ) {
+        let mut cleared = false;
         let (gen_, opts) = {
             let mut st = self.st.lock();
             if st.closed {
@@ -527,6 +528,7 @@ impl Tab {
                 st.version += 1;
                 let mut l = listing::empty(&dir, opts.clone(), st.version);
                 if moved {
+                    cleared = st.selection.count() > 0 || st.selection.cursor().is_some();
                     st.selection = Selection::new();
                 } else {
                     // Same folder listed again from scratch: keep the selection by name.
@@ -550,6 +552,15 @@ impl Tab {
         if !self.detached {
             self.shared.emit(CoreEvent::TabsChanged);
             self.shared.mark_dirty();
+        }
+        if cleared {
+            // The shell's count must follow, or a folder that can't be read
+            // says "1 of 0 items selected" (the old folder's selection).
+            self.shared.emit(CoreEvent::SelectionChanged {
+                tab: self.id,
+                count: 0,
+                cursor: None,
+            });
         }
         let tab = self.arc();
         let spawned = std::thread::Builder::new()

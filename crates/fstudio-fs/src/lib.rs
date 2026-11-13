@@ -13,7 +13,7 @@ pub mod volume;
 pub mod watch;
 pub mod xattr;
 
-pub use error::{Error, Result};
+pub use error::{Error, Result, plain_error};
 pub use list::{Lister, Skipped, list_all, on_disk_name, stat_entry};
 pub use package::{PACKAGE_EXTENSIONS, is_package_name};
 pub use tags::{FinderTag, TagColor, finder_tags, set_finder_tags};

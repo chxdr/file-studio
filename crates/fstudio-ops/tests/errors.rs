@@ -97,7 +97,7 @@ fn full_disk_mid_copy() {
             "verify={verify}: {st:?}"
         );
         assert_eq!(st.errors.len(), 1, "{st:?}");
-        assert_eq!(st.errors[0].message, "there isn't enough free space");
+        assert_eq!(st.errors[0].message, "there isn’t enough free space");
         assert_eq!(read(&dest.join("small.txt")), b"fits");
         assert!(!exists(&dest.join("huge.bin")));
         assert!(
