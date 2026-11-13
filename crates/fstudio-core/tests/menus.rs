@@ -146,6 +146,9 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             "sidebar.rename",
             "drive.eject",
             "drive.info",
+            // Shown only for a disk with interrupted transfers (§6.1).
+            "transfer.resume",
+            "transfer.resume_all",
         ],
         MenuKind::Tab => vec![
             "tab.new",

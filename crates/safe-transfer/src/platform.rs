@@ -60,6 +60,8 @@ pub struct VolumeInfo {
     pub free: u64,
     /// The allocation unit in bytes (a file takes a whole number of these).
     pub block_size: u64,
+    /// Mounted read-only: nothing can be copied onto it.
+    pub read_only: bool,
 }
 
 /// Makes written data durable.
@@ -105,6 +107,13 @@ pub trait VolumeIdentity: Send + Sync {
     /// Whether names in `dir` are case-sensitive (F-017). Unknown counts as
     /// insensitive, the cautious answer for conflict prediction.
     fn case_sensitive(&self, dir: &Path) -> io::Result<bool>;
+    /// Free space counting what the system frees on demand (APFS purgeable
+    /// space; Finder's figure). Slow (macOS may have to work it out, which
+    /// can take seconds on a busy disk), so it is only asked when a job
+    /// wouldn't fit in [`VolumeInfo::free`]. `None`: not known.
+    fn purgeable_free(&self, _path: &Path) -> Option<u64> {
+        None
+    }
 }
 
 /// The user's Trash, with Put Back.
@@ -281,6 +290,10 @@ impl VolumeIdentity for Native {
     }
     fn case_sensitive(&self, dir: &Path) -> io::Result<bool> {
         sys::case_sensitive(dir)
+    }
+    #[cfg(target_os = "macos")]
+    fn purgeable_free(&self, path: &Path) -> Option<u64> {
+        sys::important_free(path)
     }
 }
 

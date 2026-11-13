@@ -17,6 +17,7 @@ use crate::engine::{OpCtl, file_name};
 use crate::journal::{ItemRow, ItemState, Journal, NewItem, OpRow, Origin, Stack};
 use crate::plan;
 use crate::recover;
+use crate::transfer::Transfer;
 use crate::trash::Trasher;
 use crate::types::{
     ConflictDecision, ConflictId, EnqueueOptions, EventSink, OpEvent, OpId, OpKind, OpPlan,
@@ -57,6 +58,8 @@ pub struct OpShared {
     pub phase: Mutex<Phase>,
     pub ctl_tx: Sender<Ctl>,
     pub ctl_rx: Receiver<Ctl>,
+    /// The Safe Transfer job running this op, while one does.
+    pub st_job: Mutex<Option<safe_transfer::JobId>>,
 }
 
 /// Shared state behind an [`OpQueue`].
@@ -66,6 +69,8 @@ pub struct Inner {
     pub trasher: Arc<dyn Trasher>,
     pub sink: Arc<dyn EventSink>,
     pub no_clone: Mutex<HashSet<u64>>,
+    /// Safe Transfer, when the queue was opened with it (F-026).
+    pub transfer: Option<Transfer>,
     ops: Mutex<Vec<Arc<OpShared>>>,
     changed: Condvar,
 }
@@ -225,7 +230,26 @@ impl OpQueue {
         trasher: Arc<dyn Trasher>,
         sink: Arc<dyn EventSink>,
     ) -> Result<Self> {
+        Self::open_with_transfer(db, cfg, trasher, sink, None)
+    }
+
+    /// [`OpQueue::open`] with Safe Transfer. With
+    /// [`crate::CopyBackend::SafeTransfer`] in `cfg`, copies and
+    /// cross-volume moves run as Safe Transfer jobs; ops that already have a
+    /// job resume on it whatever the backend. `transfer` must use the same
+    /// `trasher`.
+    pub fn open_with_transfer(
+        db: Db,
+        cfg: OpsConfig,
+        trasher: Arc<dyn Trasher>,
+        sink: Arc<dyn EventSink>,
+        transfer: Option<Transfer>,
+    ) -> Result<Self> {
         let journal = Journal::new(db)?;
+        if let Some(t) = &transfer {
+            t.hub
+                .set_fallback(unwatched_events(journal.clone(), sink.clone()));
+        }
         for op in journal.unfinished_ops()? {
             if op.state != OpState::Interrupted {
                 journal.set_op_state(op.id, OpState::Interrupted)?;
@@ -242,6 +266,7 @@ impl OpQueue {
                 trasher,
                 sink,
                 no_clone: Mutex::new(HashSet::new()),
+                transfer,
                 ops: Mutex::new(Vec::new()),
                 changed: Condvar::new(),
             }),
@@ -260,6 +285,30 @@ impl OpQueue {
     /// The queue's settings.
     pub fn config(&self) -> &OpsConfig {
         &self.inner.cfg
+    }
+
+    /// Safe Transfer, when the queue was opened with it.
+    pub fn transfer(&self) -> Option<&Transfer> {
+        self.inner.transfer.as_ref()
+    }
+
+    /// An op of this session that stopped resumable (a Safe Transfer job
+    /// waiting for a disk) leaves the session's list, so `resume` and
+    /// `cancel` take it from the journal like an op from an earlier run.
+    fn forget_if_stopped(&self, id: OpId) -> bool {
+        let mut ops = self.inner.ops.lock();
+        let stopped = ops.iter().position(|o| {
+            o.id == id
+                && *o.phase.lock() == Phase::Finished
+                && o.status.lock().state == OpState::Interrupted
+        });
+        match stopped {
+            Some(i) => {
+                ops.remove(i);
+                true
+            }
+            None => false,
+        }
     }
 
     /// A dry run: counts, bytes, conflicts, cross-volume flags, case
@@ -395,11 +444,14 @@ impl OpQueue {
                 eta_secs: None,
                 errors: Vec::new(),
                 conflicts: Vec::new(),
+                waiting_for: Vec::new(),
+                resume: None,
             }),
             options: Mutex::new(opts),
             phase: Mutex::new(Phase::Queued),
             ctl_tx,
             ctl_rx,
+            st_job: Mutex::new(None),
         }
     }
 
@@ -445,6 +497,7 @@ impl OpQueue {
     /// A move whose copy finished but whose source wasn't removed yet only
     /// removes the source; nothing is copied twice.
     pub fn resume(&self, id: OpId) -> Result<()> {
+        self.forget_if_stopped(id);
         if let Some(o) = self.inner.find(id) {
             o.ctl.paused.store(false, Ordering::Release);
             {
@@ -469,7 +522,14 @@ impl OpQueue {
         if row.state != OpState::Interrupted {
             return Err(OpsError::InvalidRequest(format!("{id} is not interrupted")));
         }
-        recover::recover(&self.inner.journal, &row)?;
+        if row.st_job.is_none() {
+            // A Safe Transfer job checks its own partials when it resumes.
+            recover::recover(&self.inner.journal, &row)?;
+        } else if self.inner.transfer.is_none() {
+            return Err(OpsError::InvalidRequest(
+                "this copy was made by Safe Transfer, which isn't open".into(),
+            ));
+        }
         self.inner.journal.set_op_state(id, OpState::Queued)?;
         let ts = plan::targets(&row.request);
         let kind = row.request.kind();
@@ -514,6 +574,7 @@ impl OpQueue {
     /// removed, nothing else is touched (a move's sources stay where they
     /// are), and the op is marked cancelled.
     pub fn cancel(&self, id: OpId) -> Result<()> {
+        self.forget_if_stopped(id);
         let Some(o) = self.inner.find(id) else {
             return self.cancel_interrupted(id);
         };
@@ -558,6 +619,9 @@ impl OpQueue {
         if row.state != OpState::Interrupted {
             return Err(OpsError::NoSuchOp(id));
         }
+        if let Some(job) = row.st_job.as_deref().and_then(safe_transfer::JobId::parse) {
+            return self.cancel_stopped_job(&row, &job);
+        }
         recover::recover(&self.inner.journal, &row)?;
         self.inner.journal.set_op_state(id, OpState::Cancelled)?;
         let items = self.inner.journal.load_items(id)?;
@@ -577,6 +641,29 @@ impl OpQueue {
             .sink
             .on_event(OpEvent::OpFinished { op: id, report });
         Ok(())
+    }
+
+    /// Cancels an interrupted op whose Safe Transfer job is stopped: the
+    /// job's partials go (its destination must be connected: otherwise this
+    /// fails with "insert … first"), finished files stay.
+    fn cancel_stopped_job(&self, row: &OpRow, job: &safe_transfer::JobId) -> Result<()> {
+        let ts = plan::targets(&row.request);
+        let first = ts
+            .first()
+            .map(|t| fstudio_fs::display_name(&t.0))
+            .unwrap_or_default();
+        let shared = self.make_shared(
+            row.id,
+            row.request.kind(),
+            (0, 0),
+            row.origin,
+            ts.len(),
+            first,
+            row.title.clone(),
+            row.options.clone(),
+        );
+        crate::st_bridge::cancel_stopped(&self.inner, &shared, row, job)
+            .map_err(OpsError::InvalidRequest)
     }
 
     /// Moves a queued op to position `new_index` among this session's ops.
@@ -642,13 +729,92 @@ impl OpQueue {
     pub fn interrupted(&self) -> Result<Vec<OpStatus>> {
         let mut out = Vec::new();
         for row in self.inner.journal.unfinished_ops()? {
-            if row.state != OpState::Interrupted || self.inner.find(row.id).is_some() {
+            if row.state != OpState::Interrupted {
+                continue;
+            }
+            if let Some(o) = self.inner.find(row.id) {
+                // This session's op that stopped resumable is listed with
+                // its live status; one still running isn't.
+                let st = o.status.lock().clone();
+                if *o.phase.lock() == Phase::Finished && st.state == OpState::Interrupted {
+                    out.push(self.with_job(&row, st));
+                }
                 continue;
             }
             let items = self.inner.journal.load_items(row.id)?;
-            out.push(status_from_journal(&row, &items));
+            out.push(self.with_job(&row, status_from_journal(&row, &items)));
         }
         Ok(out)
+    }
+
+    /// Interrupted ops whose Safe Transfer job copies to or from the disk
+    /// mounted at `mount` (matched by volume UUID, so two cards with the
+    /// same name are told apart). For the sidebar's Resume Transfer item.
+    /// **Lists volumes.**
+    pub fn interrupted_on_volume(&self, mount: &Path) -> Result<Vec<OpId>> {
+        let Some(t) = &self.inner.transfer else {
+            return Ok(Vec::new());
+        };
+        let Some(uuid) = safe_transfer::Platform::native()
+            .volumes
+            .volume_of(mount)
+            .ok()
+            .and_then(|v| v.uuid)
+        else {
+            return Ok(Vec::new());
+        };
+        let interrupted: HashSet<OpId> = self.interrupted()?.into_iter().map(|s| s.id).collect();
+        let mut out = Vec::new();
+        for j in t.engine.jobs_on_volume(&uuid) {
+            if let Some(op) = self.inner.journal.op_of_st_job(j.id.as_str())?
+                && interrupted.contains(&op)
+                && !out.contains(&op)
+            {
+                out.push(op);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Resumes every interrupted op that can make progress now: ops' own
+    /// interrupted ops, and Safe Transfer ops whose disks are connected
+    /// (`transfer.resume_all`). Returns the ops resumed. **Lists volumes.**
+    pub fn resume_all(&self) -> Result<Vec<OpId>> {
+        let mut out = Vec::new();
+        for st in self.interrupted()? {
+            let ready = matches!(
+                st.resume,
+                None | Some(crate::types::ResumeState::Ready { .. })
+            );
+            if ready && self.resume(st.id).is_ok() {
+                out.push(st.id);
+            }
+        }
+        Ok(out)
+    }
+
+    /// For an op run by Safe Transfer: its job's progress, the disks it
+    /// waits for and whether it can be resumed now. **Lists volumes.**
+    fn with_job(&self, row: &OpRow, mut st: OpStatus) -> OpStatus {
+        let info = row
+            .st_job
+            .as_deref()
+            .and_then(safe_transfer::JobId::parse)
+            .zip(self.inner.transfer.as_ref())
+            .and_then(|(j, t)| t.engine.job(j));
+        if let Some(i) = info {
+            st.files_done = u64::from(i.files_done + i.files_skipped + i.files_failed);
+            st.files_total = st.files_total.max(u64::from(i.files_total));
+            st.bytes_done = i.bytes_done;
+            st.bytes_total = st.bytes_total.max(i.bytes_total);
+            st.resume = crate::st_bridge::resume_state(&i.resume);
+            st.waiting_for = match &i.resume {
+                safe_transfer::Resumability::NeedsVolumes(v) => v.clone(),
+                safe_transfer::Resumability::Ready { still_missing } => still_missing.clone(),
+                _ => Vec::new(),
+            };
+        }
+        st
     }
 
     /// Blocks until the op finishes (or `timeout` passes) and returns its status.
@@ -1149,7 +1315,55 @@ fn status_from_journal(row: &OpRow, items: &[ItemRow]) -> OpStatus {
         eta_secs: None,
         errors,
         conflicts: Vec::new(),
+        waiting_for: Vec::new(),
+        resume: None,
     }
+}
+
+/// Events for Safe Transfer jobs no op is watching: the resume offer when a
+/// card comes back, and a job that stopped for a missing disk.
+fn unwatched_events(journal: Journal, sink: Arc<dyn EventSink>) -> crate::transfer::Fallback {
+    Arc::new(move |e: safe_transfer::Event| {
+        let op_of = |job: &safe_transfer::JobId| journal.op_of_st_job(job.as_str()).ok().flatten();
+        match e {
+            safe_transfer::Event::ResumeAvailable {
+                job,
+                label,
+                volume,
+                files_left,
+                bytes_left,
+            } => {
+                if let Some(op) = op_of(&job) {
+                    sink.on_event(OpEvent::ResumeAvailable {
+                        op,
+                        title: label,
+                        volume,
+                        files_left: u64::from(files_left),
+                        bytes_left,
+                    });
+                }
+            }
+            safe_transfer::Event::WaitingForDestination { job, volume } => {
+                if let Some(op) = op_of(&job) {
+                    sink.on_event(OpEvent::Waiting {
+                        op,
+                        volumes: vec![volume],
+                        sources: false,
+                    });
+                }
+            }
+            safe_transfer::Event::WaitingForSource { job, missing } => {
+                if let Some(op) = op_of(&job) {
+                    sink.on_event(OpEvent::Waiting {
+                        op,
+                        volumes: missing.into_iter().map(|m| m.volume).collect(),
+                        sources: true,
+                    });
+                }
+            }
+            _ => {}
+        }
+    })
 }
 
 #[allow(dead_code)]

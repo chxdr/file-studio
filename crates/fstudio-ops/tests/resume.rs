@@ -46,17 +46,16 @@ fn child_runner() {
         let (step, needle) = c.split_once(':').unwrap();
         Arc::new(CrashAt(parse_step(step), needle.to_string())) as Arc<dyn FaultHook>
     });
-    let q = OpQueue::open(
-        fstudio_db::Db::open(Path::new(&db)).unwrap(),
+    let q = open_queue(
+        Path::new(&db),
         OpsConfig {
             verify,
             faults,
             ..Default::default()
         },
-        Arc::new(DirTrasher::new(trash).unwrap()),
+        &trash,
         Arc::new(NullSink),
-    )
-    .unwrap();
+    );
     let req = if std::env::var("FSTUDIO_CHILD_MOVE").is_ok() {
         OpRequest::Move {
             sources: vec![src],
@@ -131,13 +130,12 @@ fn resume_and_check(c: &Case, mv: bool) {
     // A stranger's temporary file in the destination must survive resume.
     let foreign = c.img.mount.join(".someone-else.fstudio-partial");
     write(&foreign, b"not ours");
-    let q = OpQueue::open(
-        fstudio_db::Db::open(&c.e.db_path).unwrap(),
+    let q = open_queue(
+        &c.e.db_path,
         OpsConfig::default(),
-        Arc::new(DirTrasher::new(&c.e.trash).unwrap()),
+        &c.e.trash,
         Arc::new(NullSink),
-    )
-    .unwrap();
+    );
     let int = q.interrupted().unwrap();
     assert_eq!(int.len(), 1, "{int:?}");
     assert_eq!(int[0].state, OpState::Interrupted);
@@ -252,21 +250,40 @@ fn cancel_interrupted_op_without_resuming() {
         "the crash should leave a partial"
     );
     let (tx, rx) = crossbeam_channel::unbounded();
-    let q = OpQueue::open(
-        fstudio_db::Db::open(&c.e.db_path).unwrap(),
-        OpsConfig::default(),
-        Arc::new(DirTrasher::new(&c.e.trash).unwrap()),
-        Arc::new(tx),
-    )
-    .unwrap();
+    let q = open_queue(&c.e.db_path, OpsConfig::default(), &c.e.trash, Arc::new(tx));
     let int = q.interrupted().unwrap();
     assert_eq!(int.len(), 1, "{int:?}");
     let id = int[0].id;
     q.cancel(id).unwrap();
     assert!(q.interrupted().unwrap().is_empty());
     assert!(partials(&c.img.mount).is_empty(), "partials removed");
-    // A move that never finished keeps every source file.
-    assert_eq!(tree(&c.src), c.before, "sources untouched");
+    if on_safe_transfer() {
+        // Safe Transfer copies in its own order, so files finished before
+        // the crash were already moved: each original is still in place, or
+        // its verified copy is on the card and the original is in the Trash.
+        // Never lost, never in neither place.
+        let now = tree(&c.src);
+        let landed = tree(&c.img.mount.join("src"));
+        for (rel, h) in &c.before {
+            if now.get(rel) != Some(h) {
+                assert_eq!(landed.get(rel), Some(h), "{rel} is in neither place");
+                if h.starts_with("f:") {
+                    let name = std::path::Path::new(rel).file_name().unwrap();
+                    assert!(
+                        in_trash(&c.e.trash, name),
+                        "{rel}: the moved original isn't in the Trash"
+                    );
+                }
+            }
+        }
+        assert!(
+            now.contains_key("victim.bin"),
+            "the crashed file's original stays"
+        );
+    } else {
+        // A move that never finished keeps every source file.
+        assert_eq!(tree(&c.src), c.before, "sources untouched");
+    }
     let finished = rx.try_iter().any(|e| {
         matches!(e, OpEvent::OpFinished { op, report } if op == id && report.state == OpState::Cancelled)
     });
@@ -274,4 +291,10 @@ fn cancel_interrupted_op_without_resuming() {
     // Nothing to resume or cancel any more.
     assert!(q.resume(id).is_err());
     assert!(matches!(q.cancel(id), Err(OpsError::NoSuchOp(_))));
+}
+
+/// Whether a file named `name` (or "name 2"…) is in the test Trash `dir`.
+fn in_trash(dir: &Path, name: &std::ffi::OsStr) -> bool {
+    let n = name.to_string_lossy();
+    tree(dir).keys().any(|k| k.contains(n.as_ref()))
 }

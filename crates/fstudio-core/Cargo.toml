@@ -23,6 +23,8 @@ libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# The disk-image ("yank") harness for the Safe Transfer app-path proofs.
+safe-transfer = { path = "../safe-transfer" }
 
 [lints]
 workspace = true

@@ -218,6 +218,32 @@ pub enum ShellRequest {
         /// The items.
         paths: Vec<String>,
     },
+    /// An interrupted copy's disks are back (Safe Transfer proposal §6.1):
+    /// ask "Resume “title”?" with Resume, Later and Discard…. Resume calls
+    /// `ops().resume(op)`; Later does nothing (the operations list keeps the
+    /// row, and the question comes back on the next reconnect); Discard…
+    /// asks `discard_question` first (Cancel is its default button), then
+    /// calls `ops().cancel(op)`.
+    ResumePrompt {
+        /// The op.
+        op: fstudio_ops::OpId,
+        /// "Resume “Copying 800 items to “CLIENT_A””?"
+        question: String,
+        /// "312 files left (11.3 GB). Files already copied are kept, …"
+        detail: String,
+        /// "Discard the rest of this copy?"
+        discard_question: String,
+        /// "The finished files on “CLIENT_A” stay. …"
+        discard_detail: String,
+    },
+    /// A copy stopped because source disks are missing: show `text`, with a
+    /// button that shows the operations list.
+    SourceMissing {
+        /// The op.
+        op: fstudio_ops::OpId,
+        /// "212 files wait for “Untitled”. Insert it, then resume the copy."
+        text: String,
+    },
     /// A window was created; open it.
     OpenWindow {
         /// The new window.

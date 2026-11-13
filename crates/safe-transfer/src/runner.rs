@@ -293,8 +293,14 @@ impl<'a> Runner<'a> {
         self.job.m.mode == "move"
     }
 
-    #[cfg_attr(not(feature = "fault-injection"), allow(unused_variables))]
     fn fault(&self, point: JobPoint) -> io::Result<()> {
+        self.fault_at(point, &self.dest_root)
+    }
+
+    /// [`Self::fault`] for one item: the hook sees `path` (a moved file's
+    /// original), so a test can pick the file it fails.
+    #[cfg_attr(not(feature = "fault-injection"), allow(unused_variables))]
+    fn fault_at(&self, point: JobPoint, path: &Path) -> io::Result<()> {
         #[cfg(feature = "fault-injection")]
         if let Some(h) = &self.opts.faults {
             use crate::fault::FaultPoint as F;
@@ -306,7 +312,7 @@ impl<'a> Runner<'a> {
                 JobPoint::BeforeSourceTrash => F::BeforeSourceTrash,
                 JobPoint::BeforeFolderSwap => F::BeforeFolderSwap,
             };
-            h.at(p, &self.dest_root)?;
+            h.at(p, path)?;
         }
         Ok(())
     }
@@ -326,6 +332,9 @@ impl<'a> Runner<'a> {
             .iter()
             .map(|s| find(&vols, s).map(|v| v.mount.clone()))
             .collect();
+        // Items left pending after the last pass, to notice an answer that
+        // arrived during it (it is pending again, and needs another pass).
+        let mut last_pending = usize::MAX;
         loop {
             if let Some(s) = self.pass() {
                 return s;
@@ -338,6 +347,11 @@ impl<'a> Runner<'a> {
                 continue;
             }
             if !self.open_questions() {
+                let pending = self.pending();
+                if pending > 0 && pending != last_pending {
+                    last_pending = pending;
+                    continue;
+                }
                 return Stop::Done;
             }
             set_state(self.inner, self.job, JobState::WaitingForAnswer);
@@ -346,6 +360,15 @@ impl<'a> Runner<'a> {
             }
             set_state(self.inner, self.job, JobState::Running);
         }
+    }
+
+    /// Items still to do (not settled, not waiting for a card or an answer).
+    fn pending(&self) -> usize {
+        lock(&self.job.st)
+            .recs
+            .iter()
+            .filter(|r| r.st == FileSt::Pending)
+            .count()
     }
 
     fn open_questions(&self) -> bool {
@@ -509,6 +532,18 @@ impl<'a> Runner<'a> {
     }
 
     fn ancestry(&self, idx: usize) -> Ancestry {
+        // An item that takes the same name as an earlier one waits for it.
+        if let Some(t) = self.job.m.files[idx].after {
+            let twin = self.job.rec(t as usize).st;
+            if !twin.is_terminal() {
+                // Look again once the twin is settled: after this pass, or
+                // (a question) after its answer.
+                if twin != FileSt::Conflict {
+                    self.again.store(true, Ordering::Release);
+                }
+                return Ancestry::Wait;
+            }
+        }
         let Some(p) = self.layout.parent(idx) else {
             return Ancestry::Ready;
         };
@@ -603,6 +638,8 @@ impl<'a> Runner<'a> {
                 info: Box::new(ConflictInfo {
                     id: idx as u32,
                     path: e.rel.clone(),
+                    source: e.src.clone(),
+                    dest: dest.to_path_buf(),
                     folder: e.kind == EntryKind::Dir,
                     source_size: e.size,
                     source_mtime_ns: e.mtime_ns,
@@ -667,6 +704,18 @@ impl<'a> Runner<'a> {
             self.skip(idx, "it is already there");
             return None;
         }
+        let rec = self.job.rec(idx);
+        if md.is_dir() && !rec.existed && rec.decision.is_none() && !rec.replacing {
+            // Nothing was there when the job was planned: this is the folder
+            // the job made before an interruption the journal didn't catch
+            // up with. It is ours; its contents are checked one by one.
+            self.job.update(idx, |r| {
+                r.st = FileSt::Done;
+                r.outcome = Some("folder".into());
+                r.resumed = true;
+            });
+            return None;
+        }
         let d = self.decision(idx, true);
         match d {
             Decision::Merge if md.is_dir() => {
@@ -687,6 +736,19 @@ impl<'a> Runner<'a> {
                 let name = self.free_name(&dest, true);
                 self.job.update(idx, |r| r.dest_name = Some(name));
                 self.again.store(true, Ordering::Release);
+                None
+            }
+            Decision::Replace
+                if src
+                    .as_deref()
+                    .is_some_and(|s| same_object(s, &dest) || s.starts_with(&dest)) =>
+            {
+                // The folder itself, or one inside it: replacing it would
+                // send the original to the Trash.
+                self.fail(
+                    idx,
+                    "a folder can't replace itself or a folder that contains it".into(),
+                );
                 None
             }
             Decision::Replace if same_move => {
@@ -982,7 +1044,7 @@ impl<'a> Runner<'a> {
             });
             return;
         }
-        if self.fault(JobPoint::BeforeSourceTrash).is_err() {
+        if self.fault_at(JobPoint::BeforeSourceTrash, src).is_err() {
             self.job.update(idx, |r| {
                 r.source_kept = Some("the original was kept (fault injected)".into())
             });
@@ -1198,6 +1260,15 @@ impl<'a> Runner<'a> {
                         }
                     };
                 }
+                Decision::Replace if same_object(&req.source, &req.dest) => {
+                    // Copying an item onto itself: "replace" would send the
+                    // original to the Trash. Never.
+                    if partial_there {
+                        let _ = remove::remove_partial(p, &partial, &owner);
+                    }
+                    self.fail(idx, "an item can't replace itself".into());
+                    return Next::Settled;
+                }
                 Decision::Replace => replace = true,
                 _ => {
                     if partial_there {
@@ -1303,6 +1374,17 @@ impl<'a> Runner<'a> {
             return std::fs::read_link(&req.dest).ok() == std::fs::read_link(&req.source).ok();
         }
         let p = self.p();
+        if rec.hash.is_none() && self.moving() && std::fs::symlink_metadata(&req.source).is_err() {
+            // A move that finished just before an interruption the journal
+            // didn't catch: the original is already in the Trash, so there
+            // is nothing to hash. Only a complete, verified copy ever gets
+            // the real name, and this one has the original's planned size
+            // and modification time (copied with it): it is ours.
+            return std::fs::symlink_metadata(&req.dest).is_ok_and(|m| {
+                let i = ident(&m);
+                i.size == e.size && i.mtime_ns == e.mtime_ns
+            });
+        }
         let Ok(got) = crate::compare::hash_file(p, &req.dest) else {
             return false;
         };
@@ -1885,6 +1967,7 @@ mod tests {
                     mtime_ns: 0,
                     ino: 0,
                     dataless: false,
+                    after: None,
                 })
                 .collect(),
         }

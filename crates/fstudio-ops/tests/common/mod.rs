@@ -52,19 +52,72 @@ impl Env {
     }
 }
 
+/// The copy backend these tests run on: `FSTUDIO_COPY_BACKEND=safe_transfer`
+/// runs the whole suite on Safe Transfer (CI runs it both ways, F-026).
+pub fn backend() -> CopyBackend {
+    std::env::var("FSTUDIO_COPY_BACKEND")
+        .map(|v| CopyBackend::parse(&v))
+        .unwrap_or_default()
+}
+
+/// Whether this run is on Safe Transfer.
+pub fn on_safe_transfer() -> bool {
+    backend() == CopyBackend::SafeTransfer
+}
+
+/// Opens a queue on the database at `db_path` with a folder trash, on the
+/// tests' backend. Safe Transfer keeps its journal next to the database, so
+/// reopening (after a crash, say) finds the same jobs.
+pub fn open_queue(
+    db_path: &Path,
+    mut cfg: OpsConfig,
+    trash: &Path,
+    sink: Arc<dyn EventSink>,
+) -> OpQueue {
+    let trasher: Arc<dyn Trasher> = Arc::new(TestTrasher {
+        main: DirTrasher::new(trash).unwrap(),
+    });
+    cfg.copy_backend = backend();
+    let transfer = on_safe_transfer().then(|| {
+        let dir = db_path.parent().unwrap().join("transfers");
+        Transfer::open(dir, false, trasher.clone(), cfg.faults.clone()).unwrap()
+    });
+    OpQueue::open_with_transfer(Db::open(db_path).unwrap(), cfg, trasher, sink, transfer).unwrap()
+}
+
+/// The tests' Trash: a folder next to the database, and for items on
+/// another volume (a disk image) a `.test-trash` folder at that volume's
+/// top, as the real Trash has a `.Trashes` per volume. Safe Transfer sends
+/// moved originals there; ops' own engine only trashes on the main volume.
+struct TestTrasher {
+    main: DirTrasher,
+}
+
+impl Trasher for TestTrasher {
+    fn trash(&self, path: &Path) -> std::io::Result<PathBuf> {
+        match self.main.trash(path) {
+            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+                let dev = std::fs::symlink_metadata(path)?.dev();
+                let mut top = path.parent().unwrap_or(path).to_path_buf();
+                while let Some(up) = top.parent() {
+                    match std::fs::symlink_metadata(up) {
+                        Ok(m) if m.dev() == dev => top = up.to_path_buf(),
+                        _ => break,
+                    }
+                }
+                DirTrasher::new(top.join(".test-trash"))?.trash(path)
+            }
+            r => r,
+        }
+    }
+}
+
 pub fn env_with(cfg: OpsConfig) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let trash = dir.path().join(".test-trash");
     let db_path = dir.path().join(".db/fstudio.sqlite3");
-    let db = Db::open(&db_path).unwrap();
     let (tx, rx) = crossbeam_channel::unbounded();
-    let q = OpQueue::open(
-        db,
-        cfg,
-        Arc::new(DirTrasher::new(&trash).unwrap()),
-        Arc::new(tx),
-    )
-    .unwrap();
+    let q = open_queue(&db_path, cfg, &trash, Arc::new(tx));
     Env {
         dir,
         q,
@@ -128,10 +181,9 @@ pub fn partials(root: &Path) -> Vec<PathBuf> {
         let Ok(rd) = std::fs::read_dir(p) else { return };
         for e in rd.flatten() {
             let path = e.path();
-            if e.file_name()
-                .to_string_lossy()
-                .ends_with(".fstudio-partial")
-            {
+            let name = e.file_name().to_string_lossy().into_owned();
+            // Either backend's temporary names.
+            if name.ends_with(".fstudio-partial") || name.ends_with(".st-partial") {
                 out.push(path.clone());
             }
             if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
@@ -171,7 +223,24 @@ impl Image {
     pub fn new(fs: &str, megabytes: u32) -> Image {
         Self::with(fs, megabytes, false)
     }
+    /// A writable image. On the safe_transfer backend it gets more room:
+    /// Safe Transfer refuses a job that would leave less than 100 MB free
+    /// (its safety margin, proposal §10), and these tests (some of which
+    /// fill most of their image) are about other things. [`Image::exact`]
+    /// keeps the size (the full-disk test).
     pub fn with(fs: &str, megabytes: u32, readonly: bool) -> Image {
+        let room = if on_safe_transfer() && !readonly {
+            200 + megabytes * 3 / 4
+        } else {
+            0
+        };
+        Self::exact_with(fs, megabytes + room, readonly)
+    }
+    /// An image of exactly `megabytes`, whatever the backend.
+    pub fn exact(fs: &str, megabytes: u32) -> Image {
+        Self::exact_with(fs, megabytes, false)
+    }
+    fn exact_with(fs: &str, megabytes: u32, readonly: bool) -> Image {
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("vol.dmg");
         let mount = dir.path().join("mnt");

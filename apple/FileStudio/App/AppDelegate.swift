@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         TourController.install(model)
         MoveSafety.install(model)
+        TransferPrompts.install(model)
     }
 
     func showSettings(section: SettingsTab? = nil) { SettingsWindow.show(model: model, section: section) }

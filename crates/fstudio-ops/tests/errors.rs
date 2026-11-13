@@ -70,7 +70,7 @@ fn read_only_volume() {
 #[test]
 #[ignore = "creates and fills a disk image; run with --ignored"]
 fn full_disk_mid_copy() {
-    let img = Image::new("HFS+", 8);
+    let img = Image::exact("HFS+", 8);
     for verify in [false, true] {
         let e = env_with(OpsConfig {
             verify,
@@ -81,6 +81,23 @@ fn full_disk_mid_copy() {
         let huge = hash_file(&e.p("src/huge.bin")).unwrap();
         let dest = img.mount.join(format!("v{verify}"));
         std::fs::create_dir_all(&dest).unwrap();
+        if on_safe_transfer() {
+            // Stricter: Safe Transfer refuses up front anything that would
+            // leave less than its 100 MB margin, so nothing is even started
+            // on an 8 MB disk, and the refusal says why, per file.
+            for src in ["small.txt", "huge.bin"] {
+                let st = e.run(OpRequest::Copy {
+                    sources: vec![e.p(&format!("src/{src}"))],
+                    dest_dir: dest.clone(),
+                });
+                assert_eq!(st.state, OpState::CompletedWithErrors, "{st:?}");
+                assert!(st.errors[0].message.contains("enough space"), "{st:?}");
+                assert!(!exists(&dest.join(src)));
+            }
+            assert!(partials(&img.mount).is_empty());
+            assert_eq!(hash_file(&e.p("src/huge.bin")).unwrap(), huge);
+            continue;
+        }
         // The small file first (in parallel it could lose the race for space).
         let st = e.run(OpRequest::Copy {
             sources: vec![e.p("src/small.txt")],

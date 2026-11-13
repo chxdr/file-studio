@@ -10,8 +10,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::job::{
-    self, ConflictInfo, EngineError, Event, JobInfo, JobPlan, JobReport, JobSpec, MissingSource,
-    Note, Resumability, SharedSink, io_ctx,
+    self, ConflictInfo, EngineError, EntryReport, Event, JobInfo, JobPlan, JobReport, JobSpec,
+    MissingSource, Note, Resumability, SharedSink, io_ctx,
 };
 use crate::journal::{
     Dest, Entry, EntryKind, FileRec, FileSt, Found, Head, JobFiles, JobOptions, JobState, Manifest,
@@ -407,6 +407,8 @@ impl Job {
                 ConflictInfo {
                     id: i as u32,
                     path: e.rel.clone(),
+                    source: e.src.clone(),
+                    dest: self.m.dest.path.join(&e.rel),
                     folder: e.kind == EntryKind::Dir,
                     source_size: e.size,
                     source_mtime_ns: e.mtime_ns,
@@ -892,6 +894,44 @@ impl Engine {
         self.get(&id).ok().map(|j| j.report())
     }
 
+    /// Every entry of the job and what happened to it, in job order
+    /// (folders before what is inside them). Paths are at the destination's
+    /// current mount point when it is connected, else where it was last seen.
+    pub fn entries(&self, id: JobId) -> Option<Vec<EntryReport>> {
+        let job = self.get(&id).ok()?;
+        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        let root = match find(&vols, &job.m.dest.volume) {
+            Some(v) => remap(&job.m.dest.path, &job.m.dest.volume.mount, &v.mount),
+            None => job.m.dest.path.clone(),
+        };
+        let layout = crate::runner::Layout::new(&job.m);
+        let recs = lock(&job.st).recs.clone();
+        Some(
+            job.m
+                .files
+                .iter()
+                .zip(&recs)
+                .enumerate()
+                .map(|(i, (e, r))| EntryReport {
+                    index: e.n,
+                    kind: e.kind,
+                    rel: e.rel.clone(),
+                    source: e.src.clone(),
+                    dest: layout.dest_of(&job.m, &recs, &root, job.id, i),
+                    state: r.st,
+                    merged: r.outcome.as_deref() == Some("merged"),
+                    moved: r.moved,
+                    decision: r.decision,
+                    replaced_trash: r.replaced_trash.clone(),
+                    trashed_to: r.trashed_to.clone(),
+                    reason: r.reason.clone().or_else(|| r.source_kept.clone()),
+                    size: e.size,
+                    hash: r.hash.clone(),
+                })
+                .collect(),
+        )
+    }
+
     /// Waits until the job's thread stops (finished, paused-and-stopped,
     /// waiting, cancelled) or `timeout` passes, and returns its info.
     pub fn wait(&self, id: JobId, timeout: Duration) -> Option<JobInfo> {
@@ -1148,6 +1188,7 @@ mod tests {
             capacity: 64,
             free: 1,
             block_size: 1,
+            read_only: false,
         };
         let vols = vec![
             v("AAAA", "Untitled", "/Volumes/Untitled"),

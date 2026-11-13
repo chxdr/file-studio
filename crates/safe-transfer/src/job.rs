@@ -21,8 +21,10 @@ use crate::space;
 pub enum Item {
     /// A file, symlink or folder (copied as a tree), keeping its name.
     Path(PathBuf),
-    /// One file to an exact path under the destination (Import Studio's
-    /// renamed imports). Missing folders on the way are created.
+    /// One item to an exact path under the destination: Import Studio's
+    /// renamed imports, File Studio's "name copy" duplicates and undo's moves
+    /// back. A folder is copied as a tree under its new name. Missing folders
+    /// on the way are created.
     Exact {
         /// The original.
         source: PathBuf,
@@ -220,6 +222,10 @@ pub struct ConflictInfo {
     pub id: u32,
     /// The item, relative to the destination folder.
     pub path: PathBuf,
+    /// The original (`None` for a folder made only to hold other items).
+    pub source: Option<PathBuf>,
+    /// The taken destination path, where the job last saw its destination.
+    pub dest: PathBuf,
     /// The new item is a folder.
     pub folder: bool,
     /// The new item's size and modification time.
@@ -232,6 +238,42 @@ pub struct ConflictInfo {
     pub existing_size: u64,
     /// Its modification time (ns since the epoch).
     pub existing_mtime_ns: i64,
+}
+
+/// What happened to one entry of a job (a file, link or folder), for a host
+/// that keeps its own per-item history (File Studio's undo).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryReport {
+    /// Its index in the job.
+    pub index: u32,
+    /// What it is.
+    pub kind: crate::journal::EntryKind,
+    /// Path under the destination folder, as planned.
+    pub rel: PathBuf,
+    /// The original (`None` for a folder made only to hold other items).
+    pub source: Option<PathBuf>,
+    /// Where it is (or would go), at the destination's current mount point,
+    /// with any "keep both" name.
+    pub dest: PathBuf,
+    /// Its state.
+    pub state: crate::journal::FileSt,
+    /// For a finished folder: it already existed and was merged into.
+    pub merged: bool,
+    /// It came by a rename (a move on one volume), with its whole folder if
+    /// its parent did.
+    pub moved: bool,
+    /// The answer used for a taken name.
+    pub decision: Option<crate::options::Decision>,
+    /// Where "replace" sent what was in the way.
+    pub replaced_trash: Option<PathBuf>,
+    /// Where a move sent the original.
+    pub trashed_to: Option<PathBuf>,
+    /// Why it was skipped or failed, or why a moved original was kept.
+    pub reason: Option<String>,
+    /// Size in bytes when planned.
+    pub size: u64,
+    /// xxh3-128 of the content, once written.
+    pub hash: Option<String>,
 }
 
 /// Receives events. Called on the job's thread; keep it quick.
@@ -460,10 +502,16 @@ impl Planner<'_> {
         if let Some(i) = self.by_dev.get(&dev) {
             return Ok(*i);
         }
+        // A symlink's own volume is its folder's: asking about the link
+        // itself would follow it (and fail for a link to nothing).
+        let probe = match std::fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => path.parent().unwrap_or(path),
+            _ => path,
+        };
         let v = self
             .p
             .volumes
-            .volume_of(path)
+            .volume_of(probe)
             .map_err(io_ctx(format!("reading the volume of {}", path.display())))?;
         let i = self.sources.len() as u32;
         self.sources.push(volref(&v));
@@ -490,6 +538,7 @@ impl Planner<'_> {
             mtime_ns: md.map_or(0, |m| m.mtime() * 1_000_000_000 + m.mtime_nsec()),
             ino: md.map_or(0, |m| m.ino()),
             dataless: md.is_some_and(|m| crate::sys::file_flags(m) & 0x4000_0000 != 0),
+            after: None,
         });
     }
 
@@ -575,6 +624,12 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         .volumes
         .volume_of(&spec.dest)
         .map_err(io_ctx("reading the destination's volume"))?;
+    if dest_vol.read_only {
+        return Err(EngineError::Io {
+            what: format!("copying onto “{}”", dest_vol.name),
+            source: io::Error::from_raw_os_error(libc::EROFS),
+        });
+    }
     let case_sensitive = p.volumes.case_sensitive(&spec.dest).unwrap_or(false);
     // Canonical paths ("/private/var/…", not "/var/…") so they share a
     // prefix with the mount point and can be moved to a new one on resume.
@@ -616,6 +671,13 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
                 pl.ensure_dirs(dest_rel);
                 let md = std::fs::symlink_metadata(source)
                     .map_err(io_ctx(format!("reading {}", source.display())))?;
+                if md.is_dir() {
+                    if std::fs::canonicalize(source).is_ok_and(|c| dest_canon.starts_with(c)) {
+                        return Err(EngineError::IntoItself);
+                    }
+                    pl.walk(source, dest_rel.clone())?;
+                    continue;
+                }
                 let vol = pl.src_vol(source, md.dev())?;
                 let kind = if md.file_type().is_symlink() {
                     EntryKind::Link
@@ -643,21 +705,35 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         s.uuid.is_some() && s.uuid == dest_vol.uuid
     };
     let mut conflicts = Vec::new();
-    let mut keys: HashSet<String> = HashSet::new();
+    // Name keys on the destination disk → the first entry with that key.
+    let mut keys: HashMap<String, u32> = HashMap::new();
+    let mut afters: Vec<(usize, u32)> = Vec::new();
     let mut recs = Vec::with_capacity(pl.entries.len());
     let mut skipped = Vec::new();
     let (mut files, mut folders, mut links, mut bytes, mut need) = (0u32, 0u32, 0u32, 0u64, 0u64);
-    for e in &pl.entries {
+    for (i, e) in pl.entries.iter().enumerate() {
         let dest = dest_canon.join(&e.rel);
         let key = names::name_key(&e.rel.to_string_lossy(), case_sensitive);
         let there = std::fs::symlink_metadata(&dest).ok();
         let skip = |r: &str| Some(r.to_string());
+        // Another item of this job takes the same name on this disk: this
+        // one waits for it, then counts as a taken name.
+        let twin = match e.kind {
+            EntryKind::Dir | EntryKind::Other => None,
+            _ => match keys.get(&key) {
+                Some(&t) => Some(t),
+                None => {
+                    keys.insert(key, e.n);
+                    None
+                }
+            },
+        };
+        if let Some(t) = twin {
+            afters.push((i, t));
+        }
         let reason = match e.kind {
             EntryKind::Dir => None,
             EntryKind::Other => skip("pipes, sockets and devices can't be copied"),
-            _ if !keys.insert(key) => {
-                skip("another item in this job has the same name on this disk")
-            }
             _ if e.dataless && !spec.options.allow_dataless => {
                 skip("not downloaded from iCloud; skipped so it isn't downloaded")
             }
@@ -671,9 +747,9 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
                 there.as_ref().is_some_and(|m| !m.is_dir())
                     || (there.is_some() && spec.options.on_conflict.folders != Decision::Merge)
             }
-            _ => there.is_some(),
+            _ => there.is_some() || twin.is_some(),
         };
-        if reason.is_none() && there.is_some() {
+        if reason.is_none() && (there.is_some() || twin.is_some()) {
             rec.existed = true;
             if in_the_way {
                 conflicts.push(e.rel.clone());
@@ -698,7 +774,17 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
                             && e.src.as_deref().is_some_and(|s| {
                                 !crate::sys::xattr_names(s).unwrap_or_default().is_empty()
                             });
-                        need += space::on_disk(e.size, dest_vol.block_size, ad);
+                        // A sparse file stays sparse where the destination
+                        // keeps holes (F-015): count what it really takes.
+                        let size = if keeps_holes(&dest_vol.fs_type) {
+                            e.src
+                                .as_deref()
+                                .and_then(|s| std::fs::symlink_metadata(s).ok())
+                                .map_or(e.size, |m| e.size.min(m.blocks() * 512))
+                        } else {
+                            e.size
+                        };
+                        need += space::on_disk(size, dest_vol.block_size, ad);
                     }
                 }
                 EntryKind::Other => {}
@@ -706,7 +792,19 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         }
         recs.push(rec);
     }
+    for (i, t) in afters {
+        pl.entries[i].after = Some(t);
+    }
     let margin = space::margin(need);
+    // Purgeable space counts as free (Finder's figure), but asking for it can
+    // be slow, so only when the plain figure isn't enough.
+    let mut free = dest_vol.free;
+    if need > 0
+        && !space::fits(need, free)
+        && let Some(more) = p.volumes.purgeable_free(&spec.dest)
+    {
+        free = free.max(more);
+    }
     Ok(JobPlan {
         files,
         folders,
@@ -714,8 +812,8 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         bytes,
         need,
         margin,
-        free: dest_vol.free,
-        fits: need == 0 || space::fits(need, dest_vol.free),
+        free,
+        fits: need == 0 || space::fits(need, free),
         skipped,
         conflicts,
         dest_volume: dest_vol,
@@ -728,3 +826,8 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
 
 /// The `Arc` an engine shares with its job threads.
 pub(crate) type SharedSink = Arc<dyn EventSink>;
+
+/// Filesystems that store holes, so a sparse copy takes only its data.
+fn keeps_holes(fs: &str) -> bool {
+    matches!(fs, "apfs" | "hfs")
+}

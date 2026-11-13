@@ -516,6 +516,58 @@ impl Engine {
         }))
     }
 
+    /// `transfer.resume` (the transfers to or from a sidebar disk, or the
+    /// latest interrupted one) and `transfer.resume_all` (Safe Transfer
+    /// proposal §6.1). Lists volumes.
+    fn resume_transfers(&self, all: bool, arg: Option<&CommandArg>) -> Result<Outcome> {
+        let ops = self.ops();
+        let err = |e: fstudio_ops::OpsError| CoreError::NotAvailable(e.to_string());
+        let resumed = if all {
+            ops.resume_all().map_err(err)?
+        } else {
+            let ids = match arg {
+                Some(CommandArg::Path(p)) => ops.interrupted_on_volume(p).map_err(err)?,
+                _ => ops
+                    .interrupted()
+                    .map_err(err)?
+                    .last()
+                    .map(|s| vec![s.id])
+                    .unwrap_or_default(),
+            };
+            let mut done = Vec::new();
+            for id in ids {
+                match ops.resume(id) {
+                    Ok(()) => done.push(id),
+                    Err(e) if done.is_empty() => {
+                        return Ok(Outcome::shell(crate::feedback::warning_toast(format!(
+                            "The transfer couldn't be resumed: {e}"
+                        ))));
+                    }
+                    Err(_) => {}
+                }
+            }
+            done
+        };
+        if resumed.is_empty() {
+            // Say what the waiting ones need ("Insert “CLIENT_A” to resume").
+            let waiting: Vec<String> = ops
+                .interrupted()
+                .map_err(err)?
+                .into_iter()
+                .flat_map(|s| s.waiting_for)
+                .collect();
+            let text = match waiting.first() {
+                Some(v) => format!("Insert “{v}” to resume its transfer"),
+                None => "There is no interrupted transfer to resume".to_string(),
+            };
+            return Ok(Outcome::shell(crate::feedback::warning_toast(text)));
+        }
+        Ok(Outcome::message(match resumed.len() {
+            1 => "Resumed the transfer".to_string(),
+            n => format!("Resumed {n} transfers"),
+        }))
+    }
+
     fn sidebar_command(&self, id: &str, arg: Option<&CommandArg>) -> Result<Outcome> {
         let Some(CommandArg::Path(p)) = arg else {
             return Err(CoreError::NotAvailable("no sidebar item given".into()));
@@ -1143,6 +1195,9 @@ impl Engine {
             "app.power_tour" => return Ok(Outcome::shell(ShellRequest::ShowPowerTour)),
             "sidebar.remove" | "sidebar.rename" | "drive.eject" | "drive.info" => {
                 return self.sidebar_command(id, inv.arg.as_ref());
+            }
+            "transfer.resume" | "transfer.resume_all" => {
+                return self.resume_transfers(id == "transfer.resume_all", inv.arg.as_ref());
             }
             _ => {}
         }

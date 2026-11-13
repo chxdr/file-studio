@@ -240,6 +240,14 @@ public enum ShellRequest: Equatable, Sendable {
     case editTags(paths: [String])
     case openWindow(WindowID)
     case closeWindow(WindowID)
+    /// An interrupted copy's disks are back: ask `question` with Resume,
+    /// Later and Discard…. Resume calls `engine.opResume(op)`; Later does
+    /// nothing; Discard… asks `discardQuestion` first (Cancel is the
+    /// default), then calls `engine.opCancel(op)`.
+    case resumePrompt(op: OpID, question: String, detail: String, discardQuestion: String, discardDetail: String)
+    /// A copy waits for source disks: show `text` with a Show button
+    /// (the operations list).
+    case sourceMissing(op: OpID, text: String)
 
     /// A stable name per case, for handler registration (`AppModel.handle(_:)`).
     public var kind: String {
@@ -282,6 +290,8 @@ public enum ShellRequest: Equatable, Sendable {
         case .editTags: "editTags"
         case .openWindow: "openWindow"
         case .closeWindow: "closeWindow"
+        case .resumePrompt: "resumePrompt"
+        case .sourceMissing: "sourceMissing"
         }
     }
 }
@@ -693,13 +703,21 @@ public struct OpStatus: Equatable, Sendable, Identifiable {
     public var conflicts: [Conflict]
     /// The finished-row line, worded by the core ("Failed · 0 of 1 done · 1 failed").
     public var summary: String
+    /// Disks the op waits for, by name (a pulled card, a missing source).
+    public var waitingFor: [String]
+    /// An interrupted op's Resume button is enabled.
+    public var canResume: Bool
+    /// The line by Resume, worded by the core ("Insert “CLIENT_A” to resume").
+    public var resumeNote: String?
     public init(id: OpID, kind: OpKind, title: String, state: OpState, filesDone: UInt64 = 0, filesTotal: UInt64 = 0,
                 bytesDone: UInt64 = 0, bytesTotal: UInt64 = 0, current: String? = nil, speedBps: Double = 0,
-                etaSecs: Double? = nil, errors: [ItemError] = [], conflicts: [Conflict] = [], summary: String = "") {
+                etaSecs: Double? = nil, errors: [ItemError] = [], conflicts: [Conflict] = [], summary: String = "",
+                waitingFor: [String] = [], canResume: Bool = true, resumeNote: String? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.state = state; self.filesDone = filesDone
         self.filesTotal = filesTotal; self.bytesDone = bytesDone; self.bytesTotal = bytesTotal
         self.current = current; self.speedBps = speedBps; self.etaSecs = etaSecs; self.errors = errors
         self.conflicts = conflicts; self.summary = summary
+        self.waitingFor = waitingFor; self.canResume = canResume; self.resumeNote = resumeNote
     }
     /// 0…1, by bytes when known, else by files.
     public var fraction: Double {

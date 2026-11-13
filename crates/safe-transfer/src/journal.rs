@@ -81,6 +81,12 @@ pub struct Entry {
     /// An iCloud placeholder when planned.
     #[serde(default)]
     pub dataless: bool,
+    /// An earlier entry of this job that takes the same name on this disk
+    /// ("File" and "file" onto a case-insensitive card). This one waits for
+    /// it, then is decided like any taken name: asked, kept both, skipped.
+    /// Never an overwrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u32>,
 }
 
 /// The options a job was made with.

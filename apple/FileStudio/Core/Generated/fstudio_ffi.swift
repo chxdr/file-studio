@@ -5551,13 +5551,34 @@ public struct FfiOpStatus: Equatable, Hashable {
      * The finished-row line ("Failed · 0 of 1 done · 1 failed").
      */
     public var summary: String
+    /**
+     * Disks the op waits for, by name.
+     */
+    public var waitingFor: [String]
+    /**
+     * An interrupted op's Resume button is enabled.
+     */
+    public var canResume: Bool
+    /**
+     * The line by it ("Insert “CLIENT_A” to resume").
+     */
+    public var resumeNote: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: Int64, kind: FfiOpKind, title: String, state: FfiOpState, filesDone: UInt64, filesTotal: UInt64, bytesDone: UInt64, bytesTotal: UInt64, current: String?, speedBps: Double, etaSecs: Double?, errors: [FfiItemError], conflicts: [FfiConflict], 
         /**
          * The finished-row line ("Failed · 0 of 1 done · 1 failed").
-         */summary: String) {
+         */summary: String, 
+        /**
+         * Disks the op waits for, by name.
+         */waitingFor: [String], 
+        /**
+         * An interrupted op's Resume button is enabled.
+         */canResume: Bool, 
+        /**
+         * The line by it ("Insert “CLIENT_A” to resume").
+         */resumeNote: String?) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -5572,6 +5593,9 @@ public struct FfiOpStatus: Equatable, Hashable {
         self.errors = errors
         self.conflicts = conflicts
         self.summary = summary
+        self.waitingFor = waitingFor
+        self.canResume = canResume
+        self.resumeNote = resumeNote
     }
 
     
@@ -5603,7 +5627,10 @@ public struct FfiConverterTypeFfiOpStatus: FfiConverterRustBuffer {
                 etaSecs: FfiConverterOptionDouble.read(from: &buf), 
                 errors: FfiConverterSequenceTypeFfiItemError.read(from: &buf), 
                 conflicts: FfiConverterSequenceTypeFfiConflict.read(from: &buf), 
-                summary: FfiConverterString.read(from: &buf)
+                summary: FfiConverterString.read(from: &buf), 
+                waitingFor: FfiConverterSequenceString.read(from: &buf), 
+                canResume: FfiConverterBool.read(from: &buf), 
+                resumeNote: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -5622,6 +5649,9 @@ public struct FfiConverterTypeFfiOpStatus: FfiConverterRustBuffer {
         FfiConverterSequenceTypeFfiItemError.write(value.errors, into: &buf)
         FfiConverterSequenceTypeFfiConflict.write(value.conflicts, into: &buf)
         FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterSequenceString.write(value.waitingFor, into: &buf)
+        FfiConverterBool.write(value.canResume, into: &buf)
+        FfiConverterOptionString.write(value.resumeNote, into: &buf)
     }
 }
 
@@ -10557,6 +10587,16 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case closeWindow(window: UInt64
     )
+    /**
+     * An interrupted copy's disks are back: Resume, Later, Discard….
+     */
+    case resumePrompt(op: Int64, question: String, detail: String, discardQuestion: String, discardDetail: String
+    )
+    /**
+     * A copy waits for source disks.
+     */
+    case sourceMissing(op: Int64, text: String
+    )
 
 
 
@@ -10680,6 +10720,12 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         )
         
         case 38: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 39: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 40: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10885,6 +10931,21 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case let .closeWindow(window):
             writeInt(&buf, Int32(38))
             FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(39))
+            FfiConverterInt64.write(op, into: &buf)
+            FfiConverterString.write(question, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+            FfiConverterString.write(discardQuestion, into: &buf)
+            FfiConverterString.write(discardDetail, into: &buf)
+            
+        
+        case let .sourceMissing(op,text):
+            writeInt(&buf, Int32(40))
+            FfiConverterInt64.write(op, into: &buf)
+            FfiConverterString.write(text, into: &buf)
             
         }
     }

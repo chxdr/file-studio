@@ -6,7 +6,13 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Lets ops' fault hooks (OpsConfig::faults) reach Safe Transfer's fault points,
+# for the ops test suite on the safe_transfer backend. Never in release builds.
+st-faults = ["safe-transfer/fault-injection"]
+
 [dependencies]
+safe-transfer = { path = "../safe-transfer" }
 fstudio-model.workspace = true
 fstudio-db.workspace = true
 fstudio-fs.workspace = true

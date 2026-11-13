@@ -268,8 +268,60 @@ pub struct OpsConfig {
     pub progress_interval: Duration,
     /// How many undo steps are kept. Default 100.
     pub undo_limit: usize,
+    /// Which engine copies bytes: ops' own loop, or Safe Transfer (F-026).
+    /// Safe Transfer is used only when the queue was opened with a
+    /// [`crate::Transfer`]. Default: ops.
+    pub copy_backend: CopyBackend,
+    /// Safe Transfer only: read each original a second time and require
+    /// both reads to agree (`operations.reread_originals`). Default off.
+    pub reread_originals: bool,
     /// Fault injection for tests. `None` in production.
     pub faults: Option<Arc<dyn FaultHook>>,
+}
+
+/// Which engine copies file content (F-026, Safe Transfer proposal §0.4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyBackend {
+    /// The queue's own copy loop (the default until the user signs off).
+    #[default]
+    Ops,
+    /// Safe Transfer: each copy or cross-volume move is one Safe Transfer
+    /// job (partial, chunk hashes, drive flush, uncached read-back,
+    /// exclusive rename, resumable after a crash or a pulled card).
+    SafeTransfer,
+}
+
+impl CopyBackend {
+    /// The setting's value: "ops" or "safe_transfer".
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CopyBackend::Ops => "ops",
+            CopyBackend::SafeTransfer => "safe_transfer",
+        }
+    }
+    /// Reads a setting's value; anything unknown is ops.
+    pub fn parse(s: &str) -> CopyBackend {
+        match s {
+            "safe_transfer" => CopyBackend::SafeTransfer,
+            _ => CopyBackend::Ops,
+        }
+    }
+}
+
+/// Whether an interrupted Safe Transfer op can continue now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResumeState {
+    /// Its disks are connected; resuming makes progress now. `still_missing`
+    /// names source disks some files still wait for.
+    Ready {
+        /// Source disks still not connected.
+        still_missing: Vec<String>,
+    },
+    /// Waiting for these disks ("Insert CLIENT_A to resume").
+    NeedsVolumes(Vec<String>),
+    /// Another app or terminal is running it.
+    InUseElsewhere,
 }
 
 impl Default for OpsConfig {
@@ -282,6 +334,8 @@ impl Default for OpsConfig {
             fsync_copies: false,
             progress_interval: Duration::from_millis(16),
             undo_limit: 100,
+            copy_backend: CopyBackend::Ops,
+            reread_originals: false,
             faults: None,
         }
     }
@@ -297,6 +351,8 @@ impl fmt::Debug for OpsConfig {
             .field("fsync_copies", &self.fsync_copies)
             .field("progress_interval", &self.progress_interval)
             .field("undo_limit", &self.undo_limit)
+            .field("copy_backend", &self.copy_backend)
+            .field("reread_originals", &self.reread_originals)
             .field("faults", &self.faults.is_some())
             .finish()
     }
@@ -503,9 +559,53 @@ pub struct OpStatus {
     pub errors: Vec<ItemError>,
     /// Conflicts waiting for a decision.
     pub conflicts: Vec<ConflictInfo>,
+    /// Disks the op waits for (a pulled card, a missing source), by name.
+    #[serde(default)]
+    pub waiting_for: Vec<String>,
+    /// For an interrupted Safe Transfer op: whether it can be resumed now.
+    #[serde(default)]
+    pub resume: Option<ResumeState>,
+}
+
+/// "“A”", "“A” and “B”", "“A”, “B” and “C”".
+fn quoted_list(names: &[String]) -> String {
+    let q: Vec<String> = names.iter().map(|n| format!("“{n}”")).collect();
+    match q.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 impl OpStatus {
+    /// For an interrupted op: whether Resume can go now, and the line to
+    /// show by its button (Safe Transfer proposal §6.1): "Insert “CLIENT_A”
+    /// to resume" (disabled until that disk appears), "Some files wait for
+    /// “Untitled”", "Running in another window". `(false, None)` for an op
+    /// that isn't interrupted.
+    pub fn resume_hint(&self) -> (bool, Option<String>) {
+        if self.state != OpState::Interrupted {
+            return (false, None);
+        }
+        match &self.resume {
+            None => (true, None),
+            Some(ResumeState::Ready { still_missing }) if still_missing.is_empty() => (true, None),
+            Some(ResumeState::Ready { still_missing }) => (
+                true,
+                Some(format!(
+                    "Some files wait for {}",
+                    quoted_list(still_missing)
+                )),
+            ),
+            Some(ResumeState::NeedsVolumes(v)) => {
+                (false, Some(format!("Insert {} to resume", quoted_list(v))))
+            }
+            Some(ResumeState::InUseElsewhere) => {
+                (false, Some("Running in another window".to_string()))
+            }
+        }
+    }
+
     /// One line for a finished op in the queue, never contradicting itself:
     /// "Done · 4 items", "Done, with errors · 3 of 4 done · 1 failed",
     /// "Failed · 0 of 1 done · 1 failed", "Cancelled · 2 of 5 done".
@@ -606,6 +706,29 @@ pub enum OpEvent {
     },
     /// The undo or redo labels changed.
     UndoChanged(UndoState),
+    /// An unfinished Safe Transfer op's disks are connected again: offer to
+    /// resume it (sent once per reconnect; Safe Transfer proposal §6.1).
+    ResumeAvailable {
+        /// The op.
+        op: OpId,
+        /// Its title.
+        title: String,
+        /// The destination disk's name.
+        volume: String,
+        /// Files left.
+        files_left: u64,
+        /// Bytes left.
+        bytes_left: u64,
+    },
+    /// A Safe Transfer op stopped because disks are missing.
+    Waiting {
+        /// The op.
+        op: OpId,
+        /// The missing disks, by name.
+        volumes: Vec<String>,
+        /// They are source disks (otherwise the destination).
+        sources: bool,
+    },
 }
 
 /// Receives queue events. Called from worker threads; keep it quick.
@@ -699,7 +822,34 @@ mod summary_tests {
                 })
                 .collect(),
             conflicts: Vec::new(),
+            waiting_for: Vec::new(),
+            resume: None,
         }
+    }
+
+    #[test]
+    fn resume_hints_say_what_an_interrupted_op_needs() {
+        let mut st = status(OpState::Interrupted, 1, 4, 0);
+        assert_eq!(st.resume_hint(), (true, None));
+        st.resume = Some(ResumeState::NeedsVolumes(vec!["CLIENT_A".into()]));
+        assert_eq!(
+            st.resume_hint(),
+            (false, Some("Insert “CLIENT_A” to resume".into()))
+        );
+        st.resume = Some(ResumeState::Ready {
+            still_missing: vec!["Untitled".into(), "Untitled 1".into()],
+        });
+        assert_eq!(
+            st.resume_hint(),
+            (
+                true,
+                Some("Some files wait for “Untitled” and “Untitled 1”".into())
+            )
+        );
+        st.resume = Some(ResumeState::InUseElsewhere);
+        assert!(!st.resume_hint().0);
+        st.state = OpState::Running;
+        assert_eq!(st.resume_hint(), (false, None));
     }
 
     /// The edge-case test saw "Done, with errors · 1 of 1 items · 1 failed"

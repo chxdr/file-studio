@@ -211,6 +211,15 @@ struct SettingsOperationsPane: View {
                 Text("Verifying makes copies slower but proves every byte arrived. Moves between disks are always verified before the original goes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Safe Transfer") {
+                Toggle("Read originals twice", isOn: a.bool("operations.reread_originals", default: false))
+                Text("Reads each original a second time and makes sure both reads agree, which catches a failing card or card reader. Copies take about twice the reading time from the original’s disk.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Resume interrupted transfers automatically",
+                       isOn: a.bool("operations.auto_resume", default: false))
+                Text("Off: when a pulled card or a crash stops a copy, File Studio asks before resuming it once its disks are back, and the operations list keeps a Resume Transfer button. These apply when Safe Transfer copies (Settings › Advanced).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Speed") {
                 Stepper("Files copied at once: \(model.settings.operations.fileWorkers)",
                         value: a.double(\.operations.fileWorkers).int, in: 1...16)
@@ -282,6 +291,14 @@ struct SettingsAdvancedPane: View {
                     }
                 }
                 Text("Your settings, history and sessions live here. Your files are never stored in it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Copy engine") {
+                Picker("Copies and moves between disks", selection: a.string("operations.copy_backend", default: "ops")) {
+                    Text("File Studio (current)").tag("ops")
+                    Text("Safe Transfer (testing)").tag("safe_transfer")
+                }
+                Text("Safe Transfer flushes and checks every copy before it gets its real name, and can resume after a pulled card or a crash. It becomes the default once it has been signed off. Changes apply when no operation is running.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Troubleshooting") {

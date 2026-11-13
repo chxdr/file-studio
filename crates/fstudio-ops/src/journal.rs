@@ -75,6 +75,9 @@ pub const MIGRATIONS: Migrations = Migrations {
         // The device of the folder a temporary file was written in, so a
         // leftover is only taken as gone once that same volume is back.
         (3, "ALTER TABLE ops_items ADD COLUMN partial_dev INTEGER;"),
+        // The Safe Transfer job that copies this op's bytes (F-026), when the
+        // `safe_transfer` backend runs it.
+        (4, "ALTER TABLE ops_ops ADD COLUMN st_job TEXT;"),
     ],
 };
 
@@ -205,6 +208,8 @@ pub struct OpRow {
     pub title: String,
     /// For a step of a compound op: the compound op and the step's index.
     pub part_of: Option<(OpId, usize)>,
+    /// The Safe Transfer job running this op, once created.
+    pub st_job: Option<String>,
 }
 
 /// Why an op exists.
@@ -308,6 +313,7 @@ type RawOp = (
     String,
     Option<i64>,
     Option<i64>,
+    Option<String>,
 );
 
 /// The journal: typed access to the `ops_*` tables.
@@ -404,6 +410,71 @@ impl Journal {
         Ok(())
     }
 
+    /// Records the Safe Transfer job running an op.
+    pub fn set_op_st_job(&self, id: OpId, job: &str) -> Result<()> {
+        self.db.with(|c| {
+            c.execute(
+                "UPDATE ops_ops SET st_job = ?2 WHERE id = ?1",
+                params![id.0, job],
+            )
+        })?;
+        Ok(())
+    }
+
+    /// The op a Safe Transfer job runs, if any.
+    pub fn op_of_st_job(&self, job: &str) -> Result<Option<OpId>> {
+        Ok(self
+            .db
+            .with(|c| {
+                c.query_row("SELECT id FROM ops_ops WHERE st_job = ?1", [job], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .optional()
+            })?
+            .map(OpId))
+    }
+
+    /// Writes finished items in one transaction: `updates` are existing rows
+    /// (every mutable field), `inserts` are new rows whose `parent` is an
+    /// index into `updates` followed by `inserts` (parents come first).
+    /// Returns the new rows' ids. Used when a Safe Transfer job ends, so the
+    /// op's items (and so undo) look as if ops had copied them.
+    pub fn write_items(
+        &self,
+        updates: &[ItemRow],
+        inserts: &[(usize, ItemRow)],
+    ) -> Result<Vec<i64>> {
+        self.db
+            .with(|c| {
+                let tx = c.transaction()?;
+                let mut ids: Vec<i64> = updates.iter().map(|u| u.id).collect();
+                for u in updates {
+                    update_item(&tx, u)?;
+                }
+                let mut fresh = Vec::with_capacity(inserts.len());
+                for (parent, row) in inserts {
+                    let new = NewItem {
+                        parent: ids.get(*parent).copied(),
+                        kind: row.kind,
+                        source: row.source.clone(),
+                        dest_dir: row.dest_dir.clone(),
+                        dest_name: row.dest_name.clone(),
+                        src_ident: row.src_ident,
+                    };
+                    let id = insert_item(&tx, row.op.0, &new)?;
+                    let mut r = row.clone();
+                    r.id = id;
+                    r.parent = new.parent;
+                    update_item(&tx, &r)?;
+                    ids.push(id);
+                    fresh.push(id);
+                }
+                tx.commit()?;
+                Ok(fresh)
+            })
+            .map_err(Into::into)
+    }
+
     /// Changes the queue position of an op.
     pub fn set_op_seq(&self, id: OpId, seq: f64) -> Result<()> {
         self.db.with(|c| {
@@ -428,12 +499,25 @@ impl Journal {
             r.get(8)?,
             r.get(9)?,
             r.get(10)?,
+            r.get(11)?,
         ))
     }
 
     fn build_op(raw: RawOp) -> Result<OpRow> {
-        let (id, _seq, request, options, plan, state, origin, undo_of, title, part_of, part_step) =
-            raw;
+        let (
+            id,
+            _seq,
+            request,
+            options,
+            plan,
+            state,
+            origin,
+            undo_of,
+            title,
+            part_of,
+            part_step,
+            st_job,
+        ) = raw;
         Ok(OpRow {
             id: OpId(id),
             request: serde_json::from_str(&request)?,
@@ -444,11 +528,11 @@ impl Journal {
             undo_of: undo_of.map(OpId),
             title,
             part_of: part_of.map(|p| (OpId(p), part_step.unwrap_or(0) as usize)),
+            st_job,
         })
     }
 
-    const OP_COLS: &str =
-        "id, seq, request, options, plan, state, origin, undo_of, title, part_of, part_step";
+    const OP_COLS: &str = "id, seq, request, options, plan, state, origin, undo_of, title, part_of, part_step, st_job";
 
     /// Loads one op.
     pub fn load_op(&self, id: OpId) -> Result<Option<OpRow>> {
@@ -538,35 +622,7 @@ impl Journal {
 
     /// Writes every mutable field of an item.
     pub fn save_item(&self, it: &ItemRow) -> Result<()> {
-        self.db.with(|c| {
-            c.prepare_cached(
-                "UPDATE ops_items SET dest_name = ?2, dest = ?3, partial = ?4, state = ?5,
-                    created = ?6, merged = ?7, expanded = ?8, bytes = ?9, hash = ?10, error = ?11,
-                    src_ident = ?12, dest_ident = ?13, partial_ino = ?14, replaced_trash = ?15,
-                    trash_loc = ?16, kind = ?17, partial_dev = ?18
-                 WHERE id = ?1",
-            )?
-            .execute(params![
-                it.id,
-                it.dest_name,
-                opt_p2b(&it.dest),
-                opt_p2b(&it.partial),
-                it.state.as_str(),
-                it.created as i64,
-                it.merged as i64,
-                it.expanded as i64,
-                it.bytes as i64,
-                it.hash,
-                it.error,
-                ident_json(&it.src_ident),
-                ident_json(&it.dest_ident),
-                it.partial_ino.map(|v| v as i64),
-                opt_p2b(&it.replaced_trash),
-                opt_p2b(&it.trash_loc),
-                kind_str(it.kind),
-                it.partial_dev.map(|v| v as i64),
-            ])
-        })?;
+        self.db.with(|c| update_item(c, it))?;
         Ok(())
     }
 
@@ -696,4 +752,35 @@ fn insert_item(tx: &rusqlite::Transaction<'_>, op: i64, it: &NewItem) -> rusqlit
         ident_json(&it.src_ident),
     ])?;
     Ok(tx.last_insert_rowid())
+}
+
+/// Writes every mutable field of an item.
+fn update_item(c: &rusqlite::Connection, it: &ItemRow) -> rusqlite::Result<usize> {
+    c.prepare_cached(
+        "UPDATE ops_items SET dest_name = ?2, dest = ?3, partial = ?4, state = ?5,
+            created = ?6, merged = ?7, expanded = ?8, bytes = ?9, hash = ?10, error = ?11,
+            src_ident = ?12, dest_ident = ?13, partial_ino = ?14, replaced_trash = ?15,
+            trash_loc = ?16, kind = ?17, partial_dev = ?18
+         WHERE id = ?1",
+    )?
+    .execute(params![
+        it.id,
+        it.dest_name,
+        opt_p2b(&it.dest),
+        opt_p2b(&it.partial),
+        it.state.as_str(),
+        it.created as i64,
+        it.merged as i64,
+        it.expanded as i64,
+        it.bytes as i64,
+        it.hash,
+        it.error,
+        ident_json(&it.src_ident),
+        ident_json(&it.dest_ident),
+        it.partial_ino.map(|v| v as i64),
+        opt_p2b(&it.replaced_trash),
+        opt_p2b(&it.trash_loc),
+        kind_str(it.kind),
+        it.partial_dev.map(|v| v as i64),
+    ])
 }
