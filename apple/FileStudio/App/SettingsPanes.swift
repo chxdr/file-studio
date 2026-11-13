@@ -212,11 +212,11 @@ struct SettingsOperationsPane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Safe Transfer") {
-                Toggle("Read originals twice", isOn: a.bool("operations.reread_originals", default: false))
+                KeyedToggle(model: model, key: "operations.reread_originals", fallback: false, title: "Read originals twice")
                 Text("Reads each original a second time and makes sure both reads agree, which catches a failing card or card reader. Copies take about twice the reading time from the original’s disk.")
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle("Resume interrupted transfers automatically",
-                       isOn: a.bool("operations.auto_resume", default: false))
+                KeyedToggle(model: model, key: "operations.auto_resume", fallback: false,
+                            title: "Resume interrupted transfers automatically")
                 Text("Off: when a pulled card or a crash stops a copy, File Studio asks before resuming it once its disks are back, and the operations list keeps a Resume Transfer button. These apply when Safe Transfer copies (Settings › Advanced).")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -294,7 +294,8 @@ struct SettingsAdvancedPane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Copy engine") {
-                Picker("Copies and moves between disks", selection: a.string("operations.copy_backend", default: "ops")) {
+                KeyedPicker(model: model, key: "operations.copy_backend", fallback: "ops",
+                            title: "Copies and moves between disks") {
                     Text("File Studio (current)").tag("ops")
                     Text("Safe Transfer (testing)").tag("safe_transfer")
                 }
@@ -332,5 +333,62 @@ struct SettingsAdvancedPane: View {
             try Core.set(model.engine, "appearance.path_bar_subtitle", bool: true)
             ToastCenter.of(model).show("Settings reset", style: .success)
         } catch { a.fail(error) }
+    }
+}
+
+
+// MARK: - Controls for single dotted-key settings
+
+/// A picker for one string setting by dotted key. It keeps the choice in its
+/// own state, so it shows a pick at once: a binding that reads the engine is
+/// re-read by AppKit outside SwiftUI's tracking and kept showing the old
+/// choice even though the new one was saved.
+struct KeyedPicker<Options: View>: View {
+    let model: AppModel
+    let key: String
+    let fallback: String
+    let title: String
+    @ViewBuilder let options: () -> Options
+    @State private var value: String?
+
+    var body: some View {
+        Picker(title, selection: Binding(get: { value ?? load() }, set: save), content: options)
+            .onAppear { value = load() }
+    }
+
+    private func load() -> String { Core.string(model.engine, key) ?? fallback }
+
+    private func save(_ v: String) {
+        let before = value
+        value = v
+        do { try Core.set(model.engine, key, string: v) } catch {
+            value = before
+            SettingsAccess(model: model).fail(error)
+        }
+    }
+}
+
+/// A switch for one Boolean setting by dotted key (see `KeyedPicker`).
+struct KeyedToggle: View {
+    let model: AppModel
+    let key: String
+    let fallback: Bool
+    let title: String
+    @State private var value: Bool?
+
+    var body: some View {
+        Toggle(title, isOn: Binding(get: { value ?? load() }, set: save))
+            .onAppear { value = load() }
+    }
+
+    private func load() -> Bool { Core.bool(model.engine, key) ?? fallback }
+
+    private func save(_ v: Bool) {
+        let before = value
+        value = v
+        do { try Core.set(model.engine, key, bool: v) } catch {
+            value = before
+            SettingsAccess(model: model).fail(error)
+        }
     }
 }
