@@ -1277,6 +1277,107 @@ M3 is built: conflicts, moves, folder metadata, the AppleDouble decision, purgea
 
 ---
 
+## 17. M4 design (proposed 2026-11-13, awaiting approval)
+
+This section says exactly how §0.3 and §0.4 B are built. Nothing in it is coded yet.
+
+### 17.1 The seam: one ops operation is one Safe Transfer job
+
+There are two ways ops could hand copies over:
+
+| | **A. Per op (recommended)** | B. Per file |
+|---|---|---|
+| What ops hands over | The whole Copy, Duplicate, Move or MoveTo op, as one Safe Transfer job | Each file, from ops' `copy_file`, to `safe_transfer::copy_file` |
+| Small-file group commit (5,000 files ≤ 2.4 s) | yes | no: one `F_FULLFSYNC` per file, as ops does today |
+| Resume inside a big file, from its flushed chunks | yes | no: the file restarts |
+| "Waiting for CLIENT_A", the resume prompt, "Insert X to resume" (§6.1) | yes, from Safe Transfer's journal | would have to be rebuilt in ops |
+| Replace: new copy verified *before* the old one goes to the Trash | yes | needs a second change in ops |
+| Size of the change | larger: a new ops module that maps events | small |
+
+**A is what the approved proposal describes (§0.3)**, and it is the only one that delivers §6.1 and the group-commit speed. B would be thrown away once A exists. So: A, with no B stage.
+
+### 17.2 fstudio-ops
+
+- **The switch:** `OpsConfig.copy_backend: CopyBackend { Ops, SafeTransfer }`, default `Ops` (F-026). The setting is `operations.copy_backend` = `"ops"` | `"safe_transfer"`.
+- **The engine:** `OpQueue::open` gains an optional `Arc<safe_transfer::Engine>`. Core owns the engine and passes it in, including when it reopens the queue after a settings change. With no engine, the switch has no effect.
+- **What goes to Safe Transfer** when the switch is on:
+  - Copy, Duplicate, Move and MoveTo ops. Safe Transfer itself does same-volume moves as one rename.
+  - Ops checks first, exactly as today:
+    - plan refusals
+    - F-023 protected moves
+    - undo's "the folder it goes back into is gone"
+  - Rename, Trash, Delete Immediately, New Folder, New File and Compound stay on ops' own path.
+- **A new module, `st_bridge.rs`,** runs the op as a job:
+  - It builds the `JobSpec` from the op's roots:
+    - `Item::Exact` carries Duplicate's "name copy" and pre-answered Keep Both names.
+    - Ops' rules become a `ConflictPolicy`; an unanswered rule becomes `Ask`.
+    - The moved originals go to ops' own `Trasher`, through an adapter that implements Safe Transfer's `Trash` trait. Tests keep their folder trash, and Put Back is unchanged.
+    - `workers` comes from `file_workers`.
+    - `reread_source` comes from `operations.reread_originals`.
+  - It records the job id on the op row: a new ops migration adds a column `st_job`.
+  - It maps events:
+    - `Progress` → `OpProgress`
+    - `Conflict` → `OpConflict`, with ops' `ConflictInfo` built from Safe Transfer's (`ConflictId` is the job's conflict id)
+    - `resolve_conflict` → `Engine::resolve_conflict` (apply-to-all included)
+    - `FileDone` / `FileNotCopied` → ops item rows: dest, `created` or `merged`, `dest_ident`, `replaced_trash`, Trash location. Undo and its "changed since" checks then work unchanged.
+    - `WaitingForDestination` / `WaitingForSource` → a new `OpState::Waiting`, with `OpStatus.waiting_for: Vec<String>` (volume names)
+    - `JobFinished` → `OpReport`
+  - Pause maps to Safe Transfer's `pause` and `resume`.
+  - **Cancel keeps today's ops meaning:** stop, keep what is finished, remove the partials. That is `cancel(Close)`.
+  - A crash, a pulled card or a quit leaves the op `Interrupted` (or `Waiting`), and Safe Transfer resumes it.
+- **Resume:**
+  - `OpQueue::interrupted()` includes ops that have an `st_job`, with `OpStatus.resume`: Ready, NeedsVolumes([names]) or InUseElsewhere.
+  - `OpQueue::resume(id)` on such an op calls `Engine::resume` and re-attaches the bridge. Ops' own `recover()` isn't used for them.
+- **ops' tests run on both backends:**
+  - The tests' `env_with` reads `FSTUDIO_COPY_BACKEND` (default `ops`), and CI runs the ops suite a second time with `safe_transfer`.
+  - Fault tests: ops' `FaultHook` is mapped onto Safe Transfer's fault points. Safe Transfer's `fault-injection` feature is enabled only through ops' dev-dependency. The mapping:
+    - BeforeCopy → before_write
+    - AfterCopy → before_flush
+    - Verify → a verify mismatch
+    - BeforePlace → before_rename
+    - BeforeSourceRemove → before_source_trash
+  - Where the new backend is deliberately stricter, the test asserts the stricter result per backend; nothing is loosened. The cases:
+    - moved originals go to the Trash instead of being removed
+    - Replace keeps the old item until the new one is verified
+    - verify is always on
+    - partials are named `.st-partial`
+
+### 17.3 fstudio-core
+
+- **The engine:**
+  - Core owns one `safe_transfer::Engine`, with its journal in `~/Library/Application Support/File Studio/transfers`. Tests use a temporary folder through `EngineConfig`.
+  - `volumes_changed()` also calls the engine's `volumes_changed()`.
+- **Settings**, dotted keys:
+  - `operations.copy_backend` (default `ops`)
+  - `operations.reread_originals` (default off)
+  - `operations.auto_resume`, which is passed to the engine
+- **Events:**
+  - `ResumeAvailable` → `ShellRequest::ResumePrompt { op, label, volume, files_left, bytes_left }`
+  - `WaitingForSource` → `ShellRequest::SourceMissing { op, files_by_source }`
+- **Commands** (F-006):
+  - `transfer.resume` (the selected interrupted row, or a sidebar disk) and `transfer.resume_all`
+  - Both are added to the sidebar volume menu (shown only when that disk has unfinished jobs) and to the palette and menus.
+
+### 17.4 fstudio-ffi and Swift (display only, F-001)
+
+- **The FFI mirrors:**
+  - `ResumePrompt` and `SourceMissing`
+  - `OpStatus.waiting_for` and `.resume`
+  - `OpState::Waiting`
+- **The prompt:** Resume, Later, and Discard… (which asks first, as in §6.1).
+- **`InterruptedRow`** shows "Insert CLIENT_A to resume" (disabled), "Waiting for Untitled", or "Free space on CLIENT_A". The existing ring badge counts these rows.
+- **Settings:** two toggles in the Operations pane, Re-read originals and Resume transfers automatically. The backend switch goes under Advanced.
+- **Setup:** one first-run page with the §4.6 re-read text.
+
+### 17.5 Order of work
+
+1. ops: the bridge, the switch, and ops' tests on both backends. This is the gate for everything else.
+2. core: engine ownership, settings, events, commands.
+3. ffi and Swift.
+4. The app proofs: a yank and a resume through the app path, on a disk image. These are `#[ignore]`d and run as one batch.
+
+The default stays `ops` until the user signs off.
+
 ## Appendix: reproduce the measurements
 
 ```bash
