@@ -51,6 +51,7 @@ mod options;
 mod plan;
 mod platform;
 mod remove;
+mod runner;
 pub mod space;
 mod sys;
 
@@ -61,15 +62,15 @@ pub use engine::{
 };
 pub use events::{FileProgress, FileReport, MetaLoss, NoProgress, Outcome, Phase, ProgressSink};
 pub use job::{
-    EngineError, Event, EventSink, Item, JobInfo, JobPlan, JobProgress, JobReport, JobSpec,
-    MissingSource, NoEvents, Note, Resumability, human,
+    ConflictInfo, EngineError, Event, EventSink, Item, JobInfo, JobPlan, JobProgress, JobReport,
+    JobSpec, MissingSource, NoEvents, Note, Resumability, human,
 };
 pub use journal::JobState;
 pub use names::JobId;
-pub use options::{Control, Options, Symlinks};
+pub use options::{ConflictPolicy, Control, Decision, Disposal, Mode, Options, Symlinks};
 pub use plan::{Plan, plan};
 pub use platform::{
-    AtomicRename, CloneFile, Flush, FlushLevel, IMMUTABLE_FLAGS, MetaSnapshot, Metadata, Native,
-    Platform, RenameMode, Residency, Trash, Uncached, VolumeIdentity, VolumeInfo,
+    AtomicRename, CloneFile, DirTrash, Flush, FlushLevel, IMMUTABLE_FLAGS, MetaSnapshot, Metadata,
+    Native, Platform, RenameMode, Residency, Trash, Uncached, VolumeIdentity, VolumeInfo,
 };
 pub use remove::PartialOwner;

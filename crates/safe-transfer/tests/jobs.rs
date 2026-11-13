@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use common::*;
 use safe_transfer::{
-    Cancel, Engine, EngineConfig, EngineError, Event, Flush, FlushLevel, Item, JobSpec, JobState,
-    Options, Platform, VolumeIdentity, VolumeInfo,
+    Cancel, Decision, Engine, EngineConfig, EngineError, Event, Flush, FlushLevel, Item, JobSpec,
+    JobState, Options, Platform, VolumeIdentity, VolumeInfo,
 };
 
 /// Collects events.
@@ -196,12 +196,14 @@ fn existing_files_and_same_name_files_are_skipped_never_replaced() {
     let ev = Events::default();
     let e = engine(j.path(), Platform::native(), &ev);
     let mut sp = spec(&src, d.path());
+    sp.options.on_conflict.files = Decision::Skip;
     sp.items.push(Item::Exact {
         source: other.join("FRESH.TXT"),
         dest_rel: "job/FRESH.TXT".into(),
     });
     let plan = e.plan(&sp).unwrap();
-    assert_eq!(plan.skipped.len(), 2, "{:?}", plan.skipped);
+    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
+    assert_eq!(plan.conflicts, vec![PathBuf::from("job/keep.txt")]);
     let id = e.create(sp).unwrap();
     e.start(id).unwrap();
     e.wait(id, Duration::from_secs(60)).unwrap();

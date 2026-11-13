@@ -20,7 +20,7 @@ unicode-normalization.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSString", "NSError", "NSAutoreleasePool"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSString", "NSError", "NSAutoreleasePool", "NSValue"] }
 
 [dev-dependencies]
 tempfile.workspace = true

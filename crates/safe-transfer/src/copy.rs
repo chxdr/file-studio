@@ -203,6 +203,23 @@ pub(crate) fn ident(md: &std::fs::Metadata) -> Ident {
 pub(crate) trait ChunkLog: Sync {
     /// Chunk `index` of the file is on the drive with hash `hash`.
     fn chunk_flushed(&self, index: usize, hash: u64);
+    /// The verified copy is about to replace an existing item: the journal
+    /// must know the copy's hash before the old item goes to the Trash.
+    fn before_replace(&self, _hashes: &FileHashes) {}
+    /// The existing item is in the Trash at `trash`.
+    fn replaced(&self, _trash: &Path) {}
+}
+
+/// How [`FileWork::prepare`] treats what it finds.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Prep<'a> {
+    /// A partial of this file from an earlier attempt is expected.
+    pub resuming: bool,
+    /// The destination's filesystem, when the caller knows it.
+    pub dest_fs: Option<&'a str>,
+    /// An existing item at the name is to be replaced (after the new copy
+    /// is verified, it goes to the Trash).
+    pub replace: bool,
 }
 
 /// Logs nothing (single-file copies).
@@ -285,7 +302,7 @@ pub fn copy_file(
     ctl: &Control,
     sink: &dyn ProgressSink,
 ) -> Result<FileReport, Failure> {
-    match FileWork::prepare(platform, req, opts, ctl, sink, &NoLog, false, None) {
+    match FileWork::prepare(platform, req, opts, ctl, sink, &NoLog, Prep::default()) {
         Ok(w) => w.run_alone(None),
         Err(error) => Err(Failure {
             error,
@@ -329,6 +346,10 @@ pub(crate) struct FileWork<'a> {
     pub(crate) chunks_reused: usize,
     /// Chunks already handed to the journal.
     logged: usize,
+    /// Replace an existing item at the name once the copy is verified.
+    replace: bool,
+    /// Where the replaced item went.
+    replaced: Option<PathBuf>,
 }
 
 type Res<T> = Result<T, CopyError>;
@@ -350,10 +371,7 @@ pub(crate) enum Checked {
 }
 
 impl<'a> FileWork<'a> {
-    /// The checks before anything is written. With `resuming`, an existing
-    /// partial of this file is expected rather than an error. `dest_fs` saves
-    /// asking the volume for every file when the caller knows it.
-    #[allow(clippy::too_many_arguments)]
+    /// The checks before anything is written (see [`Prep`]).
     pub(crate) fn prepare(
         p: &'a Platform,
         req: &'a CopyRequest,
@@ -361,8 +379,7 @@ impl<'a> FileWork<'a> {
         ctl: &'a Control,
         sink: &'a dyn ProgressSink,
         log: &'a dyn ChunkLog,
-        resuming: bool,
-        dest_fs: Option<&str>,
+        how: Prep<'_>,
     ) -> Res<FileWork<'a>> {
         let mut thr = Throttle::new(sink, opts.progress_interval);
         thr.report(Phase::Preparing, 0, 0);
@@ -395,12 +412,12 @@ impl<'a> FileWork<'a> {
                 "the destination is not a folder".into(),
             ));
         }
-        if std::fs::symlink_metadata(&req.dest).is_ok() {
+        if std::fs::symlink_metadata(&req.dest).is_ok() && !how.replace {
             return Err(CopyError::Conflict(req.dest.clone()));
         }
         let partial = req.partial_path();
         let partial_there = std::fs::symlink_metadata(&partial).is_ok();
-        if partial_there && !resuming {
+        if partial_there && !how.resuming {
             // Ours by name, but not from this run: never removed here.
             return Err(CopyError::Io {
                 phase: Phase::Preparing,
@@ -411,7 +428,7 @@ impl<'a> FileWork<'a> {
                 source: io::ErrorKind::AlreadyExists.into(),
             });
         }
-        let dest_fs = match dest_fs {
+        let dest_fs = match how.dest_fs {
             Some(fs) => fs.to_string(),
             None => p
                 .volumes
@@ -452,6 +469,8 @@ impl<'a> FileWork<'a> {
             from_device: false,
             chunks_reused: 0,
             logged: 0,
+            replace: how.replace,
+            replaced: None,
         };
         w.check()?;
         Ok(w)
@@ -931,6 +950,29 @@ impl<'a> FileWork<'a> {
         self.check()?;
         self.thr.report(Phase::Renaming, 0, 0);
         self.fault(FaultPointArg::BeforeRename)?;
+        if self.replace && std::fs::symlink_metadata(&self.req.dest).is_ok() {
+            // The new copy is complete, flushed and verified: only now does
+            // the old item go to the Trash (Put Back works), then the name
+            // is ours. The journal knows the copy's hash first.
+            if let Some(w) = &self.written {
+                self.log.before_replace(&w.hashes);
+            }
+            self.fault(FaultPointArg::BeforeReplaceTrash)?;
+            let loc = self
+                .p
+                .trash
+                .trash(&self.req.dest)
+                .map_err(|e| CopyError::Io {
+                    phase: Phase::Renaming,
+                    message: format!(
+                        "the existing item couldn't be moved to the Trash, so it was kept: {}",
+                        describe(&e)
+                    ),
+                    source: e,
+                })?;
+            self.log.replaced(&loc);
+            self.replaced = Some(loc);
+        }
         self.rename = match self
             .p
             .rename
@@ -996,6 +1038,7 @@ impl<'a> FileWork<'a> {
             metadata_lost: lost,
             retries: self.retries,
             chunks_reused: self.chunks_reused as u32,
+            replaced_trash: self.replaced.take(),
             copy_time: self.copy_time,
             flush_time: self.flush_time,
             verify_time: self.verify_time,
@@ -1057,6 +1100,7 @@ enum FaultPointArg {
     BeforeReread,
     BeforeRename,
     AfterRename,
+    BeforeReplaceTrash,
 }
 
 #[cfg(feature = "fault-injection")]
@@ -1072,6 +1116,7 @@ impl From<FaultPointArg> for crate::fault::FaultPoint {
             FaultPointArg::BeforeReread => P::BeforeReread,
             FaultPointArg::BeforeRename => P::BeforeRename,
             FaultPointArg::AfterRename => P::AfterRename,
+            FaultPointArg::BeforeReplaceTrash => P::BeforeReplaceTrash,
         }
     }
 }

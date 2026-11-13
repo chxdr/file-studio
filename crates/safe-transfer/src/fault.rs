@@ -50,6 +50,14 @@ pub enum FaultPoint {
     },
     /// A group is renamed; before the folder flush that makes it durable.
     BeforeFolderBarrier,
+    /// A verified copy is about to replace an existing item: before the old
+    /// one goes to the Trash.
+    BeforeReplaceTrash,
+    /// A moved file is in place: before its original goes to the Trash.
+    BeforeSourceTrash,
+    /// A replacing folder is complete: before the old folder goes to the
+    /// Trash and the new one takes its name.
+    BeforeFolderSwap,
     /// Half of a journal file's temporary copy is written.
     MidJournalWrite,
     /// A journal file's temporary copy is flushed; before it replaces a slot.
@@ -72,6 +80,9 @@ impl FaultPoint {
             FaultPoint::AfterGroupBarrier => "after_group_barrier",
             FaultPoint::MidGroupRename { .. } => "mid_group_rename",
             FaultPoint::BeforeFolderBarrier => "before_folder_barrier",
+            FaultPoint::BeforeReplaceTrash => "before_replace_trash",
+            FaultPoint::BeforeSourceTrash => "before_source_trash",
+            FaultPoint::BeforeFolderSwap => "before_folder_swap",
             FaultPoint::MidJournalWrite => "mid_journal_write",
             FaultPoint::BeforeJournalRename => "before_journal_rename",
         }

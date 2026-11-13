@@ -25,6 +25,12 @@ hdiutil create -quiet -megabytes 3072 -fs APFS -volname STBENCH $W/apfs.dmg
 hdiutil create -quiet -megabytes 3072 -fs ExFAT -volname STBENCH $W/exfat.dmg
 hdiutil attach -quiet -nobrowse -mountpoint $W/apfs $W/apfs.dmg
 hdiutil attach -quiet -nobrowse -mountpoint $W/exfat $W/exfat.dmg
+# The gate, measured first and on its own (fresh APFS image, nothing else
+# running against the images): 5,000 small files <= 2.4 s.
+for run in 1 2 3; do
+  mkdir $W/apfs/gate$run; echo -n "GATE apfs group run$run: "; $B $W/apfs/gate$run 5000
+done
+rm -rf "${W:?}"/apfs/gate*
 for run in 1 2 3; do
   for d in ssd apfs exfat; do
     mkdir $W/$d/g$run; echo -n "$d group run$run: "; $B $W/$d/g$run 5000

@@ -1193,6 +1193,88 @@ Read the 1 GiB rows with care:
 - real `flock` on Linux (the stub doesn't lock)
 - parallel workers per volume (M2 runs one file pipeline per job)
 
+## 16. M3 status (2026-11-13)
+
+M3 is built: conflicts, moves, folder metadata, the AppleDouble decision, purgeable free space, Linux `flock`, and parallel workers. The runner moved to `src/runner.rs`. A run is now a series of passes: each pass copies, moves and decides what it can; then folders whose contents are done are finished, deepest first; then, if a question is open, the job waits for the answer and passes again.
+
+**Conflicts (§8):**
+- **Choices:** per class (files, folders): Ask, Skip, Skip if identical (otherwise ask), Replace, Keep Both, and Merge for folders. Defaults: ask for files, merge for folders.
+- **Asking:** a taken name is a question (`Event::Conflict`, `Engine::conflicts`, `Engine::resolve_conflict(job, id, decision, apply_to_all)`). The item waits and the rest of the job carries on. When only questions are left, the job is `WaitingForAnswer`.
+- **Apply to all:** answers every waiting item of the same class, and the ones still to come. It is stored in the journal's head as `rules`.
+- **Replace (files):**
+  1. The new copy is written, flushed and verified under its partial name.
+  2. The journal records its hash.
+  3. The old file goes to the Trash.
+  4. The new copy is renamed in, exclusively.
+
+  A crash leaves either the old file at the name, or the old file in the Trash with the new copy's name briefly empty (resume finishes the rename). Never anything incomplete.
+- **Replace (folders):** the new folder is built under a hidden partial name. Only when everything inside it is done does the old folder go to the Trash and the new one take its name. If anything inside fails, the old folder stays, and the incomplete new one goes to the Trash. A folder is never half-replaced.
+- **Keep Both:** Finder's "name 2", "name 3", for files and whole folders.
+- **Planning:** taken names are listed in `JobPlan.conflicts` instead of being skipped.
+
+**Moves (§7):**
+- **Same volume (by UUID):** one exclusive rename. A whole folder moves in one rename when its name is free. Into an existing folder (merge), each item is renamed, and the emptied original folder is removed with `rmdir` (the new `remove.rs::remove_empty_source_dir`).
+- **Across volumes:** copy, flush and verify, then the original goes to the Trash after a check that it hasn't changed. Emptied original folders are removed the same way. `Disposal::Keep` keeps the originals.
+- **When an original is kept:** if it can't be trashed, it is kept and the report says why. A move never ends with a file missing from both places.
+- **Conflicts:** moves follow the same answers (Replace trashes the old item first, then renames).
+- **Report fields:** `moved`, `sources_trashed`, `sources_kept`, `replaced`, `kept_both`, `waiting_for_answer`.
+
+**Folder metadata:** a folder this job made gets its original's dates, extended attributes, ACL and flags after all its contents are in, because adding files changes a folder's dates. What couldn't be kept goes into the report. A merged folder keeps its own.
+
+**AppleDouble on exFAT and FAT (decided):** extended attributes are written on the partial, before the rename, and travel with it. The card ends up with `._<name>` for the final name and never an orphaned `._.<name>…st-partial`. Resume and cancel remove a partial's companion with the partial. The exFAT image test asserts both.
+
+**Free space** on APFS now includes purgeable space (`volumeAvailableCapacityForImportantUsage`, as Finder counts it).
+
+**Linux:** real `flock` and `getrandom`, compiled with clippy for the Linux target.
+
+**Parallel workers:** `Options.workers`, automatic by default.
+- **Small files:** 4 at a time write and `fsync`, then one drive flush for the group, then 4 at a time verify and rename.
+- **Big files:** 2 at a time (one copying while the other is checked). The results are identical for 1, automatic and 8 workers (`one_worker_and_many_give_the_same_result`).
+
+**For hosts and scripts:**
+- `DirTrash`, a folder used as the Trash for tests and scripts.
+- The CLI's new options: `--move`, `--keep-originals`, `--on-conflict`, `--folders`, `--workers`, `answer`, `questions`, and a hidden `--trash-dir`. In a terminal, questions are asked interactively; elsewhere the default is skip.
+
+**Tests (all pass):**
+- **M3 suite (`tests/m3.rs`, 13 tests):**
+  - asked names wait while the rest is copied, then follow the answers
+  - apply to all
+  - policies (skip if identical, keep both twice)
+  - folders: merge, keep both, skip and replace
+  - a folder never half-replaced
+  - same-volume moves, as one rename and merging into an existing folder
+  - a cross-volume move (simulated with a second volume UUID, with a test Trash)
+  - a move that keeps its originals
+  - moves following conflict answers
+  - folder dates and tags
+  - 1, automatic and 8 workers
+  - purgeable free space
+- **CLI `kill -9` while replacing** (4 points: before the old item goes to the Trash, twice; after a rename; just before the big file's rename): every name holds the complete old or the complete new version, or is briefly empty with the old one in the Trash. Every old version is either still in place or in the Trash. Resume finishes, and all 32 old versions end up in the Trash.
+- **Disk-image yanks (new, `#[ignore]`):**
+  - a cross-volume move onto exFAT, yanked at 5 points (mid-chunk, before an original goes to the Trash, before the group flush, mid-group rename, before the folder flush): every original is whole somewhere (in place, in the Trash, or complete on the card), and resume finishes identical with every original in the Trash
+  - Replace onto exFAT, yanked before the old item goes to the Trash, after a rename, and before a folder swap: the old version is never lost, a name is never half-new, and resume finishes
+- **The full `--ignored` batch ran once:** 11 tests, about 40 yanks, all pass.
+
+**Benchmark** (`bench_m2.sh`, release; load average about 3.4, with Firefox and other apps running):
+
+| | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| **Gate: 5,000 small files onto an APFS image** (fresh image, measured first) | 2.26 s | 2.46 s | 2.45 s |
+| The same, later in the same script | 1.84 s | 1.83 s | 1.84 s |
+| A separate fresh-image run (4 workers) | 1.82 s | 1.83 s | 2.05 s |
+| …and with 1 worker | 2.27 s | 2.34 s | 2.35 s |
+| Internal SSD | 1.00 s | 1.00 s | 1.01 s |
+| exFAT image | 13.4 s | 13.5 s | 13.4 s |
+| 1 GiB, Safe Transfer (SSD / APFS / exFAT image) | 0.56 / 0.61 / 0.52 s | 1.21 / 1.61 / 0.72 s | |
+
+- **The gate:** 7 of 9 APFS-image runs are under 2.4 s, and the median of all 9 is 1.84 s. The two over (2.45 and 2.46 s) were the first writes into a just-created image, while its backing file grows. The gate is unchanged. It needs an idle machine to call it cleanly passed; the numbers above are what this machine gave under load.
+- **exFAT** is now at the unflushed probe's time (13.5 s). Parallel workers hide the user-space driver's per-call cost, so my own 1.25× target is met.
+- **Internal SSD:** 5,000 small files take 1.0 s, down from 2.1–2.5 s in M2.
+
+**Left for M4 and M5:**
+- M4: wiring into File Studio (the backend switch, the prompts and the manual resume UI of §6.1).
+- M5: real-card benchmarks and the real-card yank script. Retiring the old ops data path (§0.4 D) comes with M5.
+
 ---
 
 ## Appendix: reproduce the measurements

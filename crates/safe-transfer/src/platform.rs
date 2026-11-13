@@ -113,6 +113,45 @@ pub trait Trash: Send + Sync {
     fn trash(&self, path: &Path) -> io::Result<PathBuf>;
 }
 
+/// A Trash that is a folder, for tests and scripts: items are renamed into
+/// it (never copied or removed), with Finder's "name 2" for clashes. It must
+/// be on the same volume as what it trashes.
+#[derive(Debug, Clone)]
+pub struct DirTrash {
+    dir: PathBuf,
+}
+
+impl DirTrash {
+    /// Uses (and creates) `dir`.
+    pub fn new(dir: impl Into<PathBuf>) -> io::Result<DirTrash> {
+        let dir = dir.into();
+        std::fs::create_dir_all(&dir)?;
+        Ok(DirTrash { dir })
+    }
+}
+
+impl Trash for DirTrash {
+    fn trash(&self, path: &Path) -> io::Result<PathBuf> {
+        let md = std::fs::symlink_metadata(path)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
+            .to_string_lossy()
+            .into_owned();
+        let names =
+            std::iter::once(name.clone()).chain(crate::names::keep_both_names(&name, md.is_dir()));
+        for n in names {
+            let to = self.dir.join(&n);
+            match sys::rename_excl(path, &to) {
+                Ok(_) => return Ok(to),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!("keep_both_names is endless")
+    }
+}
+
 /// Same-volume cloning (APFS): a new file sharing the original's blocks.
 pub trait CloneFile: Send + Sync {
     /// Clones `src` to the new file `dst`. Errors when the volume can't clone.

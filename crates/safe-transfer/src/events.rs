@@ -188,6 +188,8 @@ pub struct FileReport {
     pub retries: u32,
     /// Chunks kept from an earlier, interrupted attempt.
     pub chunks_reused: u32,
+    /// Where a replaced item went (the Trash), when this copy replaced one.
+    pub replaced_trash: Option<PathBuf>,
     /// Time spent writing.
     pub copy_time: Duration,
     /// Time spent flushing.

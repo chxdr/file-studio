@@ -98,6 +98,15 @@ pub struct JobOptions {
     pub allow_dataless: bool,
     /// Instant clones on the same APFS volume.
     pub clone_same_volume: bool,
+    /// Default conflict answers.
+    #[serde(default)]
+    pub on_conflict: crate::options::ConflictPolicy,
+    /// What happens to moved originals.
+    #[serde(default)]
+    pub disposal: crate::options::Disposal,
+    /// Files worked on at once (`None`: automatic).
+    #[serde(default)]
+    pub workers: Option<usize>,
 }
 
 /// Where a job writes.
@@ -156,6 +165,8 @@ pub enum JobState {
     Interrupted,
     /// Another process (the app or the CLI) is running this job right now.
     RunningElsewhere,
+    /// Everything else is done; some names are taken and wait for an answer.
+    WaitingForAnswer,
     /// Cancelled: the destination is as it was, and the job can be resumed.
     Cancelled,
     /// Every file is done, skipped or failed.
@@ -176,6 +187,7 @@ impl JobState {
             JobState::DestinationFull => "destination_full",
             JobState::Interrupted => "interrupted",
             JobState::RunningElsewhere => "running_elsewhere",
+            JobState::WaitingForAnswer => "waiting_for_answer",
             JobState::Cancelled => "cancelled",
             JobState::Finished => "finished",
             JobState::Closed => "closed",
@@ -192,6 +204,7 @@ impl JobState {
                 | JobState::WaitingForSource
                 | JobState::DestinationFull
                 | JobState::Cancelled
+                | JobState::WaitingForAnswer
         )
     }
 
@@ -217,6 +230,20 @@ pub struct Head {
     pub state: JobState,
     /// Seconds since the epoch.
     pub updated: u64,
+    /// "Apply to all" answers given so far.
+    #[serde(default)]
+    pub rules: Rules,
+}
+
+/// Conflict answers given with "apply to all".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Rules {
+    /// For files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<crate::options::Decision>,
+    /// For folders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folders: Option<crate::options::Decision>,
 }
 
 /// Where one file is.
@@ -242,6 +269,8 @@ pub enum FileSt {
     Failed,
     /// Its source card isn't connected.
     WaitingSource,
+    /// The destination name is taken; waits for an answer.
+    Conflict,
 }
 
 impl FileSt {
@@ -289,6 +318,48 @@ pub struct FileRec {
     /// The flush only reached OS level (the disk refused a drive flush).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub os_flush_only: bool,
+    /// Something was already at the destination name when the job was planned.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub existed: bool,
+    /// The answer for a taken name (given, from a rule, or the policy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<crate::options::Decision>,
+    /// The new name chosen for "keep both".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest_name: Option<String>,
+    /// A folder being replaced: its new contents go into a hidden partial
+    /// folder that replaces the old one once everything in it is done.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replacing: bool,
+    /// Where "replace" sent the old item (the Trash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced_trash: Option<PathBuf>,
+    /// Where a move sent the original (the Trash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_to: Option<PathBuf>,
+    /// Why a moved original was kept where it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kept: Option<String>,
+    /// Moved by renaming (with its folder, for items inside a moved folder).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moved: bool,
+    /// A folder whose contents are all done and whose metadata is applied.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finished: bool,
+    /// What was found at the taken name, for the question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub found: Option<Found>,
+}
+
+/// What is at a taken destination name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Found {
+    /// A folder (not a file).
+    pub dir: bool,
+    /// Its size in bytes.
+    pub size: u64,
+    /// Its modification time.
+    pub mtime_ns: i64,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -551,6 +622,7 @@ mod tests {
             generation,
             state: JobState::Running,
             updated: 1,
+            rules: Rules::default(),
         }
     }
 
@@ -662,6 +734,9 @@ mod tests {
                 follow_symlinks: false,
                 allow_dataless: false,
                 clone_same_volume: true,
+                on_conflict: Default::default(),
+                disposal: Default::default(),
+                workers: None,
             },
             dest: Dest {
                 path: "/d".into(),
