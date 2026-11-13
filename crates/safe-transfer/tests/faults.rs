@@ -1005,3 +1005,137 @@ fn files_in_flight_when_the_card_goes_are_kept_for_resume_never_failed() {
     assert!(diffs.is_empty(), "{diffs:?}");
     assert!(no_partials_under(&card.mount).is_empty());
 }
+
+/// exFAT renames a file and its `._` AppleDouble companion (its extended
+/// attributes) in two steps. A card pulled between them leaves the copy
+/// under its real name and the companion still named after the partial
+/// (seen in `jobs_survive_an_exfat_card_pulled_at_every_point`,
+/// mid_group_rename: `._.DSC00028.XMP.<job>-30.st-partial` left behind).
+/// This hook makes exactly that state for the first partial of a group,
+/// then pulls the card.
+#[derive(Debug)]
+struct HalfRenamed {
+    img: PathBuf,
+    mount: PathBuf,
+    dir: PathBuf,
+    victim: Mutex<Option<String>>,
+    fired: std::sync::atomic::AtomicBool,
+    problems: Mutex<Vec<String>>,
+}
+
+impl FaultHook for HalfRenamed {
+    fn at(&self, point: FaultPoint, _p: &Path) -> io::Result<()> {
+        if point.name() != "mid_group_rename" || self.fired.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let problem = |m: String| self.problems.lock().unwrap().push(m);
+        let partial = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.starts_with("._") && n.ends_with(".st-partial"))
+            .find(|n| self.dir.join(format!("._{n}")).exists());
+        let Some(partial) = partial else {
+            problem("no partial with a `._` companion at mid_group_rename".into());
+            return Ok(());
+        };
+        // ".DSC0001.XMP.<job>-<n>.st-partial" → "DSC0001.XMP"
+        let real = partial
+            .strip_suffix(".st-partial")
+            .and_then(|s| s.rsplit_once('.'))
+            .map(|(head, _)| head[1..].to_string())
+            .unwrap();
+        // The data file gets its real name (macOS moves the companion too)…
+        if let Err(e) = std::fs::rename(self.dir.join(&partial), self.dir.join(&real)) {
+            problem(format!("rename {partial}: {e}"));
+        }
+        // …and the companion goes back to the partial's name: the second
+        // step never happened.
+        if let Err(e) = std::fs::rename(
+            self.dir.join(format!("._{real}")),
+            self.dir.join(format!("._{partial}")),
+        ) {
+            problem(format!("rename ._{real}: {e}"));
+        }
+        *self.victim.lock().unwrap() = Some(real);
+        if let Err(e) = try_yank(&self.img, &self.mount) {
+            problem(e);
+        }
+        Ok(())
+    }
+}
+
+/// The xattr the test puts on every original.
+fn tag(p: &Path) -> Option<String> {
+    let out = std::process::Command::new("xattr")
+        .args(["-p", "com.filestudio.test"])
+        .arg(p)
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn a_card_pulled_between_a_file_and_its_appledouble_rename_leaves_nothing_behind() {
+    let s = tempfile::tempdir().unwrap();
+    let src = s.path().join("sidecars");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..12 {
+        let f = src.join(format!("DSC{i:04}.XMP"));
+        std::fs::write(&f, format!("xmp {i}")).unwrap();
+        sh(
+            "xattr",
+            &[
+                "-w",
+                "com.filestudio.test",
+                &format!("tag {i}"),
+                f.to_str().unwrap(),
+            ],
+        );
+    }
+    let card = Image::new("ExFAT", 128);
+    let j = tempfile::tempdir().unwrap();
+    let hook = Arc::new(HalfRenamed {
+        img: card.img.clone(),
+        mount: card.mount.clone(),
+        dir: card.mount.join("sidecars"),
+        victim: Mutex::new(None),
+        fired: Default::default(),
+        problems: Mutex::new(Vec::new()),
+    });
+    let ev = Events::default();
+    let e = job_engine(j.path(), hook.clone(), &ev);
+    let id = e.create(job_spec(&src, &card.mount)).unwrap();
+    e.start(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(120)).unwrap();
+    let problems = hook.problems.lock().unwrap().clone();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(info.state, JobState::WaitingForDestination, "{info:?}");
+    card.put_back();
+    e.volumes_changed();
+    e.resume(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(120)).unwrap();
+    assert_eq!(info.state, JobState::Finished, "{info:?}");
+    let r = e.report(id).unwrap();
+    assert!(r.failed.is_empty() && r.skipped.is_empty(), "{r:?}");
+    let dest = card.mount.join("sidecars");
+    // Nothing of ours is left: no partial, and no partial's `._` companion.
+    let left = no_partials_under(&card.mount);
+    assert!(left.is_empty(), "left behind: {left:?}");
+    // The half-renamed file has its extended attributes, like every other.
+    let victim = hook.victim.lock().unwrap().clone().unwrap();
+    for i in 0..12 {
+        let name = format!("DSC{i:04}.XMP");
+        assert_eq!(
+            tag(&dest.join(&name)).as_deref(),
+            Some(format!("tag {i}").as_str()),
+            "{name} (the half-renamed one was {victim}) lost its extended attributes"
+        );
+    }
+    let diffs = safe_transfer::compare::compare(&Platform::native(), &src, &dest).unwrap();
+    assert!(diffs.is_empty(), "{diffs:?}");
+}
