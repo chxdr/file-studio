@@ -223,7 +223,9 @@ public enum ShellRequest: Equatable, Sendable {
     case moved(text: String)
     /// Show `text` for ~6 s; with `button`, a button that performs `command`
     /// (S11: Trash, Delete Immediately, Undo and Redo say what they did).
-    case toast(text: String, button: String?, command: String?)
+    case toast(text: String, button: String?, command: String?, style: ToastStyle = .info)
+    /// Show the operations queue (a failure toast's Details).
+    case showOperations
     /// A yes/no question with `no` as the default button; on yes
     /// `engine.confirm(token)`, on no `engine.cancelConfirmation(token)` (S14).
     case confirm(token: UInt64, title: String, detail: String, yes: String, no: String)
@@ -268,6 +270,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .showSettings: "showSettings"
         case .confirmMove: "confirmMove"
         case .toast: "toast"
+        case .showOperations: "showOperations"
         case .confirm: "confirm"
         case .moved: "moved"
         case .showPowerTour: "showPowerTour"
@@ -442,11 +445,8 @@ public struct TabState: Equatable, Sendable, Identifiable {
         self.id = id; self.location = location; self.back = back; self.forward = forward; self.view = view
         self.filter = filter; self.selected = selected; self.cursor = cursor; self.scroll = scroll
     }
-    /// The folder's display name.
-    public var title: String {
-        let n = (location as NSString).lastPathComponent
-        return n.isEmpty ? "/" : n
-    }
+    /// The folder's display name, worded by the core ("Macintosh HD" for `/`).
+    public var title: String { coreDisplayName(location) }
 }
 
 public struct PaneState: Equatable, Sendable, Identifiable {
@@ -676,13 +676,15 @@ public struct OpStatus: Equatable, Sendable, Identifiable {
     public var etaSecs: Double?
     public var errors: [ItemError]
     public var conflicts: [Conflict]
+    /// The finished-row line, worded by the core ("Failed · 0 of 1 done · 1 failed").
+    public var summary: String
     public init(id: OpID, kind: OpKind, title: String, state: OpState, filesDone: UInt64 = 0, filesTotal: UInt64 = 0,
                 bytesDone: UInt64 = 0, bytesTotal: UInt64 = 0, current: String? = nil, speedBps: Double = 0,
-                etaSecs: Double? = nil, errors: [ItemError] = [], conflicts: [Conflict] = []) {
+                etaSecs: Double? = nil, errors: [ItemError] = [], conflicts: [Conflict] = [], summary: String = "") {
         self.id = id; self.kind = kind; self.title = title; self.state = state; self.filesDone = filesDone
         self.filesTotal = filesTotal; self.bytesDone = bytesDone; self.bytesTotal = bytesTotal
         self.current = current; self.speedBps = speedBps; self.etaSecs = etaSecs; self.errors = errors
-        self.conflicts = conflicts
+        self.conflicts = conflicts; self.summary = summary
     }
     /// 0…1, by bytes when known, else by files.
     public var fraction: Double {
@@ -948,6 +950,15 @@ public enum CoreEvent: Equatable, Sendable {
     case settingsChanged
     /// Re-read `favourites()`.
     case favouritesChanged
+    /// Handle `request` as if an outcome from the window holding `tab` had
+    /// asked for it (the toast of a finished operation, built by the core
+    /// from what really happened).
+    case shell(tab: TabID?, request: ShellRequest)
+}
+
+/// How a toast looks; the core decides.
+public enum ToastStyle: Equatable, Sendable {
+    case info, success, warning
 }
 
 // MARK: - Protocols

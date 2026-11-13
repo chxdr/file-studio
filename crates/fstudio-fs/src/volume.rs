@@ -53,12 +53,7 @@ fn info_from(s: sv::StatFs) -> VolumeInfo {
         .name
         .filter(|n| !n.is_empty())
         .or(paired)
-        .unwrap_or_else(|| {
-            s.mount_on
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "/".to_string())
-        });
+        .unwrap_or_else(|| fallback_volume_name(&s.mount_on));
     let device_id = crate::sys::lstat(&s.mount_on)
         .map(|st| st.st_dev as u32 as u64)
         .unwrap_or(0);
@@ -83,7 +78,71 @@ fn info_from(s: sv::StatFs) -> VolumeInfo {
 pub fn volume_for(path: impl AsRef<Path>) -> Result<VolumeInfo> {
     let path = path.as_ref();
     let s = sv::statfs(path).map_err(|e| Error::io(path, e))?;
-    Ok(info_from(s))
+    let v = info_from(s);
+    remember(std::slice::from_ref(&v), false);
+    Ok(v)
+}
+
+/// The startup disk's name when the system won't tell us (macOS's default).
+pub const STARTUP_DISK_FALLBACK: &str = "Macintosh HD";
+
+/// A volume's name when it has none of its own: its mount folder's name
+/// (`/Volumes/Card` → `Card`), or [`STARTUP_DISK_FALLBACK`] for `/`. Never
+/// the raw path "/".
+fn fallback_volume_name(mount: &Path) -> String {
+    mount
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| STARTUP_DISK_FALLBACK.to_string())
+}
+
+/// Volume names by mount point, as last read by [`volumes`] or
+/// [`volume_for`] of a mount point.
+static NAMES: std::sync::RwLock<Vec<(PathBuf, String)>> = std::sync::RwLock::new(Vec::new());
+
+fn remember(list: &[VolumeInfo], all: bool) {
+    if let Ok(mut n) = NAMES.write() {
+        if all {
+            n.clear();
+        }
+        for v in list {
+            n.retain(|(p, _)| *p != v.mount_path);
+            n.push((v.mount_path.clone(), v.name.clone()));
+        }
+    }
+}
+
+/// **The** name to show for a path, everywhere (sidebar, breadcrumbs, tab
+/// and window titles, toasts, questions, operation titles): the volume's
+/// name for a volume root ("Macintosh HD" for `/`, "Card" for
+/// `/Volumes/Card`), else the item's own name exactly as stored, else the
+/// path itself. It never answers "/" for the startup disk.
+///
+/// Uses the names the last [`volumes`] call read; for `/` before any such
+/// call it asks the system once (`statfs` + `getattrlist` on `/`, never a
+/// slow network mount).
+pub fn display_name(path: &Path) -> String {
+    let trimmed = path.to_string_lossy();
+    let trimmed = trimmed.trim_end_matches('/');
+    let path = Path::new(if trimmed.is_empty() { "/" } else { trimmed });
+    if let Ok(n) = NAMES.read()
+        && let Some((_, name)) = n.iter().find(|(p, _)| p == path)
+        && !name.is_empty()
+        && name != "/"
+    {
+        return name.clone();
+    }
+    if path == Path::new("/") {
+        return volume_for(path)
+            .map(|v| v.name)
+            .ok()
+            .filter(|n| !n.is_empty() && n != "/")
+            .unwrap_or_else(|| STARTUP_DISK_FALLBACK.to_string());
+    }
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
 /// All user-visible mounted volumes, without waiting on slow network mounts.
@@ -100,5 +159,39 @@ pub fn volumes() -> Result<Vec<VolumeInfo>> {
                     && !matches!(s.fs_type.as_str(), "devfs" | "autofs" | "fdesc"))
         })
         .map(info_from)
-        .collect())
+        .collect::<Vec<_>>())
+    .inspect(|v| remember(v, true))
+}
+
+#[cfg(test)]
+mod display_name_tests {
+    use super::*;
+
+    /// The startup disk was shown as "/" in some places (a crumb, a tab
+    /// title, "Moved “a” to “/”"). It has a name, always.
+    #[test]
+    fn the_startup_disk_is_never_called_slash() {
+        let name = display_name(Path::new("/"));
+        assert_ne!(name, "/");
+        assert!(!name.is_empty());
+        // The same name the volume list gives, before and after reading it.
+        let root = volumes()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.mount_path == Path::new("/"))
+            .unwrap();
+        assert_eq!(display_name(Path::new("/")), root.name);
+        assert_eq!(display_name(Path::new("//")), root.name);
+    }
+
+    #[test]
+    fn other_paths_keep_their_names_as_stored() {
+        assert_eq!(display_name(Path::new("/Volumes/Card")), "Card");
+        assert_eq!(display_name(Path::new("/a/b/")), "b");
+        // NFD stays NFD (F-017: names exactly as the filesystem returns them).
+        let nfd = "Cafe\u{301}";
+        assert_eq!(display_name(&Path::new("/x").join(nfd)), nfd);
+        assert_eq!(fallback_volume_name(Path::new("/")), STARTUP_DISK_FALLBACK);
+        assert_eq!(fallback_volume_name(Path::new("/Volumes/SD")), "SD");
+    }
 }

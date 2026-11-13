@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 fstudio-model.workspace = true
 fstudio-db.workspace = true
+fstudio-fs.workspace = true
 thiserror.workspace = true
 libc.workspace = true
 serde.workspace = true

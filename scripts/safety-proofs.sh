@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD=1
 if [ "${1:-}" = "--no-build" ]; then BUILD=0; shift; fi
 WANT=("$@")
-[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu)
+[ ${#WANT[@]} -eq 0 ] && WANT=(s1 s4 s5 s6 s7 s11 m2cut m2status m2menu e1 e2 e4)
 if [ "$BUILD" = 1 ]; then
   (cd "$ROOT/apple" && xcodegen -q && xcodebuild -project FileStudio.xcodeproj -scheme "File Studio" \
     -configuration Debug -derivedDataPath build/DerivedData build -quiet 2>&1 | grep -E "error:|BUILD FAILED") && exit 1
@@ -40,6 +40,12 @@ home() {
   H="$(cd "$H" && pwd -P)"
   mkdir -p "$H/Library" "$H/.Trash"
   BAD=0
+}
+# keep <proof>: copies the proof's screenshots to build/proof-shots/ (to look at).
+keep() {
+  mkdir -p "$ROOT/build/proof-shots"
+  for f in "$H/.shots/"*.png; do [ -e "$f" ] && cp "$f" "$ROOT/build/proof-shots/"; done
+  return 0
 }
 finish() {
   if [ "$BAD" = 0 ]; then echo "PASS $1"; else echo "FAIL $1 (log: $H/.log)"; FAILS=$((FAILS + 1)); return; fi
@@ -185,6 +191,65 @@ m2menu() {
   expect "Copy to Other Pane is F5" "File › Copy to Other Pane key=\"$f5\" mods=0"
   expect "Move to Other Pane is F6" "File › Move to Other Pane key=\"$f6\" mods=0"
   finish m2menu
+}
+
+# Edge fix 1: a Trash that fails says so. A mode-000 folder can't move to a
+# new parent; the toast says it couldn't, with Details (no Undo), and the
+# queue line doesn't count the failure as done. A mixed Trash counts what went.
+e1() {
+  home
+  mkdir -p "$H/w/locked"
+  for n in a b c; do echo "$n" > "$H/w/$n.txt"; done
+  chmod 000 "$H/w/locked"
+  run e1 "wait:1;go:$H/w;wait:1;focus:list;select:locked;key:cmd+delete;wait:1.5;snap:e1-locked-toast;sel;opsum;ls:$H/w;perform:view.show_operations;wait:0.8;snapv:e1-queue;ops:close;wait:0.5;focus:list;key:cmd+a;key:cmd+delete;wait:1.5;snap:e1-mixed-toast;ls:$H/w;ls:$H/.Trash;key:cmd+a;go:$H/w/locked;wait:1.5;snap:e1-locked-folder;quit"
+  chmod 755 "$H/w/locked"
+  expect "the locked folder's toast says it failed" "^TOAST Couldn’t move “locked” to the Trash: permission denied \\[Details\\] \\(warning\\)$"
+  refuse "…never that it moved" "^MOVED Moved “locked”"
+  expect "the queue line counts nothing as done" "^OPSUM .* \\| Failed · 0 of 1 done · 1 failed$"
+  expect "the folder is still there" "^LS .*/w: a.txt, b.txt, c.txt, locked$"
+  expect "…and selected again (a second ⌘⌫ retries it, not a.txt)" "^SEL 1: locked$"
+  expect "Details opens the queue" "^SHOWOPS$"
+  expect "the mixed Trash counts what went" "^TOAST Moved 3 items to the Trash · 1 couldn’t be moved \\[Details\\] \\(warning\\)$"
+  refuse "…never all four" "Moved 4 items to the Trash"
+  expect "only the three files moved" "^LS .*/\\.Trash: a.txt, b.txt, c.txt$"
+  keep
+  finish e1
+}
+
+# Edge fix 2: opening a broken symlink says where it points, from ⌘↓, a
+# double-click and the address bar (the sidebar goes the same way).
+e2() {
+  home
+  mkdir -p "$H/w"
+  ln -s /does/not/exist "$H/w/broken-link"
+  run e2 "wait:1;go:$H/w;wait:1;focus:list;select:broken-link;key:cmd+down;wait:0.8;snap:e2-open;dclick:300,126;wait:0.8;go:$H/w/broken-link;wait:1;snap:e2-go;quit"
+  local want="^TOAST “broken-link” points to /does/not/exist, which doesn’t exist \\(warning\\)$"
+  local n; n=$(echo "$OUT" | grep -cE "$want")
+  if [ "$n" = 3 ]; then echo "  ok   ⌘↓, double-click and the address bar each say where it points"; else echo "  FAIL the message showed $n times (want 3)"; BAD=1; fi
+  expect "the double-click hit the row" "^HIT .* -> .*Table"
+  keep
+  finish e2
+}
+
+# Edge fix 4: pinning a folder that is already a favourite does nothing,
+# by ⌃⌘T, the list's context menu, a drop on Favourites and a symlink to it;
+# ~/Applications next to /Applications gets a name that tells them apart.
+e4() {
+  home
+  mkdir -p "$H/Applications" "$H/Work"
+  ln -s "$H/Work" "$H/work-link"
+  run e4 "wait:1;go:$H;wait:1;focus:list;select:Work;key:ctrl+cmd+t;wait:0.5;key:ctrl+cmd+t;wait:0.5;foldermenu:Work|Add to Favourites;wait:0.5;favdrop:$H/Work,0;favdrop:$H/work-link,0;wait:0.5;favdrop:$H/Applications,3;favdrop:/Applications,0;wait:0.5;favlog;snap:e4-sidebar;go:/;wait:1;snap:e5-root;quit"
+  local n; n=$(echo "$OUT" | grep -cE "^FAV [^|]* \\| $H/(Work|work-link)$")
+  if [ "$n" = 1 ]; then echo "  ok   Work is pinned once (⌃⌘T twice, two drops)"; else echo "  FAIL Work is pinned $n times"; BAD=1; fi
+  expect "…and its context menu offers Remove, not a second Add" "^FAVMENU folder Work: .*Remove from Favourites"
+  expect "…a second drop is refused" "^FAVDROP .*/work-link at=0 accepted=false$"
+  n=$(echo "$OUT" | grep -cE "^FAV [^|]* \\| /Applications$")
+  if [ "$n" = 1 ]; then echo "  ok   /Applications is there once"; else echo "  FAIL /Applications is there $n times"; BAD=1; fi
+  expect "~/Applications says where it is" "^FAV Applications \\($(basename "$H")\\) \\| $H/Applications$"
+  expect "/Applications says where it is" "^FAV Applications \\([^)]+\\) \\| /Applications$"
+  refuse "…by the disk's name, never “/”" "^FAV Applications \\(/\\)"
+  keep
+  finish e4
 }
 
 for p in "${WANT[@]}"; do

@@ -69,6 +69,14 @@ pub use events::{
     COALESCE_WINDOW, ChangeKind, CoreEvent, EventSink, HintInfo, NullEventSink, VolumeSummary,
 };
 pub use favourites::Favourite;
+
+/// The name to show for a path everywhere (the volume's name for a volume
+/// root, "Macintosh HD" for `/`, else the item's name as stored). One rule
+/// for the sidebar, breadcrumbs, titles, toasts, questions and operation
+/// titles; see [`fstudio_fs::display_name`].
+pub fn display_name(path: &str) -> String {
+    fstudio_fs::display_name(std::path::Path::new(path))
+}
 pub use ids::{PaneId, TabId, WindowId, WorkspaceId};
 pub use listing::{Listing, ListingState, RowInfo, RowKind};
 pub use listing_handle::ListingHandle;
@@ -76,7 +84,7 @@ pub use menus::{
     MenuCommand, MenuContext, MenuEntryInfo, MenuItem, MenuKind, MenuOverride, MenuPlacement,
     MenuSettings, MenuTarget, SidebarItemKind, SystemMenu,
 };
-pub use outcome::{Outcome, ShellRequest};
+pub use outcome::{Outcome, ShellRequest, ToastStyle};
 pub use probe::{FsCoreProbe, FsDirSource};
 pub use protect::default_protected_folders;
 pub use settings::{

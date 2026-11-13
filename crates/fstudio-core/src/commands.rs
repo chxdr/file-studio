@@ -377,6 +377,7 @@ impl Engine {
             | "select.deselect_pattern"
             | "view.toggle_sidebar"
             | "view.toggle_inspector"
+            | "view.show_operations"
             | "window.new"
             | "window.close"
             | "workspace.save"
@@ -481,11 +482,7 @@ impl Engine {
                 }
             }
         };
-        let name_of = |p: &Path| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| s(p))
-        };
+        let name_of = |p: &Path| fstudio_fs::display_name(p);
         if id == "favourites.add" {
             let folders: Vec<&PathBuf> = paths.iter().filter(|p| p.is_dir()).collect();
             if folders.is_empty() {
@@ -536,10 +533,7 @@ impl Engine {
                 let (path, name) = match self.favourite_for(&path) {
                     Some(f) => (f.path, f.name),
                     None => {
-                        let name = p
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
+                        let name = fstudio_fs::display_name(p);
                         (path, name)
                     }
                 };
@@ -801,7 +795,7 @@ impl Engine {
             }
         };
         let ops = self.ops();
-        let id = ops.enqueue(req)?;
+        let id = self.enqueue(req)?;
         let me = self.me.clone();
         std::thread::Builder::new()
             .name("fstudio-create-folder".into())
@@ -1093,6 +1087,7 @@ impl Engine {
             "nav.quick_open" => return Ok(Outcome::shell(ShellRequest::ShowQuickOpen)),
             "view.toggle_sidebar" => return Ok(Outcome::shell(ShellRequest::ToggleSidebar)),
             "view.toggle_inspector" => return Ok(Outcome::shell(ShellRequest::ToggleInspector)),
+            "view.show_operations" => return Ok(Outcome::shell(ShellRequest::ShowOperations)),
             "workspace.save" => return Ok(Outcome::shell(ShellRequest::AskWorkspaceName)),
             "workspace.manage" => return Ok(Outcome::shell(ShellRequest::ManageWorkspaces)),
             "workspace.switch" => {
@@ -1166,14 +1161,41 @@ impl Engine {
                     for d in &dirs {
                         self.open_tab_in(pane, Some(s(d)), None)?;
                     }
-                    if files.is_empty() {
+                    // A broken symlink (or an item that has gone) can't be
+                    // opened: say why instead of handing it to the OS, which
+                    // did nothing at all.
+                    let (bad, files): (Vec<String>, Vec<PathBuf>) =
+                        files
+                            .into_iter()
+                            .fold((Vec::new(), Vec::new()), |mut acc, p| {
+                                match crate::feedback::unopenable(&p) {
+                                    Some(why) => acc.0.push(why),
+                                    None => acc.1.push(p),
+                                }
+                                acc
+                            });
+                    let why = match bad.as_slice() {
+                        [] => None,
+                        [one] => Some(one.clone()),
+                        [first, rest @ ..] => {
+                            Some(format!("{first} (and {} more can’t be opened)", rest.len()))
+                        }
+                    };
+                    let mut out = if files.is_empty() {
                         done()
                     } else {
                         Outcome::shell(ShellRequest::Open {
                             paths: strings(&files),
                         })
                         .with_tab(tid)
+                    };
+                    if let Some(why) = why {
+                        if out.shell.is_none() {
+                            out.shell = Some(crate::feedback::warning_toast(why.clone()));
+                        }
+                        out.message = Some(why);
                     }
+                    out
                 }
             }
             "nav.open_new_tab" => {
@@ -1442,6 +1464,7 @@ impl Engine {
                         text: crate::feedback::deleted_text(&sel),
                         button: None,
                         command: None,
+                        style: crate::outcome::ToastStyle::Success,
                     }),
                 })));
                 Outcome::shell(ShellRequest::ConfirmDeleteImmediately {
@@ -1717,10 +1740,7 @@ impl Engine {
             "path.copy_name" => {
                 let sel = Self::arg_or_selection(inv, &t);
                 let text = if sel.is_empty() {
-                    t.location_path()
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "/".into())
+                    fstudio_fs::display_name(&t.location_path())
                 } else {
                     sel.iter()
                         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))

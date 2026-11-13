@@ -13,11 +13,11 @@ pub mod volume;
 pub mod watch;
 pub mod xattr;
 
-pub use error::{Error, Result};
+pub use error::{Error, Result, plain_error};
 pub use list::{Lister, Skipped, list_all, on_disk_name, stat_entry};
 pub use package::{PACKAGE_EXTENSIONS, is_package_name};
 pub use tags::{FinderTag, TagColor, finder_tags, set_finder_tags};
-pub use volume::{VolumeInfo, volume_for, volumes};
+pub use volume::{STARTUP_DISK_FALLBACK, VolumeInfo, display_name, volume_for, volumes};
 #[cfg(target_os = "macos")]
 pub use watch::FsEventsWatcher;
 pub use watch::{FsEvent, FsEventKind, PollWatcher, WatchConfig, Watcher, default_watcher};

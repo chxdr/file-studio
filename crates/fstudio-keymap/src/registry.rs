@@ -243,6 +243,7 @@ fn table() -> Vec<B> {
         c("view.refresh", "Refresh", View, "Reload the folder").s("⌘R"),
         c("view.toggle_sidebar", "Show or Hide Sidebar", View, "Show or hide the sidebar").global().s("⌃⌘S"),
         c("view.toggle_inspector", "Show or Hide Inspector", View, "Show or hide the inspector").global().s("⌥⌘I"),
+        c("view.show_operations", "Show Operations", View, "Show the queue of file operations, with the reason for anything that failed").global(),
         // ── Sort ──
         c("sort.name", "Sort by Name", Sort, "Sort by name"),
         c("sort.kind", "Sort by Kind", Sort, "Sort by kind"),

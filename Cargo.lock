@@ -490,6 +490,7 @@ version = "0.0.1"
 dependencies = [
  "crossbeam-channel",
  "fstudio-db",
+ "fstudio-fs",
  "fstudio-model",
  "libc",
  "objc2",

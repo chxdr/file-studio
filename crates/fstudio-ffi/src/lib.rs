@@ -28,6 +28,14 @@ pub fn core_version() -> String {
     fstudio_core::version().to_string()
 }
 
+/// The name to show for a path (tab and window titles, the sidebar, sheets):
+/// "Macintosh HD" for `/`, a volume's name for its root, else the item's
+/// name. See `fstudio_core::display_name`.
+#[uniffi::export]
+pub fn display_name(path: String) -> String {
+    fstudio_core::display_name(&path)
+}
+
 // ───────────────────────── address-bar editing ─────────────────────────
 
 /// What Tab or ⇧Tab does in the address bar (`fstudio_path::TabOutcome`).

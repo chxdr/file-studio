@@ -155,13 +155,13 @@ fn confirming_moves_it_and_says_so() {
         .unwrap();
     let (token, _) = confirm_token(&out);
     let out = h.engine.confirm_move(token).unwrap();
-    assert_eq!(
-        out.shell,
-        Some(ShellRequest::Moved {
-            text: "Moved “Downloads” to “Import Studio”".into()
-        })
-    );
     wait_ops(&h, &out);
+    assert_eq!(
+        h.expect_toast(),
+        ShellRequest::Moved {
+            text: "Moved “Downloads” to “Import Studio”".into()
+        }
+    );
     assert!(h.p("Import Studio/Downloads/installer").is_dir());
     assert!(!h.p("Downloads").exists());
     // ⌘Z puts it back.
@@ -177,13 +177,13 @@ fn an_ordinary_move_goes_ahead_with_a_moved_toast() {
         .engine
         .drop_files(vec![h.p("Alpha")], h.p("Beta"), Mods::NONE)
         .unwrap();
-    assert_eq!(
-        out.shell,
-        Some(ShellRequest::Moved {
-            text: "Moved “Alpha” to “Beta”".into()
-        })
-    );
     wait_ops(&h, &out);
+    assert_eq!(
+        h.expect_toast(),
+        ShellRequest::Moved {
+            text: "Moved “Alpha” to “Beta”".into()
+        }
+    );
     assert!(h.p("Beta/Alpha").is_dir());
     // A copy (⌥) of a protected folder is not a move: no question.
     let out = h
@@ -223,11 +223,8 @@ fn f6_and_cut_paste_of_a_protected_folder_ask_first() {
         )
         .unwrap();
     // Not a standard folder, but not protected either: it moves (and says so).
-    assert!(
-        matches!(out.shell, Some(ShellRequest::Moved { .. })),
-        "{out:?}"
-    );
     wait_ops(&h, &out);
+    assert!(matches!(h.expect_toast(), ShellRequest::Moved { .. }));
     assert!(h.p("Pictures/Import Studio").is_dir());
     let undo = h.engine.undo().unwrap();
     wait_ops(&h, &undo);
@@ -299,8 +296,8 @@ fn folders_open_in_tabs_and_the_setting_are_respected() {
         .engine
         .drop_files(vec![h.p("Downloads")], h.p("Beta"), Mods::NONE)
         .unwrap();
-    assert!(matches!(out.shell, Some(ShellRequest::Moved { .. })));
     wait_ops(&h, &out);
+    assert!(matches!(h.expect_toast(), ShellRequest::Moved { .. }));
     // …and an added folder asks.
     h.engine
         .set_setting(

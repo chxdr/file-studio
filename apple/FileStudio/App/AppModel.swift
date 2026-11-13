@@ -77,11 +77,8 @@ public final class TabModel {
         canGoForward = api.canGoForward
     }
 
-    /// The folder's name for titles.
-    public var title: String {
-        let n = (location as NSString).lastPathComponent
-        return n.isEmpty ? "/" : n
-    }
+    /// The folder's name for titles, worded by the core ("Macintosh HD" for `/`).
+    public var title: String { coreDisplayName(location) }
 
     public func attachment<T: AnyObject>(_ type: T.Type, make: () -> T) -> T { attachments.get(type, make: make) }
 
@@ -271,6 +268,8 @@ public final class AppModel {
         case .hint(let h): hint = h
         case .settingsChanged: settings = engine.settings()
         case .favouritesChanged: favourites = engine.favourites()
+        case .shell(let tab, let req):
+            dispatch(req, ShellContext(window: tab.flatMap { window(of: $0)?.id } ?? keyWindowID, tab: tab))
         }
         for o in observers { o.fn(e) }
     }

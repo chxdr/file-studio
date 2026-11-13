@@ -34,7 +34,7 @@ enum ConfirmSheets {
         }
     }
 
-    private static func name(_ p: String) -> String { (p as NSString).lastPathComponent }
+    private static func name(_ p: String) -> String { coreDisplayName(p) }
 
     /// The core's generic question (S14: renames that hide an item or change
     /// its extension, recreating a folder for an undo). `no` is the default.

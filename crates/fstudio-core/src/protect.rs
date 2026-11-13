@@ -127,11 +127,9 @@ pub(crate) fn why_protected(
     None
 }
 
-/// The name shown for a path.
+/// The name shown for a path (one rule: [`fstudio_fs::display_name`]).
 fn name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.to_string_lossy().into_owned())
+    fstudio_fs::display_name(p)
 }
 
 /// "Moved “Downloads” to “Import Studio”", "Moved 3 items to “Archive”".

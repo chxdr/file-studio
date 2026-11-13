@@ -19,6 +19,7 @@
 //   alert:<ok|cancel>                 press a button of the sheet on the front window
 //   snapv:<name>                      like snap:, but draws each window's views (shows lists, popovers and sheets better)
 //   conflicts                         log the pending conflicts and ops (OPS lines)
+//   opsum                             log each op's queue line (OPSUM <title> | <summary>)
 
 #if DEBUG
 import AppKit
@@ -29,6 +30,8 @@ enum UIDebugSteps {
     static func run(_ op: String, _ arg: String, _ model: AppModel) -> Bool {
         let ops = OpsModel.of(model)
         switch op {
+        case "opsum":
+            for o in ops.ops { print("OPSUM \(o.title) | \(o.summary)") }
         case "ops":
             ops.popoverShown = arg != "close"
         case "op":

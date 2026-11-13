@@ -156,7 +156,8 @@ extension ShellRequest {
         case .showSettings(let s): self = .showSettings(section: s)
         case .confirmMove(let t, let title, let d, let p): self = .confirmMove(token: t, title: title, detail: d, paths: p)
         case .moved(let t): self = .moved(text: t)
-        case .toast(let t, let b, let c): self = .toast(text: t, button: b, command: c)
+        case .toast(let t, let b, let c, let st): self = .toast(text: t, button: b, command: c, style: ToastStyle(st))
+        case .showOperations: self = .showOperations
         case .confirm(let tok, let t, let d, let y, let n): self = .confirm(token: tok, title: t, detail: d, yes: y, no: n)
         case .showPowerTour: self = .showPowerTour
         case .toggleSidebar: self = .toggleSidebar
@@ -480,7 +481,21 @@ extension OpStatus {
         self.init(id: s.id, kind: OpKind(s.kind), title: s.title, state: OpState(s.state), filesDone: s.filesDone,
                   filesTotal: s.filesTotal, bytesDone: s.bytesDone, bytesTotal: s.bytesTotal, current: s.current,
                   speedBps: s.speedBps, etaSecs: s.etaSecs, errors: s.errors.map(ItemError.init),
-                  conflicts: s.conflicts.map(Conflict.init))
+                  conflicts: s.conflicts.map(Conflict.init), summary: s.summary)
+    }
+}
+
+/// The core's one rule for the name shown for a path ("Macintosh HD" for
+/// `/`, a volume's name for its root, else the item's name).
+func coreDisplayName(_ path: String) -> String { displayName(path: path) }
+
+extension ToastStyle {
+    init(_ s: FfiToastStyle) {
+        switch s {
+        case .info: self = .info
+        case .success: self = .success
+        case .warning: self = .warning
+        }
     }
 }
 
@@ -746,6 +761,7 @@ func coreEvent(_ e: FfiEvent) -> CoreEvent {
     case .hint(let h): .hint(Hint(h))
     case .settingsChanged: .settingsChanged
     case .favouritesChanged: .favouritesChanged
+    case .shell(let t, let r): .shell(tab: t, request: ShellRequest(r))
     }
 }
 

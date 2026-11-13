@@ -45,9 +45,8 @@ final class SidebarNode: NSObject {
         switch kind {
         case .section(let t): t
         case .favourite(let f): f.name
-        case .recent(let p): p == "/" ? "/" : (p as NSString).lastPathComponent
-        // The core names the boot volume "/" for now; show what Finder shows.
-        case .volume(let v): v.name.isEmpty || v.name == "/" ? FileManager.default.displayName(atPath: v.mountPath) : v.name
+        case .recent(let p): coreDisplayName(p)
+        case .volume(let v): v.name
         case .tag(let n, _): n
         }
     }
@@ -798,7 +797,7 @@ final class SidebarServices {
     /// Unmounts and ejects off the main thread (it can take seconds), then
     /// reports a failure in an alert.
     static func eject(_ path: String, model: AppModel) {
-        let name = model.volumes.first { $0.mountPath == path }?.name ?? (path as NSString).lastPathComponent
+        let name = model.volumes.first { $0.mountPath == path }?.name ?? coreDisplayName(path)
         model.statusMessage = "Ejecting \(name)…"
         DispatchQueue.global(qos: .userInitiated).async {
             var failure: String?

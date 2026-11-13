@@ -173,11 +173,17 @@ pub enum ShellRequest {
     Toast {
         /// "Put back 3 items", "Redid: Move of “Downloads” in “Projects”".
         text: String,
-        /// The button's title ("Undo", "Redo"), if any.
+        /// The button's title ("Undo", "Redo", "Details"), if any.
         button: Option<String>,
         /// The command the button performs.
         command: Option<String>,
+        /// How it looks: a tick for success, a warning sign when something
+        /// didn't happen.
+        style: ToastStyle,
     },
+    /// Show the operations queue, where every failed item is listed with
+    /// its reason (`view.show_operations`, a failure toast's Details).
+    ShowOperations,
     /// Show the power tour (`app.power_tour`, Help › File Studio Power
     /// Tour): a short, skippable sequence of cards about the power-user
     /// tools, with keys read from the current bindings.
@@ -222,6 +228,17 @@ pub enum ShellRequest {
         /// The window.
         window: WindowId,
     },
+}
+
+/// How a toast looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ToastStyle {
+    /// Neutral news.
+    Info,
+    /// Everything asked for happened (a green tick).
+    Success,
+    /// Some or all of it didn't happen, or it was refused (a warning sign).
+    Warning,
 }
 
 /// The result of a command, key press or navigation.

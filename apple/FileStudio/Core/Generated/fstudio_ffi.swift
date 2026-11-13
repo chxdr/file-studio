@@ -5402,10 +5402,17 @@ public struct FfiOpStatus: Equatable, Hashable {
     public var etaSecs: Double?
     public var errors: [FfiItemError]
     public var conflicts: [FfiConflict]
+    /**
+     * The finished-row line ("Failed · 0 of 1 done · 1 failed").
+     */
+    public var summary: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: Int64, kind: FfiOpKind, title: String, state: FfiOpState, filesDone: UInt64, filesTotal: UInt64, bytesDone: UInt64, bytesTotal: UInt64, current: String?, speedBps: Double, etaSecs: Double?, errors: [FfiItemError], conflicts: [FfiConflict]) {
+    public init(id: Int64, kind: FfiOpKind, title: String, state: FfiOpState, filesDone: UInt64, filesTotal: UInt64, bytesDone: UInt64, bytesTotal: UInt64, current: String?, speedBps: Double, etaSecs: Double?, errors: [FfiItemError], conflicts: [FfiConflict], 
+        /**
+         * The finished-row line ("Failed · 0 of 1 done · 1 failed").
+         */summary: String) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -5419,6 +5426,7 @@ public struct FfiOpStatus: Equatable, Hashable {
         self.etaSecs = etaSecs
         self.errors = errors
         self.conflicts = conflicts
+        self.summary = summary
     }
 
     
@@ -5449,7 +5457,8 @@ public struct FfiConverterTypeFfiOpStatus: FfiConverterRustBuffer {
                 speedBps: FfiConverterDouble.read(from: &buf), 
                 etaSecs: FfiConverterOptionDouble.read(from: &buf), 
                 errors: FfiConverterSequenceTypeFfiItemError.read(from: &buf), 
-                conflicts: FfiConverterSequenceTypeFfiConflict.read(from: &buf)
+                conflicts: FfiConverterSequenceTypeFfiConflict.read(from: &buf), 
+                summary: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -5467,6 +5476,7 @@ public struct FfiConverterTypeFfiOpStatus: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.etaSecs, into: &buf)
         FfiConverterSequenceTypeFfiItemError.write(value.errors, into: &buf)
         FfiConverterSequenceTypeFfiConflict.write(value.conflicts, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
     }
 }
 
@@ -8203,6 +8213,12 @@ public enum FfiEvent: Equatable, Hashable {
     )
     case settingsChanged
     case favouritesChanged
+    /**
+     * Handle `request` as an outcome's shell request, from the window
+     * holding `tab` (the toast of a finished operation).
+     */
+    case shell(tab: UInt64?, request: FfiShellRequest
+    )
 
 
 
@@ -8256,6 +8272,9 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
         case 11: return .settingsChanged
         
         case 12: return .favouritesChanged
+        
+        case 13: return .shell(tab: try FfiConverterOptionUInt64.read(from: &buf), request: try FfiConverterTypeFfiShellRequest.read(from: &buf)
+        )
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -8329,6 +8348,12 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
         case .favouritesChanged:
             writeInt(&buf, Int32(12))
         
+        
+        case let .shell(tab,request):
+            writeInt(&buf, Int32(13))
+            FfiConverterOptionUInt64.write(tab, into: &buf)
+            FfiConverterTypeFfiShellRequest.write(request, into: &buf)
+            
         }
     }
 }
@@ -10297,8 +10322,9 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case moved(text: String
     )
-    case toast(text: String, button: String?, command: String?
+    case toast(text: String, button: String?, command: String?, style: FfiToastStyle
     )
+    case showOperations
     case confirm(token: UInt64, title: String, detail: String, yes: String, no: String
     )
     case showPowerTour
@@ -10409,34 +10435,36 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 26: return .moved(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 27: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf)
+        case 27: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf), style: try FfiConverterTypeFfiToastStyle.read(from: &buf)
         )
         
-        case 28: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
+        case 28: return .showOperations
+        
+        case 29: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
         )
         
-        case 29: return .showPowerTour
+        case 30: return .showPowerTour
         
-        case 30: return .toggleSidebar
+        case 31: return .toggleSidebar
         
-        case 31: return .toggleInspector
+        case 32: return .toggleInspector
         
-        case 32: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 33: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 33: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 34: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 34: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 35: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 35: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 36: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 36: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 37: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 37: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 38: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -10580,15 +10608,20 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(text, into: &buf)
             
         
-        case let .toast(text,button,command):
+        case let .toast(text,button,command,style):
             writeInt(&buf, Int32(27))
             FfiConverterString.write(text, into: &buf)
             FfiConverterOptionString.write(button, into: &buf)
             FfiConverterOptionString.write(command, into: &buf)
+            FfiConverterTypeFfiToastStyle.write(style, into: &buf)
             
         
-        case let .confirm(token,title,detail,yes,no):
+        case .showOperations:
             writeInt(&buf, Int32(28))
+        
+        
+        case let .confirm(token,title,detail,yes,no):
+            writeInt(&buf, Int32(29))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterString.write(title, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -10597,45 +10630,45 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case .showPowerTour:
-            writeInt(&buf, Int32(29))
-        
-        
-        case .toggleSidebar:
             writeInt(&buf, Int32(30))
         
         
-        case .toggleInspector:
+        case .toggleSidebar:
             writeInt(&buf, Int32(31))
         
         
-        case let .eject(path):
+        case .toggleInspector:
             writeInt(&buf, Int32(32))
-            FfiConverterString.write(path, into: &buf)
-            
         
-        case let .showDriveInfo(path):
+        
+        case let .eject(path):
             writeInt(&buf, Int32(33))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDriveInfo(path):
             writeInt(&buf, Int32(34))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(35))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(35))
+            writeInt(&buf, Int32(36))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(36))
+            writeInt(&buf, Int32(37))
             FfiConverterUInt64.write(window, into: &buf)
             
         
         case let .closeWindow(window):
-            writeInt(&buf, Int32(37))
+            writeInt(&buf, Int32(38))
             FfiConverterUInt64.write(window, into: &buf)
             
         }
@@ -11072,6 +11105,82 @@ public func FfiConverterTypeFfiTerminalApp_lift(_ buf: RustBuffer) throws -> Ffi
 #endif
 public func FfiConverterTypeFfiTerminalApp_lower(_ value: FfiTerminalApp) -> RustBuffer {
     return FfiConverterTypeFfiTerminalApp.lower(value)
+}
+
+
+
+/**
+ * How a toast looks. See `fstudio_core::ToastStyle`.
+ */
+
+public enum FfiToastStyle: Equatable, Hashable {
+    
+    case info
+    case success
+    case warning
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiToastStyle: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiToastStyle: FfiConverterRustBuffer {
+    typealias SwiftType = FfiToastStyle
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiToastStyle {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .info
+        
+        case 2: return .success
+        
+        case 3: return .warning
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiToastStyle, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .info:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .success:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .warning:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiToastStyle_lift(_ buf: RustBuffer) throws -> FfiToastStyle {
+    return try FfiConverterTypeFfiToastStyle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiToastStyle_lower(_ value: FfiToastStyle) -> RustBuffer {
+    return FfiConverterTypeFfiToastStyle.lower(value)
 }
 
 
@@ -12304,6 +12413,19 @@ public func deletePathComponent(input: String, cursor: UInt32) -> FfiTextEdit  {
     )
 })
 }
+/**
+ * The name to show for a path (tab and window titles, the sidebar, sheets):
+ * "Macintosh HD" for `/`, a volume's name for its root, else the item's
+ * name. See `fstudio_core::display_name`.
+ */
+public func displayName(path: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_display_name(
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -12324,6 +12446,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_delete_path_component() != 5798) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_display_name() != 52844) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {

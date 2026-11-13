@@ -35,7 +35,7 @@ pub enum CoreError {
     #[error("{0}")]
     NotAvailable(String),
     /// An I/O error outside any one file.
-    #[error("{0}")]
+    #[error("{}", fstudio_fs::plain_error(.0))]
     Io(#[from] std::io::Error),
 }
 

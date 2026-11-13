@@ -363,9 +363,14 @@ impl Tab {
                 })
             }
             Location::File { dir, name } => {
+                // A broken symlink (a favourite whose folder went, a typed
+                // path): show it selected in its folder, and say why it
+                // didn't open.
+                let why = crate::feedback::unopenable(&dir.join(&name));
                 self.navigate(dir, Some((vec![name.clone()], Some(name))));
                 Ok(Outcome {
-                    message: chip,
+                    shell: why.clone().map(crate::feedback::warning_toast),
+                    message: why.or(chip),
                     ..out
                 })
             }
@@ -480,6 +485,7 @@ impl Tab {
         partial: bool,
         keep_rows: bool,
     ) {
+        let mut cleared = false;
         let (gen_, opts) = {
             let mut st = self.st.lock();
             if st.closed {
@@ -522,6 +528,7 @@ impl Tab {
                 st.version += 1;
                 let mut l = listing::empty(&dir, opts.clone(), st.version);
                 if moved {
+                    cleared = st.selection.count() > 0 || st.selection.cursor().is_some();
                     st.selection = Selection::new();
                 } else {
                     // Same folder listed again from scratch: keep the selection by name.
@@ -545,6 +552,15 @@ impl Tab {
         if !self.detached {
             self.shared.emit(CoreEvent::TabsChanged);
             self.shared.mark_dirty();
+        }
+        if cleared {
+            // The shell's count must follow, or a folder that can't be read
+            // says "1 of 0 items selected" (the old folder's selection).
+            self.shared.emit(CoreEvent::SelectionChanged {
+                tab: self.id,
+                count: 0,
+                cursor: None,
+            });
         }
         let tab = self.arc();
         let spawned = std::thread::Builder::new()
@@ -1191,6 +1207,37 @@ impl Tab {
     }
 
     /// Selects `names` as soon as they appear (after a create, paste or rename).
+    /// Counts the user's selection changes (and the core's own after a
+    /// removal), so a later change can check nobody has moved on.
+    pub(crate) fn selection_generation(&self) -> u64 {
+        self.st.lock().sel_gen
+    }
+
+    /// Selects `names` again if the selection hasn't changed since `generation`:
+    /// items that were to go to the Trash but didn't are selected again,
+    /// so a second ⌘⌫ retries them instead of trashing the neighbour the
+    /// cursor moved to.
+    pub(crate) fn reselect_if_untouched(&self, generation: u64, names: &[String]) {
+        let mut st = self.st.lock();
+        if st.sel_gen != generation || names.is_empty() {
+            return;
+        }
+        let l = st.listing.clone();
+        let found: Vec<usize> = names.iter().filter_map(|n| l.inner.index_of(n)).collect();
+        if found.is_empty() {
+            return;
+        }
+        Self::user_selected(&mut st);
+        st.selection = make_selection(&found, Some(found[0]));
+        let (count, cursor) = (st.selection.count() as u32, st.selection.cursor());
+        drop(st);
+        self.shared.emit(CoreEvent::SelectionChanged {
+            tab: self.id,
+            count,
+            cursor: cursor.map(|c| c as u32),
+        });
+    }
+
     pub(crate) fn select_when_present(&self, names: Vec<String>) {
         let mut st = self.st.lock();
         let l = st.listing.clone();

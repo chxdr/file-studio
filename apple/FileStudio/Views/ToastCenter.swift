@@ -68,26 +68,64 @@ struct ToastCard: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon.0).foregroundStyle(icon.1).font(.system(size: 15)).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(toast.text).font(.callout).fixedSize(horizontal: false, vertical: true)
-                if let d = toast.detail {
-                    Text(d).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        HugWidth(minWidth: 200, maxWidth: 480, maxFraction: 0.6) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: icon.0).foregroundStyle(icon.1).font(.system(size: 15))
+                VStack(alignment: .leading, spacing: 2) {
+                    // Long text wraps to two lines; a long file name is cut in
+                    // the middle. The whole text is in the tooltip and for VoiceOver.
+                    Text(toast.text).font(.callout).lineLimit(2).truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let d = toast.detail {
+                        Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .layoutPriority(1)
+                // Only grows when the minimum width is wider than the content.
+                Spacer(minLength: 0)
+                if let t = toast.actionTitle, let a = toast.action {
+                    Button(t) { a(); dismiss() }.buttonStyle(.link).font(.callout).fixedSize()
+                }
+                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).fixedSize()
+                    .accessibilityLabel("Close")
             }
-            if let t = toast.actionTitle, let a = toast.action {
-                Button(t) { a(); dismiss() }.buttonStyle(.link).font(.callout)
-            }
-            Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)) }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
+            .padding(.horizontal, 14).padding(.vertical, 9)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .frame(minWidth: 220, maxWidth: 420, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
         .background(RoundedRectangle(cornerRadius: 12).fill(.regularMaterial))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
         .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
-        .accessibilityElement(children: .combine)
+        .help(toast.text)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel([toast.text, toast.detail].compactMap { $0 }.joined(separator: ". "))
+    }
+}
+
+/// Sizes its content to the content's own width, kept between `minWidth`
+/// and the smaller of `maxWidth` and `maxFraction` of the space offered, so
+/// a toast hugs its text instead of filling a wide capsule. Past the cap the
+/// content gets the capped width and wraps.
+struct HugWidth: Layout {
+    var minWidth: CGFloat
+    var maxWidth: CGFloat
+    var maxFraction: CGFloat
+
+    private func width(_ proposal: ProposedViewSize, _ sub: LayoutSubview) -> CGFloat {
+        let ideal = sub.sizeThatFits(.unspecified).width
+        var cap = maxWidth
+        if let w = proposal.width, w.isFinite { cap = min(cap, max(minWidth, w * maxFraction)) }
+        return min(max(ideal, minWidth), cap).rounded(.up)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let sub = subviews.first else { return .zero }
+        let w = width(proposal, sub)
+        return CGSize(width: w, height: sub.sizeThatFits(ProposedViewSize(width: w, height: nil)).height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                              proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }

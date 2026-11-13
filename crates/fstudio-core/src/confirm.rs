@@ -40,11 +40,10 @@ pub(crate) fn obj_id(p: &Path) -> Option<ObjId> {
     })
 }
 
-/// The name shown for a path.
+/// The name shown for a path: the one display-name rule
+/// ([`fstudio_fs::display_name`]; "Macintosh HD" for `/`, never "/").
 pub(crate) fn display_name(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| p.to_string_lossy().into_owned())
+    fstudio_fs::display_name(p)
 }
 
 /// Each item with its identity now, for a question about them.
@@ -105,7 +104,8 @@ pub(crate) struct PendingOp {
     pub tab: Option<TabId>,
     /// List updates once it is queued.
     pub after: After,
-    /// What to show once it is queued (a toast).
+    /// The toast to show once it has finished, if every item succeeded
+    /// (failures always get one, built from the outcome).
     pub toast: Option<ShellRequest>,
 }
 
@@ -182,10 +182,19 @@ impl Engine {
             return Ok(out);
         }
         let removed: Vec<PathBuf> = op.items.iter().map(|(p, _)| p.clone()).collect();
+        let mut reselect = None;
         if let Some(t) = op.after.remove_from.and_then(|t| self.tab(t)) {
             t.select_after_removing(&removed);
+            reselect = Some((t.id(), t.selection_generation()));
         }
-        let id = self.enqueue(op.req)?;
+        // The toast waits for the outcome: "Moved “locked” to the Trash"
+        // only if it really went.
+        let plan = crate::feedback::ToastPlan {
+            subject: crate::feedback::Subject::Op(op.req.clone()),
+            success: op.toast,
+            reselect,
+        };
+        let id = self.enqueue_toasting(op.req, plan, op.tab)?;
         if op.after.clear_cut {
             self.clear_cut();
         }
@@ -196,14 +205,11 @@ impl Engine {
         }
         let mut out = Outcome::op(id);
         out.tab = op.tab;
-        out.shell = op.toast;
         if let Some((t, name)) = op.after.begin_rename
             && let Some(tab) = self.tab(t)
         {
             tab.select_when_present(vec![name.clone()]);
-            if out.shell.is_none() {
-                out.shell = Some(ShellRequest::BeginRename { tab: t, name });
-            }
+            out.shell = Some(ShellRequest::BeginRename { tab: t, name });
         }
         Ok(out)
     }

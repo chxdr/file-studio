@@ -500,6 +500,24 @@ impl From<core::HeldShortcuts> for FfiHeldShortcuts {
     }
 }
 
+/// How a toast looks. See `fstudio_core::ToastStyle`.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiToastStyle {
+    Info,
+    Success,
+    Warning,
+}
+
+impl From<core::ToastStyle> for FfiToastStyle {
+    fn from(s: core::ToastStyle) -> Self {
+        match s {
+            core::ToastStyle::Info => Self::Info,
+            core::ToastStyle::Success => Self::Success,
+            core::ToastStyle::Warning => Self::Warning,
+        }
+    }
+}
+
 /// Something only the shell can do. See `fstudio_core::ShellRequest`.
 #[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
 pub enum FfiShellRequest {
@@ -582,7 +600,9 @@ pub enum FfiShellRequest {
         text: String,
         button: Option<String>,
         command: Option<String>,
+        style: FfiToastStyle,
     },
+    ShowOperations,
     Confirm {
         token: u64,
         title: String,
@@ -666,11 +686,14 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 text,
                 button,
                 command,
+                style,
             } => Self::Toast {
                 text,
                 button,
                 command,
+                style: style.into(),
             },
+            S::ShowOperations => Self::ShowOperations,
             S::Confirm {
                 token,
                 title,
@@ -1572,11 +1595,15 @@ pub struct FfiOpStatus {
     pub eta_secs: Option<f64>,
     pub errors: Vec<FfiItemError>,
     pub conflicts: Vec<FfiConflict>,
+    /// The finished-row line ("Failed · 0 of 1 done · 1 failed").
+    pub summary: String,
 }
 
 impl From<core::OpStatus> for FfiOpStatus {
     fn from(s: core::OpStatus) -> Self {
+        let summary = s.summary();
         FfiOpStatus {
+            summary,
             id: s.id.0,
             kind: s.kind.into(),
             title: s.title,
@@ -2041,6 +2068,12 @@ pub enum FfiEvent {
     },
     SettingsChanged,
     FavouritesChanged,
+    /// Handle `request` as an outcome's shell request, from the window
+    /// holding `tab` (the toast of a finished operation).
+    Shell {
+        tab: Option<u64>,
+        request: FfiShellRequest,
+    },
 }
 
 impl From<core::CoreEvent> for FfiEvent {
@@ -2083,6 +2116,10 @@ impl From<core::CoreEvent> for FfiEvent {
             E::Hint { hint } => FfiEvent::Hint { hint: hint.into() },
             E::SettingsChanged => FfiEvent::SettingsChanged,
             E::FavouritesChanged => FfiEvent::FavouritesChanged,
+            E::Shell { tab, request } => FfiEvent::Shell {
+                tab: tab.map(|t| t.0),
+                request: request.into(),
+            },
         }
     }
 }

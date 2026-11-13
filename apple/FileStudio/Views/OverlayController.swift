@@ -150,7 +150,11 @@ final class OverlayController {
 
     private func statusChanged() {
         guard let m = model.statusMessage, !m.isEmpty else { return }
-        ToastCenter.of(model).show(m, seconds: 3)
+        // The core may send the same words as a styled toast (a warning);
+        // don't replace that with a plain one.
+        let center = ToastCenter.of(model)
+        if center.toasts.contains(where: { $0.text == m }) { return }
+        center.show(m, seconds: 3)
     }
 
     /// "Undo Move of 12 Items": the core words it.
