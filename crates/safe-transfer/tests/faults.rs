@@ -1,7 +1,7 @@
 //! Failures at each named point of the pipeline, and pulling a disk-image
 //! "card" out at those points. Needs `--features fault-injection`; the
 //! disk-image tests also need `hdiutil` and run with `--ignored`.
-#![cfg(feature = "fault-injection")]
+#![cfg(all(feature = "fault-injection", target_os = "macos"))]
 
 mod common;
 

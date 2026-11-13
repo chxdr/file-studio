@@ -1,4 +1,6 @@
 //! The single-file pipeline end to end, on the internal disk (temp folders).
+// Uses the macOS copy path, xattr, chmod +a, chflags and ditto (F-024: macOS-only tests are gated).
+#![cfg(target_os = "macos")]
 
 mod common;
 
