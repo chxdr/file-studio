@@ -32,6 +32,20 @@ fn buf_len(len: u64) -> usize {
     (len as usize).saturating_add(1).clamp(4096, IO_BUF)
 }
 
+/// Granularity at which zeros inside a reported hole are left unwritten.
+const HOLE_GRAIN: usize = 64 << 10;
+
+/// Whether the original reports any hole in `[off, off + n)`. Only a hint
+/// for keeping the destination sparse; the bytes are always read.
+fn touches_hole(s: &File, off: u64, n: u64) -> bool {
+    let starts_in_hole = match crate::sys::seek_data(s, off) {
+        Ok(None) => true,
+        Ok(Some(data)) => data > off,
+        Err(_) => false,
+    };
+    starts_in_hole || matches!(crate::sys::seek_hole(s, off), Ok(Some(h)) if h < off + n)
+}
+
 /// `SF_DATALESS`: an iCloud / File Provider placeholder (F-016).
 const SF_DATALESS: u32 = 0x4000_0000;
 
@@ -751,8 +765,16 @@ impl<'a> FileWork<'a> {
         Ok(())
     }
 
-    /// Writes the partial with `F_NOCACHE`, hashing every byte from the
-    /// original as it goes and keeping holes.
+    /// Writes the partial with `F_NOCACHE`, hashing every byte read from the
+    /// original, and keeps holes. Flushes after each completed chunk of
+    /// files bigger than one chunk.
+    ///
+    /// **Every byte of the original is read**, holes included: `SEEK_HOLE`
+    /// is only a hint about where the destination may stay sparse, never a
+    /// reason to skip reading. For an APFS-compressed (decmpfs) file the
+    /// whole data fork is reported as a hole while the content lives
+    /// elsewhere; trusting the hint copied such files as zeros, and the
+    /// verify (hashing the same zeros on both sides) could not tell.
     fn write_partial(&mut self, resume: Option<Resume>, chunk_barriers: bool) -> Res<Written> {
         let t = Instant::now();
         let len = self.smd.len();
@@ -793,44 +815,34 @@ impl<'a> FileWork<'a> {
         self.thr.report(Phase::Copying, off, len);
         while off < len {
             self.check()?;
-            let data = match crate::sys::seek_data(&s, off) {
-                Ok(v) => v.unwrap_or(len).min(len),
-                Err(e) if e.raw_os_error() == Some(libc::EINVAL) => off,
+            self.fault(FaultPointArg::MidChunk(off))?;
+            let want = ((len - off) as usize).min(IO_BUF);
+            let n = match s.read_at(&mut buf[..want], off) {
+                Ok(0) => return Err(CopyError::SourceChanged),
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(io_err(Phase::Copying)(e)),
             };
-            if data > off {
-                holes = true;
-                if h.update_zeros(data - off) > 0 && per_chunk {
-                    self.chunk_flush(&d, &h)?;
+            let block = &buf[..n];
+            if touches_hole(&s, off, n as u64) {
+                // Write only the pieces that aren't zeros: the bytes were read,
+                // so a skipped piece is known to be zeros, not assumed to be.
+                for (i, piece) in block.chunks(HOLE_GRAIN).enumerate() {
+                    if piece.iter().all(|b| *b == 0) {
+                        holes = true;
+                    } else {
+                        d.write_all_at(piece, off + (i * HOLE_GRAIN) as u64)
+                            .map_err(io_err(Phase::Copying))?;
+                    }
                 }
-                off = data;
+            } else {
+                d.write_all_at(block, off).map_err(io_err(Phase::Copying))?;
             }
-            if off >= len {
-                break;
-            }
-            let hole = match crate::sys::seek_hole(&s, off) {
-                Ok(v) => v.unwrap_or(len).min(len),
-                Err(e) if e.raw_os_error() == Some(libc::EINVAL) => len,
-                Err(e) => return Err(io_err(Phase::Copying)(e)),
-            };
-            while off < hole {
-                self.check()?;
-                self.fault(FaultPointArg::MidChunk(off))?;
-                let want = ((hole - off) as usize).min(IO_BUF);
-                let n = match s.read_at(&mut buf[..want], off) {
-                    Ok(0) => return Err(CopyError::SourceChanged),
-                    Ok(n) => n,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => return Err(io_err(Phase::Copying)(e)),
-                };
-                d.write_all_at(&buf[..n], off)
-                    .map_err(io_err(Phase::Copying))?;
-                off += n as u64;
-                let completed = h.update(&buf[..n]);
-                self.thr.report(Phase::Copying, off, len);
-                if completed > 0 && per_chunk {
-                    self.chunk_flush(&d, &h)?;
-                }
+            off += n as u64;
+            let completed = h.update(block);
+            self.thr.report(Phase::Copying, off, len);
+            if completed > 0 && per_chunk {
+                self.chunk_flush(&d, &h)?;
             }
         }
         if holes || d.metadata().map_or(true, |m| m.len() != len) {
