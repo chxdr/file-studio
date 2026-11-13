@@ -1168,6 +1168,23 @@ These were measured while the Mac was in use (load average 5–7, with DxO Photo
 - **The APFS gate (2.4 s or less)** was met only at the best run (2.42 s), and the median is 2.83 s. A profile shows the time in work that has to happen: reading every file back from the image, the group and journal flushes, and renames. The §4.7 probe's floor for the same work was 1.8 s on an idle machine. The gate needs re-measuring on an idle Mac before it is called passed or failed.
 - **exFAT is 1.7–1.8× the unflushed probe (13.5 s), against a target of 1.25×.** The flushes aren't the cost: the probe showed a group barrier adds about 5 % there. The cost is that macOS's exFAT driver runs in user space (FSKit), so every metadata call is a round trip. Each file needs several: the metadata copy, the check, the check-then-rename and the metadata check. Fewer calls per file (skipping the xattr copy when there are none, skipping ACL work on exFAT, reusing descriptors) helped less than the run-to-run noise. It is still 3.5× faster than a flush per file. Real cards come in M5.
 
+**Final M2 run** (13:27; load average about 4; `bench_m2.sh` with 3 GB images):
+
+| Measure | Internal SSD | APFS image | exFAT image |
+|---|---|---|---|
+| 5,000 small files, group commit (3 runs) | 2.18 / 2.26 / 2.27 s | **2.44 / 2.81 / 3.04 s** | 23.7 / 24.6 / 24.6 s |
+| Flush per file (1,000 files) | 8.5 ms/file | 32.8 ms/file | 18.3 ms/file |
+| 1 GiB, `cp` + `sync` (2 runs) | 0.27 / 0.22 s | 0.56 / 0.58 s | 0.21 / 0.28 s |
+| 1 GiB, Safe Transfer (2 runs) | 0.56 / 0.51 s | 0.83 / 1.88 s | 0.54 / 1.29 s |
+| …of which the read-back | 0.22 s | 0.24 / 0.28 s | 0.22 / 0.20 s |
+| …of which 16 per-chunk flushes | 0.05–0.07 s | 0.16–0.29 s | 0.03–0.77 s |
+
+Read the 1 GiB rows with care:
+- **`cp` + `sync` isn't durable.** `sync` doesn't empty the drive's cache, and the host caches the disk images' backing files. So `cp` measures RAM.
+- **The source was warm in memory.**
+- **Safe Transfer's time is the guarantee:** uncached writes, a drive flush per 64 MB chunk, and an uncached read-back of the whole file at about 5 GB/s.
+- **The real ratio needs real devices** (M5, against the M1 card numbers).
+
 **Left for M3 and later:**
 - conflict choices (Replace, Keep Both, Ask, Skip if identical) and moves
 - folder dates and metadata (folders get the time they were made)
