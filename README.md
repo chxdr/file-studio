@@ -64,6 +64,8 @@ Safe Transfer is the copy engine for cards and external drives. It is built so t
 - It flushes to the physical disk, then reads the copy back from the disk and compares.
 - It keeps a journal on the Mac, so an interrupted copy resumes where it stopped, even after the card was plugged into another port.
 
+![A 6 GB copy to a card: the card is pulled at 37%, put back, and the copy resumes and finishes](docs/images/safe-transfer.gif)
+
 The test suite really does pull the drive: it force-detaches disk images in the middle of copies and checks every file afterwards. You can read about it in [`docs/SAFE-TRANSFER-PROPOSAL.md`](docs/SAFE-TRANSFER-PROPOSAL.md).
 
 ## Building from source
