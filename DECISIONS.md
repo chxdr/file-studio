@@ -194,3 +194,18 @@ The right-click menus have a core model, `context_menu(target, ctx) -> Vec<MenuI
 - **cargo-deny fails on unmaintained crates only when they are direct dependencies.** Vulnerabilities and yanked crates always fail. *Pending the user's confirmation.*
 - **No signing or secrets in CI, and no fixture images committed.** Tests build synthetic data in temporary folders.
 - **Branch protection** (required checks on `main`) is for the user to enable. It needs GitHub Pro or Team on a private repo.
+
+## F-025: a copy is on the drive before it has its name (2026-11-13)
+- **Every file that writes data is `F_FULLFSYNC`ed before its exclusive rename,** whatever `fsync_copies` says. Instant clones write nothing, so they skip it.
+- **The verify re-read evicts the partial's cached pages first** (`msync(MS_INVALIDATE)`).
+- **Cross-volume moves always verify** before the original is removed.
+- **The leftover-partial sweep keys volumes by UUID,** not `st_dev`.
+
+**Why:** the user's rule #1 is that a file with its real name is never incomplete, even after a card pull or a power cut. The user chose to keep this despite the cost (2026-11-13):
+- 5,000 small files across volumes take 48 s instead of 1.2 s (about 9 ms per drive flush).
+- A 1 GiB copy takes 1.10× `cp`.
+- A raw job of about 1,000 files costs about 2 % more.
+
+Safe Transfer's batched barrier (one drive flush per group of files, renames only after it) is the planned way to win the speed back.
+
+**Safe Transfer (`docs/SAFE-TRANSFER-PROPOSAL.md`) was approved with its recommended §14 defaults,** plus an opt-in "re-read originals" mode that first-run setup explains.
