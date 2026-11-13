@@ -456,6 +456,19 @@ pub(crate) fn find<'v>(vols: &'v [VolumeInfo], r: &VolRef) -> Option<&'v VolumeI
     })
 }
 
+/// The mounted volumes, read again a few times if the list can't be read.
+/// `None`: still unreadable. Unknown is never "not connected": callers that
+/// would conclude a disk is gone ask its path instead.
+pub(crate) fn list_volumes(p: &Platform) -> Option<Vec<VolumeInfo>> {
+    for i in 0..3u64 {
+        if let Ok(v) = p.volumes.mounted() {
+            return Some(v);
+        }
+        std::thread::sleep(Duration::from_millis(20 * (i + 1)));
+    }
+    None
+}
+
 /// `path` under `old` moved to under `new` (a card remounted as "Untitled 1").
 pub(crate) fn remap(path: &Path, old: &Path, new: &Path) -> PathBuf {
     match path.strip_prefix(old) {
@@ -771,7 +784,7 @@ impl Engine {
         if how == Cancel::Close {
             // Discarding removes this job's partials on its destination; with
             // the disk away they can't be removed, so ask for it first.
-            let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+            let vols = list_volumes(&self.inner.p).unwrap_or_default();
             if find(&vols, &job.m.dest.volume).is_none() {
                 return Err(EngineError::NeedsVolume(job.m.dest.volume.name.clone()));
             }
@@ -789,14 +802,14 @@ impl Engine {
 
     /// The job, at a glance, including whether it can be resumed now.
     pub fn job(&self, id: JobId) -> Option<JobInfo> {
-        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        let vols = list_volumes(&self.inner.p).unwrap_or_default();
         self.get(&id).ok().map(|j| j.info_with(&vols, true))
     }
 
     /// Every job the engine knows (unfinished ones, and finished ones kept
     /// for `keep_finished_days`), each with whether it can be resumed now.
     pub fn jobs(&self) -> Vec<JobInfo> {
-        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        let vols = list_volumes(&self.inner.p).unwrap_or_default();
         let jobs: Vec<Arc<Job>> = lock(&self.inner.jobs).values().cloned().collect();
         jobs.iter().map(|j| j.info_with(&vols, true)).collect()
     }
@@ -899,7 +912,7 @@ impl Engine {
     /// current mount point when it is connected, else where it was last seen.
     pub fn entries(&self, id: JobId) -> Option<Vec<EntryReport>> {
         let job = self.get(&id).ok()?;
-        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        let vols = list_volumes(&self.inner.p).unwrap_or_default();
         let root = match find(&vols, &job.m.dest.volume) {
             Some(v) => remap(&job.m.dest.path, &job.m.dest.volume.mount, &v.mount),
             None => job.m.dest.path.clone(),
@@ -958,7 +971,7 @@ impl Engine {
     /// offered with [`Event::ResumeAvailable`], or resumed when
     /// `auto_resume` is on.
     pub fn volumes_changed(&self) {
-        let vols = self.inner.p.volumes.mounted().unwrap_or_default();
+        let vols = list_volumes(&self.inner.p).unwrap_or_default();
         let jobs: Vec<Arc<Job>> = lock(&self.inner.jobs).values().cloned().collect();
         for job in jobs {
             let (state, running, waiting_srcs) = {
@@ -1034,7 +1047,7 @@ pub(crate) fn set_state(inner: &Inner, job: &Job, state: JobState) {
 /// Removes the partial of every unfinished file (journal-matched names only,
 /// on the job's own destination volume).
 fn remove_partials(inner: &Inner, job: &Job) {
-    let vols = inner.p.volumes.mounted().unwrap_or_default();
+    let vols = list_volumes(&inner.p).unwrap_or_default();
     let Some(v) = find(&vols, &job.m.dest.volume) else {
         return;
     };

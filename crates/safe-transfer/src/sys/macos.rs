@@ -466,19 +466,46 @@ pub fn volume_info(path: &Path) -> io::Result<VolumeInfo> {
     Ok(info_from(&s))
 }
 
-/// Every mounted volume (`getmntinfo`, no waiting on unresponsive mounts).
+/// Every mounted volume (`getfsstat` into our own buffer, no waiting on
+/// unresponsive mounts).
+///
+/// Not `getmntinfo`: its buffer is shared by the whole process and is freed
+/// and reallocated when the number of mounts changes, so two threads
+/// listing while a disk comes or goes corrupt it (an abort, or an empty or
+/// garbled list read as "the destination is gone").
 pub fn mounted_volumes() -> io::Result<Vec<VolumeInfo>> {
-    let mut p: *mut libc::statfs = std::ptr::null_mut();
-    // SAFETY: getmntinfo points `p` at an array it owns of `n` entries,
-    // valid until the next call on this thread; we copy out of it at once.
-    let all: Vec<libc::statfs> = unsafe {
-        let n = libc::getmntinfo(&mut p, libc::MNT_NOWAIT);
-        if n <= 0 || p.is_null() {
+    for _ in 0..8 {
+        // SAFETY: a null buffer only asks for the number of mounts.
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n < 0 {
             return Err(io::Error::last_os_error());
         }
-        std::slice::from_raw_parts(p, n as usize).to_vec()
-    };
-    Ok(all.iter().map(info_from).collect())
+        // Room for a few more, in case disks appear in between.
+        let cap = n as usize + 8;
+        let mut buf: Vec<libc::statfs> = Vec::with_capacity(cap);
+        let bytes = cap * std::mem::size_of::<libc::statfs>();
+        let Ok(bytes) = libc::c_int::try_from(bytes) else {
+            return Err(io::Error::other("too many mounted volumes"));
+        };
+        // SAFETY: `buf` has room for `cap` entries (`bytes` bytes); getfsstat
+        // writes at most that many and returns how many it wrote, which are
+        // then initialised. The buffer is ours alone.
+        let got = unsafe {
+            let got = libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT);
+            if got >= 0 && (got as usize) <= cap {
+                buf.set_len(got as usize);
+            }
+            got
+        };
+        if got < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // A full buffer may have missed some: list again.
+        if (got as usize) < cap {
+            return Ok(buf.iter().map(info_from).collect());
+        }
+    }
+    Err(io::Error::other("the list of mounted volumes kept growing"))
 }
 
 #[cfg(test)]

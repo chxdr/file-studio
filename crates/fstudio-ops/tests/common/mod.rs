@@ -200,8 +200,57 @@ pub fn mtime_ns(p: &Path) -> i64 {
     m.mtime() * 1_000_000_000 + m.mtime_nsec()
 }
 
+/// The longest any `hdiutil` (or `plutil`, `kill`) call may take. A stuck
+/// disk-image service fails the test with a message instead of hanging it.
+pub const TOOL_LIMIT: Duration = Duration::from_secs(60);
+
+/// Runs `cmd` with a time limit. `None` if it couldn't start or ran over
+/// (it is then killed).
+fn run_limited<S: AsRef<std::ffi::OsStr>>(cmd: &str, args: &[S]) -> Option<std::process::Output> {
+    use std::io::Read;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let drain = |r: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_end(&mut v);
+            }
+            v
+        })
+    };
+    let out = drain(child.stdout.take().map(|r| Box::new(r) as _));
+    let err = drain(child.stderr.take().map(|r| Box::new(r) as _));
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if start.elapsed() < TOOL_LIMIT => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    Some(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
+}
+
+/// Runs a command (time-limited), panicking with its output on failure.
 pub fn sh(cmd: &str, args: &[&str]) -> String {
-    let out = Command::new(cmd).args(args).output().unwrap();
+    let out = run_limited(cmd, args)
+        .unwrap_or_else(|| panic!("{cmd} {args:?} didn't finish in {} s", TOOL_LIMIT.as_secs()));
     assert!(
         out.status.success(),
         "{cmd} {args:?}: {}",
@@ -210,9 +259,116 @@ pub fn sh(cmd: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Attached images: (image path, its mount points), from `hdiutil info`.
+pub fn attached_images() -> Option<Vec<(PathBuf, Vec<PathBuf>)>> {
+    let plist = run_limited("hdiutil", &["info", "-plist"])?;
+    let dir = tempfile::tempdir().ok()?;
+    let f = dir.path().join("info.plist");
+    std::fs::write(&f, &plist.stdout).ok()?;
+    let json = run_limited(
+        "plutil",
+        &[
+            std::ffi::OsStr::new("-convert"),
+            std::ffi::OsStr::new("json"),
+            std::ffi::OsStr::new("-o"),
+            std::ffi::OsStr::new("-"),
+            f.as_os_str(),
+        ],
+    )?;
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).ok()?;
+    Some(
+        v.get("images")?
+            .as_array()?
+            .iter()
+            .filter_map(|im| {
+                let path = PathBuf::from(im.get("image-path")?.as_str()?);
+                let mounts = im
+                    .get("system-entities")
+                    .and_then(|e| e.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.get("mount-point")?.as_str().map(PathBuf::from))
+                    .collect();
+                Some((path, mounts))
+            })
+            .collect(),
+    )
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if x == y
+        )
+}
+
+/// The file next to each test image that names the test process owning it.
+const OWNER: &str = "owner.pid";
+
+/// Detaches and deletes images that an earlier test process left attached
+/// when it died without unwinding (an abort or a kill skips `Drop`). Only
+/// images made here are touched: `vol.dmg` in a temporary folder, with an
+/// owner file naming a process that no longer runs. Once per process.
+fn sweep_orphaned_images() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Some(images) = attached_images() else {
+            return;
+        };
+        let tmp = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_default();
+        for (img, mounts) in images {
+            let Some(dir) = img.parent() else { continue };
+            let canon = std::fs::canonicalize(dir).unwrap_or_default();
+            if img.file_name() != Some(std::ffi::OsStr::new("vol.dmg")) || !canon.starts_with(&tmp)
+            {
+                continue;
+            }
+            let Some(pid) = std::fs::read_to_string(dir.join(OWNER))
+                .ok()
+                .and_then(|t| t.trim().parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let alive =
+                run_limited("kill", &["-0", &pid.to_string()]).is_none_or(|o| o.status.success());
+            if alive || pid == std::process::id() {
+                continue;
+            }
+            eprintln!(
+                "removing a test image left by dead process {pid}: {}",
+                img.display()
+            );
+            for m in &mounts {
+                let _ = run_limited(
+                    "hdiutil",
+                    &[
+                        std::ffi::OsStr::new("detach"),
+                        std::ffi::OsStr::new("-force"),
+                        std::ffi::OsStr::new("-quiet"),
+                        m.as_os_str(),
+                    ],
+                );
+            }
+            if !is_attached(&img) {
+                let _ = std::fs::remove_file(&img);
+                let _ = std::fs::remove_file(dir.join(OWNER));
+                let _ = std::fs::remove_dir(dir.join("mnt"));
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    });
+}
+
+/// Whether `img` is attached (unknown counts as attached).
+pub fn is_attached(img: &Path) -> bool {
+    attached_images().is_none_or(|all| all.iter().any(|(p, _)| same_file(p, img)))
+}
+
 /// A small disk image, attached without Finder; detached and deleted on drop.
 pub struct Image {
-    _dir: tempfile::TempDir,
+    /// Its folder (`None` once kept for a later sweep).
+    dir: Option<tempfile::TempDir>,
     pub mount: PathBuf,
     /// The image file (to attach it again after a forced detach).
     pub img: PathBuf,
@@ -241,10 +397,14 @@ impl Image {
         Self::exact_with(fs, megabytes, false)
     }
     fn exact_with(fs: &str, megabytes: u32, readonly: bool) -> Image {
+        sweep_orphaned_images();
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("vol.dmg");
         let mount = dir.path().join("mnt");
         std::fs::create_dir(&mount).unwrap();
+        // Before anything is attached: a later test process removes this
+        // image if this one dies without detaching it.
+        std::fs::write(dir.path().join(OWNER), std::process::id().to_string()).unwrap();
         sh(
             "hdiutil",
             &[
@@ -259,6 +419,12 @@ impl Image {
                 img.to_str().unwrap(),
             ],
         );
+        // From here on `Drop` detaches it, also if attaching panics.
+        let im = Image {
+            dir: Some(dir),
+            mount,
+            img,
+        };
         let mut args = vec![
             "attach",
             "-quiet",
@@ -266,18 +432,14 @@ impl Image {
             "-noverify",
             "-noautoopen",
             "-mountpoint",
-            mount.to_str().unwrap(),
+            im.mount.to_str().unwrap(),
         ];
         if readonly {
             args.push("-readonly");
         }
-        args.push(img.to_str().unwrap());
+        args.push(im.img.to_str().unwrap());
         sh("hdiutil", &args);
-        Image {
-            _dir: dir,
-            mount,
-            img,
-        }
+        im
     }
 
     /// Pulls the "card" out: `hdiutil detach -force`, as a card pulled out
@@ -308,22 +470,40 @@ impl Image {
 }
 
 impl Drop for Image {
+    /// Detaches (a forced detach if a plain one is refused), then checks the
+    /// image really is gone. Never panics, also while a failed test unwinds;
+    /// every call has a time limit. An image it can't detach is named on
+    /// stderr, and the next test process removes it.
     fn drop(&mut self) {
-        let m = self.mount.to_str().unwrap().to_string();
+        let m = self.mount.as_os_str();
+        let detach = |force: bool| {
+            let mut a = vec![
+                std::ffi::OsStr::new("detach"),
+                std::ffi::OsStr::new("-quiet"),
+            ];
+            if force {
+                a.push(std::ffi::OsStr::new("-force"));
+            }
+            a.push(m);
+            run_limited("hdiutil", &a).is_some_and(|o| o.status.success())
+        };
         for _ in 0..5 {
-            let ok = Command::new("hdiutil")
-                .args(["detach", "-quiet", &m])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if ok {
+            if detach(false) || !is_attached(&self.img) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(300));
         }
-        let _ = Command::new("hdiutil")
-            .args(["detach", "-force", "-quiet", &m])
-            .status();
+        detach(true);
+        if is_attached(&self.img) {
+            eprintln!(
+                "WARNING: couldn't detach test image {}; the next test run removes it",
+                self.img.display()
+            );
+            // Keep the folder (and the owner file) for that sweep.
+            if let Some(dir) = self.dir.take() {
+                let _ = dir.keep();
+            }
+        }
     }
 }
 
