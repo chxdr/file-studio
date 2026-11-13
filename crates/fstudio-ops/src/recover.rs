@@ -132,11 +132,26 @@ fn recover_item(kind: OpKind, it: &mut ItemRow) -> io::Result<()> {
     Ok(())
 }
 
-/// The device of the folder `p` is in, if it can be reached.
+/// Which volume the folder `p` is in, if it can be reached: a key derived
+/// from the volume's UUID, which stays the same when a card is pulled out and
+/// put back. `st_dev` doesn't: macOS gives a re-attached card a new number
+/// and hands the old one to the next volume that mounts. Only volumes with no
+/// UUID (some network shares) fall back to `st_dev`.
 pub(crate) fn folder_dev(p: &std::path::Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
     let d = p.parent()?;
-    meta::lstat(d).ok().filter(|m| m.is_dir()).map(|m| m.dev())
+    let m = meta::lstat(d).ok().filter(|m| m.is_dir())?;
+    Some(match sys::volume_uuid(d) {
+        Some(uuid) => volume_key(&uuid),
+        None => m.dev(),
+    })
+}
+
+/// A volume UUID as the `u64` the journal stores in `partial_dev`. The top
+/// bit is set, so a key can never equal an `st_dev` fallback (those are far
+/// below 2^63).
+fn volume_key(uuid: &[u8; 16]) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(uuid) | (1 << 63)
 }
 
 /// Is `p` (one of our temporaries) known to be gone? Only if its folder is
@@ -240,4 +255,27 @@ pub fn sweep_leftovers(journal: &Journal) -> Result<Vec<SweptPartial>> {
         }
     }
     Ok(swept)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_s_volume_key_comes_from_its_uuid() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("sub")).unwrap();
+        let a = folder_dev(&d.path().join("x.fstudio-partial")).unwrap();
+        let b = folder_dev(&d.path().join("sub/y.fstudio-partial")).unwrap();
+        assert_eq!(a, b, "same volume, same key");
+        // The temp folder is on the startup disk, which has a UUID.
+        assert!(a & (1 << 63) != 0, "keyed by the volume UUID, not st_dev");
+        assert!(folder_dev(&d.path().join("missing/z")).is_none());
+    }
+
+    #[test]
+    fn volume_keys_never_look_like_device_numbers() {
+        assert!(volume_key(&[0; 16]) >= 1 << 63);
+        assert!(volume_key(&[0xff; 16]) >= 1 << 63);
+    }
 }

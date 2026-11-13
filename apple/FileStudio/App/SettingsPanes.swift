@@ -208,7 +208,6 @@ struct SettingsOperationsPane: View {
         Form {
             Section("Copying") {
                 Toggle("Verify copies (re-read and compare a checksum)", isOn: a.binding(\.operations.verifyCopies))
-                Toggle("Flush every copied file to disk", isOn: a.binding(\.operations.fsyncCopies))
                 Text("Verifying makes copies slower but proves every byte arrived. Moves between disks are always verified before the original goes.")
                     .font(.caption).foregroundStyle(.secondary)
             }

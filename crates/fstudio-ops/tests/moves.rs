@@ -62,10 +62,9 @@ fn cross_volume_move_moves_everything() {
 fn failure_at_each_step_keeps_the_source() {
     let img = Image::new("APFS", 64);
     for step in STEPS {
+        // Cross-volume moves always verify, so the Verify step fails the
+        // item even with `verify` off.
         for verify in [false, true] {
-            if step == FaultStep::Verify && !verify {
-                continue;
-            }
             let e = env_with(OpsConfig {
                 verify,
                 faults: Some(Arc::new(FailAt {

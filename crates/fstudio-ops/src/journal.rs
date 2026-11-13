@@ -169,7 +169,9 @@ pub struct ItemRow {
     /// The destination once placed.
     pub dest_ident: Option<Ident>,
     pub partial_ino: Option<u64>,
-    /// The device of the folder `partial` was written in.
+    /// The volume the folder `partial` was written in: a key from the
+    /// volume's UUID (stable when a card is re-attached), or its `st_dev` for
+    /// volumes without one. See `recover::folder_dev`.
     pub partial_dev: Option<u64>,
     /// Where "Replace" sent the item that was in the way.
     pub replaced_trash: Option<PathBuf>,

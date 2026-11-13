@@ -220,6 +220,90 @@ pub fn full_sync(f: &File) -> io::Result<()> {
     if r == 0 { Ok(()) } else { f.sync_all() }
 }
 
+/// Drops this file's pages from the unified buffer cache, so the next
+/// `F_NOCACHE` read comes from the drive. `F_NOCACHE` alone doesn't evict
+/// pages that are already cached (written through the cache, or read by
+/// Spotlight or Quick Look in the meantime); `msync(MS_INVALIDATE)` on a
+/// read-only mapping does, without admin rights (Safe Transfer proposal §4.2).
+/// An empty file has nothing to evict.
+pub fn evict_cache(f: &File) -> io::Result<()> {
+    let len = f.metadata()?.len();
+    if len == 0 {
+        return Ok(());
+    }
+    let len = usize::try_from(len).map_err(|_| io::Error::other("file too large to map"))?;
+    // SAFETY: a fresh read-only shared mapping of a descriptor we own, of the
+    // file's current length; nothing reads through the pointer, and it is
+    // unmapped below before returning.
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            f.as_raw_fd(),
+            0,
+        )
+    };
+    if p == libc::MAP_FAILED {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `p` and `len` are exactly the mapping created above.
+    let r = unsafe { libc::msync(p, len, libc::MS_INVALIDATE) };
+    let err = io::Error::last_os_error();
+    // SAFETY: unmaps the mapping created above; it is not used afterwards.
+    unsafe {
+        libc::munmap(p, len);
+    }
+    if r == 0 { Ok(()) } else { Err(err) }
+}
+
+/// The UUID of the volume holding `path` (`getattrlist(ATTR_VOL_UUID)` on its
+/// mount point), as 16 bytes. Unlike `st_dev`, it survives unplugging and
+/// re-attaching: APFS and HFS+ volumes have their own, and macOS derives
+/// exFAT and FAT ones from the card's volume serial number (Safe Transfer
+/// proposal §3.4). `None` for volumes that have none (some network shares).
+pub fn volume_uuid(path: &Path) -> Option<[u8; 16]> {
+    let p = cstr(path).ok()?;
+    // SAFETY: `statfs` is plain old data, so all-zero is a valid value.
+    let mut sfs: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: valid NUL-terminated path; `sfs` is writable for its size.
+    if unsafe { libc::statfs(p.as_ptr(), &mut sfs) } != 0 {
+        return None;
+    }
+    let mut al = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: 0,
+        volattr: libc::ATTR_VOL_INFO | libc::ATTR_VOL_UUID,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    // u32 length, then a 16-byte uuid_t.
+    let mut buf = [0u8; 4 + 16 + 12];
+    // SAFETY: `f_mntonname` is NUL-terminated by the kernel; `al` is a valid
+    // attrlist; `buf` is writable for `buf.len()` bytes, which we pass.
+    let r = unsafe {
+        libc::getattrlist(
+            sfs.f_mntonname.as_ptr(),
+            (&mut al as *mut libc::attrlist).cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            0,
+        )
+    };
+    if r != 0 {
+        return None;
+    }
+    let len = u32::from_ne_bytes(buf[0..4].try_into().ok()?) as usize;
+    if len < 20 {
+        return None;
+    }
+    let uuid: [u8; 16] = buf[4..20].try_into().ok()?;
+    (uuid != [0u8; 16]).then_some(uuid)
+}
+
 /// fsyncs a directory so a rename inside it is durable.
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     full_sync(&File::open(dir)?)

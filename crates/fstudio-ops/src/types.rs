@@ -260,9 +260,9 @@ pub struct OpsConfig {
     pub ops_per_volume: usize,
     /// Parallel file workers within one copy or move. Default 4.
     pub file_workers: usize,
-    /// `F_FULLFSYNC` every copied file for plain copies too (moves always
-    /// sync before removing a source). Default off: a copy's source is intact,
-    /// so a power cut can't lose data, only the copy.
+    /// No longer used: every copied file is now `F_FULLFSYNC`ed before it
+    /// gets its real name, whatever this says (a copy that looks complete must
+    /// be complete). Kept so saved settings still load.
     pub fsync_copies: bool,
     /// Minimum time between progress events for one op. Default 16 ms.
     pub progress_interval: Duration,

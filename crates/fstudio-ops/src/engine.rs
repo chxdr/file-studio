@@ -549,7 +549,7 @@ impl Env<'_> {
                 Err(e) => return Err(e.into()),
             }
         }
-        if self.cfg.verify {
+        if self.cfg.verify || self.is_move() {
             let hash = copy_loop(&item.source, partial, tap)?;
             // Data is ours; now xattrs (incl. resource fork, tags) and stat
             // (mode, times, flags). The ACL comes after the rename.
@@ -605,18 +605,22 @@ impl Env<'_> {
         sys::clear_acl(partial)?;
 
         let is_file = item.kind == EntryKind::File;
-        // Durable before a move removes its source; for copies only on request.
-        // Verify doesn't need it: the loop writes with F_NOCACHE, so the re-read
-        // hits the device. A clone wrote nothing, so there is nothing to sync.
-        let must_sync = self.is_move() || (self.cfg.fsync_copies && !cloned);
+        // Every file that wrote data is flushed to the drive before it gets
+        // its real name, so a name never points at data that didn't arrive
+        // (a card pulled or the power cut just after a copy "finished"). A
+        // clone wrote nothing, so there is nothing to flush.
+        let must_sync = self.is_move() || !cloned;
         if is_file && must_sync {
             sys::full_sync(&File::open(partial)?)?;
         }
-        if self.cfg.verify && is_file && !cloned {
+        if (self.cfg.verify || self.is_move()) && is_file && !cloned {
             let want = match hash {
                 Some(h) => h,
                 None => hash_file(&item.source)?,
             };
+            // The re-read must come from the drive, not from pages still in
+            // the Mac's cache (ours, or another app's read since).
+            sys::evict_cache(&File::open(partial)?)?;
             let got = hash_file(partial)?;
             if got != want || self.fault(FaultStep::Verify, &item.source).is_err() {
                 return Err(fail(
