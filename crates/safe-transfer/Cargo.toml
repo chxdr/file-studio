@@ -12,6 +12,8 @@ fault-injection = []
 
 [dependencies]
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 libc.workspace = true
 xxhash-rust.workspace = true
 unicode-normalization.workspace = true

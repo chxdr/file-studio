@@ -17,6 +17,7 @@ fault-injection = ["safe-transfer/fault-injection"]
 safe-transfer = { path = "../safe-transfer" }
 clap.workspace = true
 serde_json.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

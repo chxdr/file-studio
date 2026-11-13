@@ -7,8 +7,13 @@
 //!
 //! This crate has no File Studio types, no UI and no database; File Studio
 //! and Import Studio use it the same way. The design is
-//! `docs/SAFE-TRANSFER-PROPOSAL.md` (approved 2026-11-13). This is
-//! milestone 1: single files. Jobs, the journal and resume come in M2.
+//! `docs/SAFE-TRANSFER-PROPOSAL.md` (approved 2026-11-13).
+//!
+//! - [`copy_file`] copies one file (milestone 1).
+//! - [`Engine`] runs multi-file jobs: folders, a journal on the Mac,
+//!   resume after a crash or a pulled card (by volume UUID, with chunk
+//!   reuse), and small files committed in groups behind one drive flush
+//!   (milestone 2).
 //!
 //! # The promises, structurally
 //!
@@ -35,9 +40,12 @@
 pub mod chunk;
 pub mod compare;
 mod copy;
+mod engine;
 mod events;
 #[cfg(feature = "fault-injection")]
 pub mod fault;
+mod job;
+pub mod journal;
 pub mod names;
 mod options;
 mod plan;
@@ -47,7 +55,16 @@ pub mod space;
 mod sys;
 
 pub use copy::{CopyError, CopyRequest, Failure, copy_file, describe, metadata_lost};
+pub use engine::{
+    Cancel, Engine, EngineConfig, GROUP_BYTES, GROUP_FILES, GROUP_TIME, JOURNAL_INTERVAL,
+    SMALL_FILE,
+};
 pub use events::{FileProgress, FileReport, MetaLoss, NoProgress, Outcome, Phase, ProgressSink};
+pub use job::{
+    EngineError, Event, EventSink, Item, JobInfo, JobPlan, JobProgress, JobReport, JobSpec,
+    MissingSource, NoEvents, Note, Resumability, human,
+};
+pub use journal::JobState;
 pub use names::JobId;
 pub use options::{Control, Options, Symlinks};
 pub use plan::{Plan, plan};

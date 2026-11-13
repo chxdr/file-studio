@@ -2,9 +2,12 @@
 //! (`tests/safety_grep.rs`) fails if `remove_file`, `remove_dir`,
 //! `remove_dir_all`, `unlink` or `rmdir` appear anywhere else in the crate.
 //!
-//! There is exactly one way to remove something: [`remove_partial`], for a
-//! partial file Safe Transfer itself wrote. Safe Transfer never removes a
-//! user's file; a move sends the original to the Trash instead.
+//! There are exactly two ways to remove something:
+//! - [`remove_partial`], for a partial file Safe Transfer itself wrote;
+//! - [`remove_job_dir`], for a finished job's own journal folder on the Mac.
+//!
+//! Safe Transfer never removes a user's file; a move sends the original to
+//! the Trash instead.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -62,6 +65,46 @@ pub fn remove_partial(platform: &Platform, path: &Path, owner: &PartialOwner) ->
     Ok(())
 }
 
+/// Whether `name` is one of the files a job's journal folder holds.
+fn is_journal_name(name: &str) -> bool {
+    let base = name.strip_suffix(".tmp").unwrap_or(name);
+    matches!(
+        base,
+        "manifest.json"
+            | "manifest.bak.json"
+            | "head.a.json"
+            | "head.b.json"
+            | "report.json"
+            | "lock"
+    ) || (base.starts_with("seg-") && (base.ends_with(".a.json") || base.ends_with(".b.json")))
+}
+
+/// Removes a finished job's journal folder `dir`, which must sit directly
+/// in `jobs_root` and be named like a job id. Only the journal's own file
+/// names are removed; a folder holding anything else is left (`rmdir`
+/// refuses), so nothing else can be lost.
+pub fn remove_job_dir(jobs_root: &Path, dir: &Path) -> io::Result<()> {
+    let ok_name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(JobId::parse)
+        .is_some();
+    if dir.parent() != Some(jobs_root) || !ok_name {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("refusing to remove {}: not a job journal", dir.display()),
+        ));
+    }
+    for e in std::fs::read_dir(dir)? {
+        let e = e?;
+        let name = e.file_name();
+        if name.to_str().is_some_and(is_journal_name) && e.file_type()?.is_file() {
+            std::fs::remove_file(e.path())?;
+        }
+    }
+    std::fs::remove_dir(dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +136,35 @@ mod tests {
         assert!(!part.exists() && user.exists() && decoy.exists());
         // Gone already: fine.
         remove_partial(&p, &part, &o).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn job_dirs_lose_only_journal_files() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("jobs");
+        let job = root.join("k3f9q2xm");
+        std::fs::create_dir_all(&job).unwrap();
+        for n in [
+            "manifest.json",
+            "head.a.json",
+            "seg-0000.b.json",
+            "report.json",
+            "lock",
+            "head.b.json.tmp",
+        ] {
+            std::fs::write(job.join(n), b"x").unwrap();
+        }
+        remove_job_dir(&root, &job).unwrap();
+        assert!(!job.exists());
+        // Not a job folder, or holding something else: refused or kept.
+        assert!(remove_job_dir(&root, d.path()).is_err());
+        let other = root.join("zzzzzzzz");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("photo.ARW"), b"mine").unwrap();
+        std::fs::write(other.join("lock"), b"").unwrap();
+        assert!(remove_job_dir(&root, &other).is_err());
+        assert!(other.join("photo.ARW").exists());
     }
 
     #[cfg(target_os = "macos")]

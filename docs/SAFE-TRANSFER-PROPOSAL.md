@@ -360,7 +360,7 @@ pub struct JobReport {
 - `fstudio-core` owns the `Engine` and gives it to `OpQueue`.
 - Ops turns Safe Transfer events into its existing `OpEvent`s. `OpStatus` gains `phase`, `eta` and `waiting_for: Vec<…>`.
 - `fstudio-ffi` mirrors these the way it mirrors `OpEvent` today.
-- Two new `ShellRequest`s:
+- Two new `ShellRequest`s (the full manual-resume UX is §6.1):
   - `ResumePrompt { job, label, volume_name, files_left, bytes_left }`, with Resume, Not now and Discard buttons
   - `SourceMissing { job, files_by_source }`
 - The shell only draws these and calls `resume` / `cancel` back.
@@ -789,6 +789,60 @@ For every file that isn't `done`, in manifest order:
 
 **Auto-resume** is off by default (your brief). When it's on, a job resumes as soon as its destination and sources are present, and a toast says so.
 
+### 6.1 Resuming by hand (auto-resume off)
+
+Your words: *"if it's disabled but you trip it in the software there's like a resume transfer for that data."* With auto-resume off, an unfinished job never just waits out of sight. It can be resumed from the app at any time, from three places, and every manual resume ends with the same per-file report as an automatic one.
+
+**Which jobs count:** interrupted (a crash, quit or power cut), waiting for the destination (pulled mid-job), waiting for a source card, destination full, and cancelled (Cancel keeps a job resumable; only Discard ends it).
+
+**1. A prompt when the disk comes back** (`ResumeAvailable`, shown once per reconnect):
+
+> **Resume “Smith wedding → CLIENT_A”?**
+> 312 of 800 files left (11.3 GB). Files already copied are kept, and so is anything partly copied that still checks out.
+>
+> [ Resume ]   [ Later ]   [ Discard… ]
+
+- **Later** closes the prompt and changes nothing: the job stays in the operations list.
+- **Discard…** always asks first:
+
+  > **Discard the rest of this copy?** The 488 finished files on CLIENT_A stay. The 3 unfinished hidden copies are removed. Your originals aren't touched.
+  >
+  > [ Cancel ] [ Discard ]
+
+  It removes only this job's own partials (§5), and only with the destination connected. The engine refuses otherwise ("insert CLIENT_A first").
+- Cancelled jobs aren't prompted on reconnect, because you stopped them yourself. They stay in the list.
+
+**2. The operations list:**
+- The job stays as a row labelled **Interrupted** (or "Waiting for Untitled", or "CLIENT_A is full"), with the counts and a **Resume Transfer** button.
+- A **badge** on the toolbar's operations icon shows how many jobs are waiting.
+- The button's state follows the disks:
+  - destination not connected: **"Insert CLIENT_A to resume"**, disabled, and it enables itself as soon as that volume appears
+  - destination there but some source cards missing: Resume is enabled and copies what it can; the row says "212 files wait for Untitled"
+  - destination full: "Free space on CLIENT_A, then resume"
+  - running in the other app or terminal: disabled, "Running in another window"
+
+**3. The sidebar:** a card or drive with unfinished jobs gets **Resume Transfer** in its context menu (and **Resume All Transfers** when it has more than one). This matches jobs by volume UUID, as either the destination or a source, so it works even when two cards share a name.
+
+**Commands** (registry, F-006): `transfer.resume` (the selected row or sidebar disk) and `transfer.resume_all` (every job whose disks are connected). They are listed in the palette, the menus and the Settings shortcut editor.
+
+**CLI:**
+- `safe-transfer resume <job>`
+- `safe-transfer resume --all`, which also lists what the others still need ("insert CLIENT_A to resume…")
+- `safe-transfer jobs`, which shows each job's state and what it needs
+
+**What the engine provides (built in M2):**
+- `JobInfo.resume`, a `Resumability`: one of `NotNeeded`, `Ready { still_missing }`, `NeedsVolumes([names])` or `InUseElsewhere`, computed from the mounted volumes.
+- `JobInfo.dest_uuid`.
+- `Engine::resumable()` for the list and the badge, `Engine::jobs_on_volume(uuid)` for the sidebar, and `Engine::resume_all()`.
+- `cancel(Close)` refuses with `NeedsVolume` while the destination is away.
+- Tests: `a_stopped_job_stays_listed_and_can_be_resumed_by_hand`, and the CLI's `resume_all_finishes_a_crashed_copy`.
+
+**What M4 builds:**
+- In `fstudio-core`: the prompt as a `ShellRequest`, the operations-list row, the badge count and the sidebar menu items. The core recomputes them on every volume change (the host already calls `volumes_changed`).
+- In the Swift shell: drawing them, with no logic of its own (F-001).
+
+**The journal is unchanged:** the job's state already lives in its head file, and resumability is worked out from the mounted volumes each time. "Later" isn't stored. The prompt comes back on the next reconnect or launch, and the list row is always there.
+
 ---
 
 ## 7. Moves
@@ -1032,7 +1086,7 @@ Safe Transfer is a separate track you asked for. File Studio's own M3 hasn't sta
 | **M1: core copy** | The crates, the platform traits (macOS, plus Linux and Windows stubs that compile), single-file chunk pipeline (partial → chunks + hashes → flush → evict → verify → exclusive rename → folder flush), clones, symlinks, holes, `remove.rs` + grep test, CLI `copy`/`plan`/`compare`/`volumes` | unit tests; single-file fault tests; fmt, clippy and test clean |
 | **M2: journal + resume** | Multi-file jobs, the journal (§3), resume (§6), volume UUIDs, reconnect detection, `WaitingForSource`/`WaitingForDestination`, small-file group commit, CLI `jobs`/`resume`/`cancel` | **the yank suite (§11.3) and `kill -9` suite (§11.4) pass** on APFS, exFAT and FAT images |
 | **M3: moves, conflicts, metadata, space** | §7–§10, the metadata report, the exFAT `._` placement decision, the edge-case fixtures | all §11.5 fixtures pass; the metadata table is confirmed or corrected |
-| **M4: into File Studio** | the ops backend switch (§0.4 B–C), core owns the Engine, ffi mirrors, resume and source-missing prompts in Swift (display only), settings (auto-resume, verify policy) | ops' existing tests pass on both backends; app proofs of a yank and a resume; your sign-off flips the default |
+| **M4: into File Studio** | the ops backend switch (§0.4 B–C), core owns the Engine, ffi mirrors, resume and source-missing prompts plus the §6.1 manual resume (list row, badge, sidebar item, `transfer.resume`/`transfer.resume_all`) in Swift (display only), settings (auto-resume, verify policy) | ops' existing tests pass on both backends; app proofs of a yank and a resume; your sign-off flips the default |
 | **M5: benchmarks + polish** | §12.3 on your real card and drives, the real-card yank script (§11.6), removal of ops' old data path (§0.4 D), report | numbers in `bench/history.md`, known issues listed |
 
 ---
@@ -1056,6 +1110,88 @@ The user approved every recommendation, and added the opt-in re-read mode.
 | 6f | Finished journals | **Kept 30 days** |
 | 6g | Two destinations from one read | **Later (v2)**, with Import Studio |
 | 6h | Workers on removable media | **One copying while the previous file is checked**; four for small files; M5 measures |
+
+## 15. M2 status (2026-11-13)
+
+M2 is built in `crates/safe-transfer`: multi-file jobs, the journal, resume, the small-file group commit, and the yank and `kill -9` suites. The CLI gained `copy` for folders, `jobs`, `resume`, `cancel` and `report`.
+
+**What exists:**
+- **`Engine`**: `open`, `plan`, `create`, `start`, `pause`, `resume`, `cancel(KeepResumable | Close)`, `job`, `jobs`, `report`, `wait`, `volumes_changed` and `damaged`. Events are `JobState`, `Progress`, `FileDone`, `FileNotCopied`, `WaitingForSource`, `WaitingForDestination`, `ResumeAvailable` and `JobFinished`.
+- **Planning** (stat only):
+  - folders are expanded with symlinks copied as links (followed links get a loop guard)
+  - the job's own partials and the AppleDouble `._` companions on exFAT and FAT sources are skipped
+  - existing files are skipped ("already exists; nothing was replaced"), which is the only conflict choice until M3
+  - names that clash within the job on a case-insensitive disk are skipped
+  - iCloud placeholders are skipped
+  - copying a folder into itself is refused
+  - a job that won't fit is refused up front, with the numbers
+- **The journal** follows §3 exactly. Paths are stored canonically (`/private/var/…`), so a card that comes back under another mount point is found by UUID and its paths are moved there.
+- **Resume** follows §6:
+  - a partial's chunks are re-hashed and the matching run kept
+  - an original that changed is copied again and reported under `restarted`
+  - a file already at its real name counts only if its content is identical (this covers a rename that landed just before the journal caught up)
+  - a missing source card makes files `WaitingForSource`
+  - a pulled destination makes the job `WaitingForDestination`, keeping its partials for resume
+- **Group commit** follows §4.7: per-file `fsync`, one `F_FULLFSYNC` per group, then check and rename each file, then one folder flush. The journal now commits the same way: each save `fsync`s every file it writes, renames them, then does one `F_FULLFSYNC` on the folder.
+
+**Found while building:**
+1. **Rust's `File::sync_all()` is `F_FULLFSYNC` on macOS, not `fsync(2)`.** The first group-commit build used it for the "cheap" per-file flush, so every file still paid a full drive barrier: 5,000 files on the APFS image took 57–64 s. `sys::os_sync` now calls `fsync(2)` directly. `fstudio-ops` uses `sync_all` only as a fallback after `F_FULLFSYNC` fails (`sys/mod.rs:220`), which is harmless, but anyone writing a cheap flush should know this.
+2. **One 4 MiB write can complete several small chunks.** Only the last chunk was logged. That is harmless with 64 MB chunks, but it stopped chunk reuse in the 1 MiB-chunk tests. All completed chunks are now logged in order, and the `kill -9` test checks reuse: 9 of 9 chunks kept after a kill mid-verify or just before the big file's rename, and some kept after a kill mid-chunk.
+3. **A journal behind the disk made resume call a finished file "already exists".** Nothing was lost, but the report was wrong. Resume now compares content instead (point 3 of "Resume" above).
+4. **Compressed originals were copied as zeros, and "verified" (found by CI).**
+   - **Cause:** for an APFS-compressed (decmpfs) file, `SEEK_DATA` says the whole data fork is a hole, because the content lives in a resource fork. The loop skipped reading those "holes", so it hashed zeros, wrote zeros, and the read-back matched. `/usr/share/dict/web2` came out as 2.5 MB of zeros.
+   - **Fix (`710b3d1`):** every byte of the original is always read. Holes only decide where the destination may stay sparse, and a 64 KiB piece is left unwritten only if it is reported as a hole and reads as zeros.
+   - **The CI failure:** `ditto --hfsCompression` no longer compresses on macOS 27, so the test was vacuous locally and only bit on the macOS 26 runner. The new test copies `/usr/share/dict/web2`, which is compressed on every macOS, and compares the bytes.
+   - **Not fixed here:** `fstudio-ops`' `copy_loop` has the same logic.
+5. **Small-file overheads:** a 4 MiB buffer was allocated per file, progress events walked every file, and the journal flushed each file it wrote. All three are fixed.
+
+**Tests:** all pass, and the disk-image ones ran in one batch of about 32 yanks.
+
+| Suite | What it covers |
+|---|---|
+| `src` unit tests (35) | journal encode/decode against every truncation and bit flip, A/B slots, backups, leftover temp files, segment records, removal of job folders, volume matching by UUID, path remapping, chunk hashing, partial names, space |
+| `tests/copy.rs` (18) | the single-file pipeline (M1) |
+| `tests/jobs.rs` (10) | folder jobs and reports, one drive flush per group (fewer than 40 flushes for 600 files, against at least 600), skip-never-replace, `Exact` items, refusal when it won't fit, copy-into-itself, cancel then resume, pause and resume, reopening the engine, a damaged journal left alone |
+| `safe-transfer-cli` `kill -9` | 15 stop points (every per-file point, every group point, both journal points), each followed by `resume`: the real names are complete right after the kill, the resumed job finishes identical to the originals, and no partials are left |
+| `tests/faults.rs`, ignored | helper-kill yanks of APFS and exFAT images at all 9 file and group points, each followed by `ResumeAvailable`, resume and an identical tree; a card back under another mount point; a pulled source card (`WaitingForSource`, then resume); an original changed while the card was out (`restarted`); the M1 single-file suites; the negative control |
+
+**Small-file benchmark** (`spikes/safe-transfer/bench_m2.sh`; release build; 5,000 files of 1–64 KiB, 166 MB, every file verified).
+
+These were measured while the Mac was in use (load average 5–7, with DxO PhotoLab and other apps running), so treat them as upper bounds. Run the script on an idle Mac for the gate.
+
+| Destination | Group commit (3 runs) | Flush per file (1,000 files) | Gain |
+|---|---|---|---|
+| Internal SSD | 2.06 / 2.06 / 2.46 s | 7.8 ms/file → ≈ 39 s for 5,000 | ≈ 17× |
+| APFS disk image | **2.42 / 2.83 / 2.94 s** | 16.8 ms/file → ≈ 84 s | ≈ 30× |
+| exFAT disk image | 22.7 / 23.1 / 23.7 s | 16.2 ms/file → ≈ 81 s | ≈ 3.5× |
+
+- **The APFS gate (2.4 s or less)** was met only at the best run (2.42 s), and the median is 2.83 s. A profile shows the time in work that has to happen: reading every file back from the image, the group and journal flushes, and renames. The §4.7 probe's floor for the same work was 1.8 s on an idle machine. The gate needs re-measuring on an idle Mac before it is called passed or failed.
+- **exFAT is 1.7–1.8× the unflushed probe (13.5 s), against a target of 1.25×.** The flushes aren't the cost: the probe showed a group barrier adds about 5 % there. The cost is that macOS's exFAT driver runs in user space (FSKit), so every metadata call is a round trip. Each file needs several: the metadata copy, the check, the check-then-rename and the metadata check. Fewer calls per file (skipping the xattr copy when there are none, skipping ACL work on exFAT, reusing descriptors) helped less than the run-to-run noise. It is still 3.5× faster than a flush per file. Real cards come in M5.
+
+**Final M2 run** (13:27; load average about 4; `bench_m2.sh` with 3 GB images):
+
+| Measure | Internal SSD | APFS image | exFAT image |
+|---|---|---|---|
+| 5,000 small files, group commit (3 runs) | 2.18 / 2.26 / 2.27 s | **2.44 / 2.81 / 3.04 s** | 23.7 / 24.6 / 24.6 s |
+| Flush per file (1,000 files) | 8.5 ms/file | 32.8 ms/file | 18.3 ms/file |
+| 1 GiB, `cp` + `sync` (2 runs) | 0.27 / 0.22 s | 0.56 / 0.58 s | 0.21 / 0.28 s |
+| 1 GiB, Safe Transfer (2 runs) | 0.56 / 0.51 s | 0.83 / 1.88 s | 0.54 / 1.29 s |
+| …of which the read-back | 0.22 s | 0.24 / 0.28 s | 0.22 / 0.20 s |
+| …of which 16 per-chunk flushes | 0.05–0.07 s | 0.16–0.29 s | 0.03–0.77 s |
+
+Read the 1 GiB rows with care:
+- **`cp` + `sync` isn't durable.** `sync` doesn't empty the drive's cache, and the host caches the disk images' backing files. So `cp` measures RAM.
+- **The source was warm in memory.**
+- **Safe Transfer's time is the guarantee:** uncached writes, a drive flush per 64 MB chunk, and an uncached read-back of the whole file at about 5 GB/s.
+- **The real ratio needs real devices** (M5, against the M1 card numbers).
+
+**Left for M3 and later:**
+- conflict choices (Replace, Keep Both, Ask, Skip if identical) and moves
+- folder dates and metadata (folders get the time they were made)
+- the AppleDouble placement decision on exFAT
+- `volumeAvailableCapacityForImportantUsage` instead of `statfs` for free space
+- real `flock` on Linux (the stub doesn't lock)
+- parallel workers per volume (M2 runs one file pipeline per job)
 
 ---
 

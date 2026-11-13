@@ -57,9 +57,19 @@ pub fn full_sync(f: &File) -> io::Result<FlushLevel> {
     if r == 0 {
         Ok(FlushLevel::Device)
     } else {
-        f.sync_all()?;
+        // Not `File::sync_all`: on macOS that is F_FULLFSYNC again.
+        os_sync(f)?;
         Ok(FlushLevel::OsOnly)
     }
+}
+
+/// Plain `fsync(2)`: sends the file's data and attributes to the drive,
+/// without asking the drive to empty its cache. Cheap; a group of these is
+/// followed by one [`full_sync`] (proposal §4.7). Note that Rust's
+/// `File::sync_all` is **not** this on macOS: it issues `F_FULLFSYNC`.
+pub fn os_sync(f: &File) -> io::Result<()> {
+    // SAFETY: fsync on a descriptor we own.
+    check(unsafe { libc::fsync(f.as_raw_fd()) })
 }
 
 /// [`full_sync`] on a folder, so a rename inside it is durable.
@@ -140,12 +150,17 @@ pub fn residency(path: &Path) -> io::Result<Residency> {
 /// is mapped read-only and is never modified. Measured to work without admin
 /// rights on APFS, exFAT and FAT (SAFE-TRANSFER-PROPOSAL §4.2).
 pub fn evict(path: &Path) -> io::Result<Residency> {
-    let f = File::open(path)?;
+    evict_open(&File::open(path)?)
+}
+
+/// [`evict`] through a descriptor that is already open (one `open` fewer;
+/// on exFAT every `open` is a round trip to the user-space driver).
+pub fn evict_open(f: &File) -> io::Result<Residency> {
     let len = f.metadata()?.len() as usize;
     if len == 0 {
         return Ok(Residency::default());
     }
-    let m = Mapping::new(&f, len)?;
+    let m = Mapping::new(f, len)?;
     // SAFETY: `addr..addr+len` is our live read-only mapping. MS_SYNC writes
     // dirty pages back first; MS_INVALIDATE then drops the clean ones. Never
     // MS_KILLPAGES, which would discard data.
@@ -199,10 +214,17 @@ pub fn clone_file(src: &Path, dst: &Path) -> io::Result<()> {
 /// Copies extended attributes (Finder tags, comments, resource fork) and
 /// stat information (mode, dates, flags) from `src` onto `dst`.
 pub fn copy_metadata(src: &Path, dst: &Path) -> io::Result<()> {
+    // Without xattrs on the original, copying them only costs (on exFAT,
+    // copyfile probes the destination's AppleDouble data for each one).
+    let xattr = if xattr_names(src).is_ok_and(|n| n.is_empty()) {
+        0
+    } else {
+        libc::COPYFILE_XATTR
+    };
     copyfile(
         src,
         dst,
-        libc::COPYFILE_XATTR | libc::COPYFILE_STAT | libc::COPYFILE_NOFOLLOW_SRC,
+        xattr | libc::COPYFILE_STAT | libc::COPYFILE_NOFOLLOW_SRC,
     )
 }
 
@@ -322,6 +344,23 @@ pub fn case_sensitive(dir: &Path) -> io::Result<bool> {
         return Err(e);
     }
     Ok(r == 1)
+}
+
+/// Takes an exclusive advisory lock on `f` without waiting (`flock`).
+/// `Ok(false)` means another process holds it. Released when `f` is closed
+/// (also when the process dies).
+pub fn try_lock(f: &File) -> io::Result<bool> {
+    // SAFETY: flock on a descriptor we own, with integer flags only.
+    let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if r == 0 {
+        return Ok(true);
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(false)
+    } else {
+        Err(e)
+    }
 }
 
 /// Fills `buf` with random bytes from the kernel (`getentropy`, ≤ 256 bytes).

@@ -70,6 +70,8 @@ pub struct Image {
     _dir: tempfile::TempDir,
     pub img: PathBuf,
     pub mount: PathBuf,
+    /// Where it is attached now (`put_back_at` can move it).
+    now: std::sync::Mutex<PathBuf>,
 }
 
 impl Image {
@@ -96,6 +98,7 @@ impl Image {
         let im = Image {
             _dir: dir,
             img,
+            now: std::sync::Mutex::new(mount.clone()),
             mount,
         };
         im.put_back();
@@ -104,15 +107,23 @@ impl Image {
 
     /// Pulls the "card" out the way a yank or power cut would: see [`yank`].
     pub fn pull_out(&self) {
-        yank(&self.img, &self.mount);
+        yank(&self.img, &self.now.lock().unwrap());
     }
 
     /// Puts it back at the same mount point.
     pub fn put_back(&self) {
+        self.put_back_at(&self.mount.clone());
+    }
+
+    /// Puts it back somewhere else, as macOS does when a card comes back
+    /// as "Untitled 1".
+    pub fn put_back_at(&self, mount: &Path) {
+        std::fs::create_dir_all(mount).unwrap();
+        *self.now.lock().unwrap() = mount.to_path_buf();
         for attempt in 0..5 {
             let ok = Command::new("hdiutil")
                 .args(["attach", "-quiet", "-nobrowse", "-mountpoint"])
-                .arg(&self.mount)
+                .arg(mount)
                 .arg(&self.img)
                 .status()
                 .is_ok_and(|s| s.success());
@@ -129,7 +140,7 @@ impl Drop for Image {
     fn drop(&mut self) {
         let _ = Command::new("hdiutil")
             .args(["detach", "-force", "-quiet"])
-            .arg(&self.mount)
+            .arg(&*self.now.lock().unwrap())
             .status();
     }
 }
