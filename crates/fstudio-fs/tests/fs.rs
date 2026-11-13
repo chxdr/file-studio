@@ -73,6 +73,9 @@ fn streams_in_chunks_and_never_repeats() {
         }
     }
     assert_eq!(names.len(), 3000);
+    // The chunk-count check below is macOS-only (getattrlistbulk); this keeps Linux lint-clean.
+    #[cfg(not(target_os = "macos"))]
+    let _ = chunks;
     #[cfg(target_os = "macos")]
     assert!(
         chunks > 1,
@@ -274,16 +277,21 @@ fn package_detection() {
     }
     assert!(stat_entry(t.path().join("Safari.app")).unwrap().is_package);
     // The Finder "has bundle" bit marks an oddly named folder as a package.
-    fs::create_dir(t.path().join("Odd")).unwrap();
-    let mut info = [0u8; 32];
-    info[8] = 0x20; // kHasBundle
-    xattr_set(t.path().join("Odd"), "com.apple.FinderInfo", &info).unwrap();
-    let l = by_name(list_all(t.path()).unwrap());
+    // macOS-only: `com.apple.FinderInfo` is a macOS attribute (Linux needs a `user.` name).
     #[cfg(target_os = "macos")]
-    assert!(l["Odd"].is_package);
-    let _ = l;
+    {
+        fs::create_dir(t.path().join("Odd")).unwrap();
+        let mut info = [0u8; 32];
+        info[8] = 0x20; // kHasBundle
+        xattr_set(t.path().join("Odd"), "com.apple.FinderInfo", &info).unwrap();
+        let l = by_name(list_all(t.path()).unwrap());
+        assert!(l["Odd"].is_package);
+    }
 }
 
+// macOS-only as written: the `com.example.*` names are not valid on Linux, which only allows
+// the `user.` namespace. TODO: add a Linux variant of this test using `user.` names.
+#[cfg(target_os = "macos")]
 #[test]
 fn xattr_round_trip() {
     let t = tempfile::tempdir().unwrap();

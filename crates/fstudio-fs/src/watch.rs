@@ -8,7 +8,7 @@
 //! FSEvents coalesces several changes to one path the consumer should `stat` the path to
 //! learn what is true now. When `must_rescan` is set, the consumer must re-list the folder.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -156,6 +156,7 @@ pub fn event_from_flags(
 }
 
 /// Keeps events for the root itself and its direct children, plus every rescan request.
+#[cfg(any(target_os = "macos", test))]
 fn is_shallow_match(root: &Path, ev: &FsEvent) -> bool {
     ev.must_rescan || ev.path == root || ev.path.parent() == Some(root)
 }
@@ -217,7 +218,7 @@ impl Watcher for FsEventsWatcher {
                 flags |= CF_WATCH_ROOT;
             }
             let stream = Stream::start(p, self.config.latency.as_secs_f64(), flags, cb)
-                .map_err(|e| Error::io(p, e))?;
+                .map_err(|e| crate::error::Error::io(p, e))?;
             self.streams.insert(p.clone(), stream);
         }
         Ok(())

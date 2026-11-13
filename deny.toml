@@ -38,3 +38,10 @@ ignore = true
 
 [bans]
 multiple-versions = "allow"
+
+[advisories]
+# Vulnerabilities and yanked crates always fail. "Unmaintained" notices are only
+# raised for crates we depend on directly: today the only one is `basic-toml`
+# (RUSTSEC-2026-0374), pulled in by uniffi's code generator (build-time tool,
+# not shipped in the app). Revisit when uniffi drops it.
+unmaintained = "workspace"
