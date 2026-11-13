@@ -1,6 +1,6 @@
 # Safe Transfer: design proposal (pre-code)
 
-Status: **waiting for your OK.** No code has been written. The only new files are this document and a small measurement probe in `spikes/safe-transfer/` (`st_probe.c`, `run.sh`), whose numbers are in §12.
+Status: **approved 2026-11-13** with every §14 recommendation, plus an opt-in "re-read originals" mode that first-run setup explains (§4.6). The measurement probe is in `spikes/safe-transfer/` (`st_probe.c`, `run.sh`), and its numbers are in §12. M1 is under way in `crates/safe-transfer` and `crates/safe-transfer-cli`.
 
 **Inputs:**
 - your brief (`safe-transfer-prompt.md`)
@@ -27,19 +27,19 @@ Safe Transfer is a separate Rust library, plus a small `safe-transfer` command-l
 ### The honest limits
 
 - **A drive that lies.** `F_FULLFSYNC` asks the drive to empty its own write cache onto the storage. A few cheap USB card readers and enclosures report success without doing it. If one of those loses power within a second or so of a file finishing, that file can be damaged even though the check passed. No software can fully defend against that. The only defence is the read-back after reconnecting, which Safe Transfer's resume does.
-- **A bad read of the original.** The original is read once. Its bytes are hashed in memory, and that hash is what the copy is checked against. If the card or reader returned wrong bytes during that one read (very rare, and nothing would flag it), the copy faithfully matches the wrong bytes. An optional "re-read originals" mode closes this gap, at the cost of reading the source twice.
+- **A bad read of the original.** The original is read once. Its bytes are hashed in memory, and that hash is what the copy is checked against. If the card or reader returned wrong bytes during that one read (very rare, and nothing would flag it), the copy faithfully matches the wrong bytes. The opt-in "re-read originals" mode (§4.6) closes this gap by reading the original a second time, at the cost of roughly twice the reading time from the source.
 - **exFAT's rename isn't strictly exclusive.** macOS can't do a "rename only if the name is free" on exFAT. Safe Transfer checks that the name is free and then renames, which leaves a window of a few microseconds. Another app writing the exact same name into the same folder in that window could be overwritten. File Studio has the same limit today.
 - **exFAT has no journal.** If power is lost during the instant of the rename itself, the card's folder entry can be damaged. Disk Utility's First Aid repairs it. The file's data is already safe on the card at that point, because the rename only happens after the flush and the check.
 - **Checking costs time.** Copying from a card to the Mac costs an estimated 5–15 % more. Copying from the Mac to a card costs an estimated 60–85 % more, because the copy has to be read back from the slow card. See §12.
 
-### What I need you to decide (details in §14)
+### What was decided (2026-11-13; details in §14)
 
-1. Default chunk size: **64 MB** (recommended).
-2. Verify policy: **always, except instant clones** (recommended). Or allow turning it off for internal-to-internal copies.
-3. Journal format: **JSON** (recommended) or binary.
-4. Same-volume copies: **keep the instant APFS clone** (recommended).
-5. Whether to **fix fstudio-ops' flushing now**, as a small separate task, before Safe Transfer replaces it. Reading the code turned up a gap (§0.2).
-6. Plus some smaller ones: the crate name, moves off a card, small-file batching, and keeping finished journals.
+1. Chunk size: **64 MB**.
+2. Verify: **always, except instant clones**, with no off switch in v1.
+3. Journal: **JSON**.
+4. Same-volume copies: **keep the instant APFS clone**.
+5. The fstudio-ops flush gap (§0.2) is being fixed separately, now, by the coordinator.
+6. The smaller ones as recommended. In addition, **"re-read originals"** is an opt-in mode (off by default), explained in first-run setup (§4.6).
 
 ---
 
@@ -285,7 +285,7 @@ pub enum Item {
 pub struct Options {
     pub chunk_size: u64,              // 64 MiB (§14 Q1); 16 MiB..=256 MiB
     pub verify: Verify,               // Always (default; clones excepted) | SkipInternalToInternal
-    pub reread_source: bool,          // false; true = hash the original a second time (paranoid)
+    pub reread_source: bool,          // false; true = read the original a second time, separately (§4.6)
     pub flush_each_chunk: bool,       // true for files over one chunk (§3.6)
     pub small_file_batch: Batch,      // group commit for files < 8 MiB: ≤ 64 MiB or 256 files per flush (§4.1)
     pub on_conflict: ConflictPolicy,  // per class (files / folders): Ask | Skip | Replace | KeepBoth | Merge(folders)
@@ -347,6 +347,7 @@ pub struct JobReport {
     pub failed: Vec<(FileRef, String)>,    // per-file reason
     pub metadata_lost: Vec<MetaLoss>, // grouped: "exFAT can't store permissions: 812 files"
     pub flush_level: FlushLevel,      // Device everywhere, or which volume only managed OsOnly
+    pub source_reread: u32,           // files whose original was read twice and matched (§4.6)
     pub sources_trashed: Vec<(FileRef, PathBuf)>,   // for undo
     pub replaced_trashed: Vec<(FileRef, PathBuf)>,  // old files sent to the Trash by Replace
     pub bytes: u64, pub duration: Duration, pub verify_duration: Duration,
@@ -425,7 +426,7 @@ Every file is **two lines**: the JSON body, then a trailer holding the body's le
 {"format":"safe-transfer/manifest","version":1,"job":"k3f9q2xm","created":"2026-11-13T10:42:07Z",
  "label":"Smith wedding → CLIENT_A","host_ref":"fstudio-op:1234","mode":"copy",
  "options":{"chunk_size":67108864,"verify":"always","flush_each_chunk":true,"symlinks":"copy_link",
-            "on_conflict":{"files":"ask","folders":"merge"},"disposal":"trash","allow_dataless":false},
+            "on_conflict":{"files":"ask","folders":"merge"},"disposal":"trash","allow_dataless":false,"reread_source":false},
  "dest":{"path":"/Volumes/CLIENT_A/2026-11-13 Smith","volume":{"uuid":"15F49193-C24C-395C-999A-615DCE8F315F",
          "fs":"exfat","name":"CLIENT_A","capacity":128043712512,"case_sensitive":false}},
  "sources":[{"volume":{"uuid":"…","fs":"exfat","name":"Untitled","capacity":…},"root":"/Volumes/Untitled/DCIM"}],
@@ -442,7 +443,7 @@ Every file is **two lines**: the JSON body, then a trailer holding the body's le
 ```json
 {"format":"safe-transfer/segment","version":1,"job":"k3f9q2xm","seg":0,"gen":418,
  "files":{
-  "1":{"st":"done","outcome":"verified","hash":"<xxh3-128>","chunks":["<xxh3-64>"],"meta_lost":["acl","owner"]},
+  "1":{"st":"done","outcome":"verified","hash":"<xxh3-128>","chunks":["<xxh3-64>"],"reread":"match","meta_lost":["acl","owner"]},
   "2":{"st":"copying","chunks":["<xxh3-64>","<xxh3-64>"],"partial_vol":"15F49193-…"},
   "3":{"st":"conflict","conflict":{"existing_size":52428800,"existing_mtime_ns":…}}}}
 {"len":512,"xxh3":"…"}
@@ -616,6 +617,47 @@ A note on the measurements: a disk image's own "device" is a file on the interna
 - The copy never goes through `copyfile(ALL)`'s data path, which fills holes in.
 - exFAT and FAT can't store holes, so the zeros are written out. The report says "written in full: this disk can't store sparse files". The space check (§10) counts the full logical size for those disks.
 - Sparse files are rare in photo work (they are mostly VM disks and some databases), but this keeps a 32 KB file from silently becoming 1 GB.
+
+### 4.6 Re-read originals (opt-in, off by default)
+
+**What it protects against.** Normally the original is read once. Its bytes are hashed in memory, written to the destination, and the copy is checked against that hash. If the card or the card reader returned a wrong byte during that one read, the copy is a faithful copy of the wrong byte, and the check passes. With this mode on, the original is read a **second time, separately**, and the two reads must agree before the copy gets its real name.
+
+**How it works.**
+1. Before the first read, any cached pages of the original are evicted (§4.2). This is read-only for the original: `msync` with `MS_SYNC|MS_INVALIDATE` writes back anything another app has pending before dropping it, so nothing of the original's content can be lost.
+2. The copy is made, flushed and read back as usual.
+3. The original's cache is evicted again, and the original is read a second time with `F_NOCACHE`. Its xxh3-128 must equal the first read's.
+4. **If they agree**, the file is placed, and the report counts it under `source_reread`.
+5. **If they don't**, the partial is removed and the file fails with "the original read differently twice; the card or reader may be failing". It is never retried in a loop, and the original is never touched.
+
+**The cost.** Roughly twice the reading time from the source. Copying from a card means reading the card twice: a 30 GB job at 161 MB/s takes about 3 minutes longer. From the internal SSD the cost is small.
+
+**Where it shows up.**
+- `Options.reread_source`
+- the manifest's `options.reread_source`
+- the per-file `"reread": "match"` in the journal
+- `JobReport.source_reread`
+- the CLI's `--reread-source`
+
+**Settings key (File Studio):** `operations.reread_originals`, a bool, default `false`, under Settings › Operations › Copying. Import Studio would keep its own.
+
+**First-run setup text** (spec for M4; the page is core-driven, and Swift only shows it):
+
+> **Read originals twice?**
+>
+> File Studio always checks every copy against the original before giving it its real name. That catches a copy that went wrong on the way to the disk.
+>
+> It can't catch a copy that was wrong from the start: if a failing card or card reader hands over a bad byte while the original is being read, the copy matches that bad byte perfectly.
+>
+> **Turn this on to read each original a second time** and make sure both reads agree. If they don't, the file is flagged and your original is left untouched.
+>
+> **Who it's for:**
+> - copying straight off camera cards that have shown errors
+> - ageing or unreliable card readers
+> - archives and client deliveries, where a second read is worth the time
+>
+> **The cost:** copies take longer, about twice the reading time from the original's disk. From a card, a 30 GB job takes about 3 minutes more.
+>
+> [ Read originals twice ]   [ Not now ]   You can change this any time in Settings › Operations.
 
 ---
 
@@ -924,29 +966,25 @@ Safe Transfer is a separate track you asked for. File Studio's own M3 hasn't sta
 
 ---
 
-## 14. Decisions for you
+## 14. Decisions (taken 2026-11-13)
 
-Each comes with my recommendation; "as recommended" is a fine answer to all of them.
+The user approved every recommendation, and added the opt-in re-read mode.
 
-1. **Default chunk size.** *Recommend 64 MB.* A typical raw is one chunk (one flush). The measured flush cost is about 0.15 s per GiB for big files. An interruption repeats at most about 0.5 s of card writing. 16 MB quadruples the flushes; 256 MB saves little and loses more per interruption.
-2. **Verify policy.** *Recommend: always verify, except instant clones, with no off switch in v1.* If you want a switch, limit it to internal-to-internal copies, where the risk is lowest. Card and USB copies always verify.
-3. **Journal format.** *Recommend JSON*: two-line files with a checksum trailer, A/B slots, and segments of 1,024 files. It's readable when something goes wrong, uses no new dependency, and is a few hundred KB per big job. Binary would save size and CPU that don't matter at these scales.
-4. **Same-volume APFS clones.** *Recommend keeping `copyfile(CLONE_FORCE)`.* It's instant, and there is nothing to check (§4.4). The report says "cloned", not "verified".
-5. **Close the ops flush gap now?** *Recommend yes, as a small separate task, now:*
-   - always `F_FULLFSYNC` before renaming a copy into place, and the folder after it
-   - flush before the verify read
-   - evict before the verify read
-
-   This costs about 10 ms per file. Otherwise the gap stays until Safe Transfer's M4.
-6. **Smaller decisions:**
-   - a. **Crate name** `safe-transfer` / `safe_transfer`, an exception to F-003's `fstudio-` prefix because it's meant to be shared. *Recommend yes,* logged as a new F-entry.
-   - b. **Moves off a card:** originals go to the card's own Trash (`.Trashes`), as the brief says. *Recommend yes,* with a one-time report line explaining it.
-   - c. **Small-file group commit** (one drive flush per batch of files under 8 MB, each still verified before it's named). *Recommend yes;* without it, 5,000 small files would take minutes longer.
-   - d. **"Skip if identical"** as a conflict choice (hashes the existing file). *Recommend offering it, not as the default.*
-   - e. **"Re-read originals"** (paranoid mode, about 2× source reads). *Recommend: offered, off by default.*
-   - f. **Keeping finished journals** (for "what happened to that job"). *Recommend 30 days,* then delete the job folder, keeping nothing on the destination.
-   - g. **Two destinations from one card read** (Import Studio). *Recommend later (v2),* when Import Studio adopts the crate.
-   - h. **Workers on removable media.** *Recommend one file copying while the previous one is checked,* and four for small files. M5 measures alternatives.
+| # | Decision | Value |
+|---|---|---|
+| 1 | Default chunk size | **64 MB** (16–256 MB configurable) |
+| 2 | Verify policy | **Always, except instant APFS clones.** No off switch in v1 |
+| 3 | Journal format | **JSON**: two-line files with a checksum trailer, A/B slots, segments of 1,024 files |
+| 4 | Same-volume APFS copies | **Keep `copyfile(CLONE_FORCE)`**; reported as "cloned", not "verified" |
+| 5 | The fstudio-ops flush gap | Being fixed now by the coordinator, separately: `F_FULLFSYNC` before the rename, eviction before the verify read, and the leftover sweep keyed by volume UUID |
+| 6a | Crate name | **`safe-transfer` / `safe_transfer`** (an exception to F-003's prefix) |
+| 6b | Moves off a card | Originals go to the **card's own Trash**, with a one-time report line |
+| 6c | Small-file group commit | **Yes**: files under 8 MB, one drive flush per ≤ 64 MB or 256 files (M2) |
+| 6d | "Skip if identical" | **Offered**, not the default (M3) |
+| 6e | Re-read originals | **Opt-in, off by default**, explained in first-run setup (§4.6); key `operations.reread_originals` |
+| 6f | Finished journals | **Kept 30 days** |
+| 6g | Two destinations from one read | **Later (v2)**, with Import Studio |
+| 6h | Workers on removable media | **One copying while the previous file is checked**; four for small files; M5 measures |
 
 ---
 
