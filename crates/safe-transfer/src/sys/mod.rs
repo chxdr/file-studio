@@ -8,9 +8,13 @@
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
+mod macos_space;
+#[cfg(target_os = "macos")]
 mod macos_trash;
 #[cfg(target_os = "macos")]
 pub use macos::*;
+#[cfg(target_os = "macos")]
+pub use macos_space::important_free;
 #[cfg(target_os = "macos")]
 pub use macos_trash::trash_item;
 

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::events::{FileReport, Phase};
 use crate::journal::{Entry, EntryKind, FileRec, FileSt, JobState, VolRef};
 use crate::names::{self, JobId};
-use crate::options::{Options, Symlinks};
+use crate::options::{Decision, Mode, Options, Symlinks};
 use crate::platform::{Platform, VolumeInfo};
 use crate::space;
 
@@ -88,8 +88,11 @@ pub struct JobPlan {
     pub free: u64,
     /// `need + margin <= free`.
     pub fits: bool,
-    /// Items that won't be copied, and why (already there, iCloud placeholders…).
+    /// Items that won't be copied, and why (iCloud placeholders, same names…).
     pub skipped: Vec<Note>,
+    /// Items whose name is already taken at the destination (predicted;
+    /// decided by the conflict policy, a rule, or an answer when the job runs).
+    pub conflicts: Vec<PathBuf>,
     /// The destination volume.
     pub dest_volume: VolumeInfo,
     /// The destination folder, canonical (so it can be moved to another
@@ -193,13 +196,42 @@ pub enum Event {
         /// Bytes left.
         bytes_left: u64,
     },
+    /// A destination name is taken and the job waits for an answer
+    /// ([`crate::Engine::resolve_conflict`]); the rest of the job carries on.
+    Conflict {
+        /// The job.
+        job: JobId,
+        /// What is in the way.
+        info: Box<ConflictInfo>,
+    },
     /// The job finished; here is its report.
     JobFinished {
         /// The job.
         job: JobId,
         /// The report.
-        report: JobReport,
+        report: Box<JobReport>,
     },
+}
+
+/// A taken destination name, for the "Replace / Keep Both / Skip" question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictInfo {
+    /// The id to answer with ([`crate::Engine::resolve_conflict`]).
+    pub id: u32,
+    /// The item, relative to the destination folder.
+    pub path: PathBuf,
+    /// The new item is a folder.
+    pub folder: bool,
+    /// The new item's size and modification time.
+    pub source_size: u64,
+    /// The new item's modification time (ns since the epoch).
+    pub source_mtime_ns: i64,
+    /// What is there now is a folder.
+    pub existing_folder: bool,
+    /// Its size.
+    pub existing_size: u64,
+    /// Its modification time (ns since the epoch).
+    pub existing_mtime_ns: i64,
 }
 
 /// Receives events. Called on the job's thread; keep it quick.
@@ -253,6 +285,8 @@ pub struct JobInfo {
     pub dest_uuid: Option<String>,
     /// Whether this job is waiting for someone to resume it, and what for.
     pub resume: Resumability,
+    /// Taken names waiting for an answer.
+    pub conflicts: u32,
 }
 
 /// Whether a job can be resumed by hand right now (proposal §6.1).
@@ -305,6 +339,24 @@ pub struct JobReport {
     pub metadata_lost: Vec<Note>,
     /// Files whose flush only reached OS level.
     pub os_flush_only: u32,
+    /// Items that replaced an existing one; the reason says where the old one went.
+    #[serde(default)]
+    pub replaced: Vec<Note>,
+    /// Items copied under a new name ("keep both"); the reason is the new name.
+    #[serde(default)]
+    pub kept_both: Vec<Note>,
+    /// Items moved by renaming them (same volume).
+    #[serde(default)]
+    pub moved: u32,
+    /// Originals of a move sent to the Trash; the reason says where.
+    #[serde(default)]
+    pub sources_trashed: Vec<Note>,
+    /// Originals of a move that were kept, and why.
+    #[serde(default)]
+    pub sources_kept: Vec<Note>,
+    /// Items still waiting for an answer about a taken name.
+    #[serde(default)]
+    pub waiting_for_answer: Vec<Note>,
     /// Bytes of files done.
     pub bytes: u64,
     /// Seconds spent running (across resumes).
@@ -339,6 +391,12 @@ pub enum EngineError {
     /// Another process runs this job.
     #[error("another app or terminal is running this job right now")]
     InUse,
+    /// No question with this id is waiting.
+    #[error("nothing is waiting for an answer there")]
+    NoSuchConflict,
+    /// That answer doesn't fit (Merge for a file, or Ask).
+    #[error("“{0}” isn't an answer for that item")]
+    BadAnswer(&'static str),
     /// A disk the job needs isn't connected.
     #[error("insert “{0}” first")]
     NeedsVolume(String),
@@ -578,6 +636,13 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
             && s.uuid.is_some()
             && s.uuid == dest_vol.uuid
     };
+    let moving = spec.options.mode == Mode::Move;
+    // A move on one volume is a rename: it needs no space.
+    let same_volume = |e: &Entry| {
+        let s = &pl.sources[e.src_vol as usize];
+        s.uuid.is_some() && s.uuid == dest_vol.uuid
+    };
+    let mut conflicts = Vec::new();
     let mut keys: HashSet<String> = HashSet::new();
     let mut recs = Vec::with_capacity(pl.entries.len());
     let mut skipped = Vec::new();
@@ -588,21 +653,32 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         let there = std::fs::symlink_metadata(&dest).ok();
         let skip = |r: &str| Some(r.to_string());
         let reason = match e.kind {
-            EntryKind::Dir if there.as_ref().is_some_and(|m| !m.is_dir()) => {
-                skip("a file with this name is in the way")
-            }
             EntryKind::Dir => None,
             EntryKind::Other => skip("pipes, sockets and devices can't be copied"),
             _ if !keys.insert(key) => {
                 skip("another item in this job has the same name on this disk")
             }
-            _ if there.is_some() => skip("already exists; nothing was replaced"),
             _ if e.dataless && !spec.options.allow_dataless => {
                 skip("not downloaded from iCloud; skipped so it isn't downloaded")
             }
             _ => None,
         };
         let mut rec = FileRec::default();
+        // A taken name is decided when the job runs (policy, rule or answer).
+        // A folder that already exists is only a conflict when it isn't merged.
+        let in_the_way = match e.kind {
+            EntryKind::Dir => {
+                there.as_ref().is_some_and(|m| !m.is_dir())
+                    || (there.is_some() && spec.options.on_conflict.folders != Decision::Merge)
+            }
+            _ => there.is_some(),
+        };
+        if reason.is_none() && there.is_some() {
+            rec.existed = true;
+            if in_the_way {
+                conflicts.push(e.rel.clone());
+            }
+        }
         if let Some(r) = reason {
             rec.st = FileSt::Skipped;
             rec.reason = Some(r.clone());
@@ -617,7 +693,7 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
                 EntryKind::File => {
                     files += 1;
                     bytes += e.size;
-                    if !same_apfs(e) {
+                    if !same_apfs(e) && !(moving && same_volume(e)) {
                         let ad = no_native_xattrs(&dest_vol.fs_type)
                             && e.src.as_deref().is_some_and(|s| {
                                 !crate::sys::xattr_names(s).unwrap_or_default().is_empty()
@@ -641,6 +717,7 @@ pub(crate) fn plan(p: &Platform, spec: &JobSpec) -> Result<JobPlan, EngineError>
         free: dest_vol.free,
         fits: need == 0 || space::fits(need, dest_vol.free),
         skipped,
+        conflicts,
         dest_volume: dest_vol,
         dest: dest_canon,
         entries: pl.entries,

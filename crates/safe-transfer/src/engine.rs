@@ -4,27 +4,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::copy::{
-    Checked, ChunkLog, CopyError, CopyRequest, Failure, FileWork, Resume, ident, resume_from,
-};
-use crate::events::{FileProgress, FileReport, Outcome, Phase, ProgressSink};
 use crate::job::{
-    self, EngineError, Event, JobInfo, JobPlan, JobProgress, JobReport, JobSpec, MissingSource,
+    self, ConflictInfo, EngineError, Event, JobInfo, JobPlan, JobReport, JobSpec, MissingSource,
     Note, Resumability, SharedSink, io_ctx,
 };
 use crate::journal::{
-    Dest, Entry, EntryKind, FileRec, FileSt, Head, JobFiles, JobOptions, JobState, Manifest,
-    SEGMENT_FILES, Segment, VERSION, VolRef, now_secs, segment_name,
+    Dest, Entry, EntryKind, FileRec, FileSt, Found, Head, JobFiles, JobOptions, JobState, Manifest,
+    Rules, SEGMENT_FILES, Segment, VERSION, VolRef, now_secs, segment_name,
 };
 use crate::names::JobId;
-use crate::options::{Control, Options, Symlinks};
-use crate::platform::{FlushLevel, Platform, VolumeInfo};
+use crate::options::{Control, Decision, Mode, Symlinks};
+use crate::platform::{Platform, VolumeInfo};
 use crate::remove::{self, PartialOwner};
 
 /// Files smaller than this are committed in groups (proposal §4.7).
@@ -87,53 +82,57 @@ pub struct Engine {
     inner: Arc<Inner>,
 }
 
-struct Inner {
-    cfg: EngineConfig,
-    p: Platform,
-    sink: SharedSink,
+pub(crate) struct Inner {
+    pub(crate) cfg: EngineConfig,
+    pub(crate) p: Platform,
+    pub(crate) sink: SharedSink,
     jobs: Mutex<BTreeMap<String, Arc<Job>>>,
     damaged: Mutex<Vec<PathBuf>>,
 }
 
-struct Job {
-    id: JobId,
+pub(crate) struct Job {
+    pub(crate) id: JobId,
     interval: Duration,
     /// Work bytes of the whole job, and its file count (not folders).
-    work_total: u64,
-    files_total: u32,
-    files: JobFiles,
-    m: Manifest,
+    pub(crate) work_total: u64,
+    pub(crate) files_total: u32,
+    pub(crate) files: JobFiles,
+    pub(crate) m: Manifest,
     ctl: Mutex<Arc<Control>>,
     close: AtomicBool,
-    st: Mutex<St>,
+    pub(crate) st: Mutex<St>,
     cv: Condvar,
+    /// Woken when a conflict is answered (or the job is cancelled).
+    pub(crate) answers: Condvar,
 }
 
-struct St {
-    state: JobState,
+pub(crate) struct St {
+    pub(crate) state: JobState,
     generation: u64,
     seg_gen: Vec<u64>,
-    recs: Vec<FileRec>,
-    dirty: BTreeSet<usize>,
+    pub(crate) recs: Vec<FileRec>,
+    pub(crate) dirty: BTreeSet<usize>,
     head_dirty: bool,
+    /// "Apply to all" answers.
+    pub(crate) rules: Rules,
     last_save: Instant,
     running: bool,
     lock: Option<File>,
     seconds: f64,
     offered: bool,
-    work_done: u64,
+    pub(crate) work_done: u64,
     /// Files (not folders) that are done, skipped or failed.
-    files_done: u32,
-    run_started: Option<Instant>,
-    run_base: u64,
+    pub(crate) files_done: u32,
+    pub(crate) run_started: Option<Instant>,
+    pub(crate) run_base: u64,
 }
 
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Work bytes for one entry: written, read back, and re-read in re-read mode.
-fn weight(m: &Manifest, e: &Entry) -> u64 {
+pub(crate) fn weight(m: &Manifest, e: &Entry) -> u64 {
     if e.kind != EntryKind::File {
         return 0;
     }
@@ -171,12 +170,12 @@ impl Totals {
 }
 
 impl Job {
-    fn rec(&self, idx: usize) -> FileRec {
+    pub(crate) fn rec(&self, idx: usize) -> FileRec {
         lock(&self.st).recs[idx].clone()
     }
 
     /// Changes one file's record and saves the journal when due.
-    fn update(&self, idx: usize, f: impl FnOnce(&mut FileRec)) {
+    pub(crate) fn update(&self, idx: usize, f: impl FnOnce(&mut FileRec)) {
         let mut st = lock(&self.st);
         let was = st.recs[idx].st.is_terminal();
         f(&mut st.recs[idx]);
@@ -193,7 +192,7 @@ impl Job {
     /// Writes dirty segments, then the head. Not forced: at most every 0.5 s.
     /// A failing journal write never stops a copy (the journal is advisory:
     /// everything it says is checked again on resume).
-    fn save(&self, st: &mut St, force: bool) {
+    pub(crate) fn save(&self, st: &mut St, force: bool) {
         if !force && st.last_save.elapsed() < self.interval {
             return;
         }
@@ -227,6 +226,7 @@ impl Job {
             generation: st.generation,
             state: st.state,
             updated: now_secs(),
+            rules: st.rules,
         };
         out.push((JobFiles::slot_name("head", &h), crate::journal::encode(&h)));
         // One drive flush for all of them; a failure never stops a copy.
@@ -298,6 +298,7 @@ impl Job {
             missing: missing(&self.m, &st.recs),
             dest_uuid: self.m.dest.volume.uuid.clone(),
             resume,
+            conflicts: st.recs.iter().filter(|r| r.st == FileSt::Conflict).count() as u32,
         };
         for (e, r) in self.m.files.iter().zip(&st.recs) {
             if e.kind == EntryKind::Dir {
@@ -341,8 +342,28 @@ impl Job {
                         Some("verified_from_memory") => r.verified_from_memory += 1,
                         Some("cloned") => r.cloned += 1,
                         Some("link") => r.links += 1,
-                        Some("folder") => r.folders += 1,
+                        Some("folder") | Some("merged") => r.folders += 1,
+                        Some("moved") => {}
                         _ => r.copied_verified += 1,
+                    }
+                    // Items inside a folder moved by one rename count with it.
+                    if rec.moved && rec.outcome.as_deref() == Some("moved") {
+                        r.moved += 1;
+                    }
+                    if let Some(t) = &rec.replaced_trash {
+                        r.replaced.push(note(&format!(
+                            "the old one is in the Trash: {}",
+                            t.display()
+                        )));
+                    }
+                    if let Some(n) = &rec.dest_name {
+                        r.kept_both.push(note(&format!("copied as “{n}”")));
+                    }
+                    if let Some(t) = &rec.trashed_to {
+                        r.sources_trashed.push(note(&t.display().to_string()));
+                    }
+                    if let Some(why) = &rec.source_kept {
+                        r.sources_kept.push(note(why));
                     }
                     if e.kind != EntryKind::Dir {
                         r.bytes += e.size;
@@ -361,14 +382,52 @@ impl Job {
                 FileSt::Failed => r
                     .failed
                     .push(note(rec.reason.as_deref().unwrap_or("failed"))),
+                FileSt::Conflict => r.waiting_for_answer.push(note("the name is taken")),
                 _ => {}
             }
         }
         r
     }
+
+    /// The questions waiting for an answer.
+    fn conflicts(&self) -> Vec<ConflictInfo> {
+        let st = lock(&self.st);
+        self.m
+            .files
+            .iter()
+            .zip(&st.recs)
+            .enumerate()
+            .filter(|(_, (_, r))| r.st == FileSt::Conflict)
+            .map(|(i, (e, r))| {
+                let f = r.found.unwrap_or(Found {
+                    dir: false,
+                    size: 0,
+                    mtime_ns: 0,
+                });
+                ConflictInfo {
+                    id: i as u32,
+                    path: e.rel.clone(),
+                    folder: e.kind == EntryKind::Dir,
+                    source_size: e.size,
+                    source_mtime_ns: e.mtime_ns,
+                    existing_folder: f.dir,
+                    existing_size: f.size,
+                    existing_mtime_ns: f.mtime_ns,
+                }
+            })
+            .collect()
+    }
+
+    /// Changes one record and saves the journal at once (before an action
+    /// that can't be taken back, such as sending something to the Trash).
+    pub(crate) fn update_now(&self, idx: usize, f: impl FnOnce(&mut FileRec)) {
+        self.update(idx, f);
+        let mut st = lock(&self.st);
+        self.save(&mut st, true);
+    }
 }
 
-fn missing(m: &Manifest, recs: &[FileRec]) -> Vec<MissingSource> {
+pub(crate) fn missing(m: &Manifest, recs: &[FileRec]) -> Vec<MissingSource> {
     let mut by: BTreeMap<u32, MissingSource> = BTreeMap::new();
     for (e, r) in m.files.iter().zip(recs) {
         if r.st == FileSt::WaitingSource {
@@ -388,7 +447,7 @@ fn missing(m: &Manifest, recs: &[FileRec]) -> Vec<MissingSource> {
 
 /// The mounted volume the journal means, by UUID (cross-checked with the
 /// filesystem type and size), never by name or mount path.
-fn find<'v>(vols: &'v [VolumeInfo], r: &VolRef) -> Option<&'v VolumeInfo> {
+pub(crate) fn find<'v>(vols: &'v [VolumeInfo], r: &VolRef) -> Option<&'v VolumeInfo> {
     vols.iter().find(|v| match &r.uuid {
         Some(u) => v.uuid.as_ref() == Some(u) && v.fs_type == r.fs && v.capacity == r.capacity,
         None => v.mount == r.mount && v.fs_type == r.fs && v.capacity == r.capacity,
@@ -396,14 +455,14 @@ fn find<'v>(vols: &'v [VolumeInfo], r: &VolRef) -> Option<&'v VolumeInfo> {
 }
 
 /// `path` under `old` moved to under `new` (a card remounted as "Untitled 1").
-fn remap(path: &Path, old: &Path, new: &Path) -> PathBuf {
+pub(crate) fn remap(path: &Path, old: &Path, new: &Path) -> PathBuf {
     match path.strip_prefix(old) {
         Ok(rest) => new.join(rest),
         Err(_) => path.to_path_buf(),
     }
 }
 
-fn hex128(h: u128) -> String {
+pub(crate) fn hex128(h: u128) -> String {
     format!("{h:032x}")
 }
 
@@ -494,7 +553,8 @@ impl Engine {
                 close: AtomicBool::new(false),
                 st: Mutex::new(St {
                     state,
-                    generation: head.map_or(0, |h| h.generation),
+                    generation: head.as_ref().map_or(0, |h| h.generation),
+                    rules: head.as_ref().map(|h| h.rules).unwrap_or_default(),
                     seg_gen,
                     recs,
                     dirty: BTreeSet::new(),
@@ -510,6 +570,7 @@ impl Engine {
                     run_base: 0,
                 }),
                 cv: Condvar::new(),
+                answers: Condvar::new(),
             };
             lock(&e.inner.jobs).insert(id.to_string(), Arc::new(job));
         }
@@ -564,7 +625,10 @@ impl Engine {
             created: now_secs(),
             label: spec.label.clone(),
             host_ref: spec.host_ref.clone(),
-            mode: "copy".into(),
+            mode: match o.mode {
+                Mode::Copy => "copy".into(),
+                Mode::Move => "move".into(),
+            },
             options: JobOptions {
                 chunk_size: o.chunk_size,
                 flush_each_chunk: o.flush_each_chunk,
@@ -572,6 +636,9 @@ impl Engine {
                 follow_symlinks: o.symlinks == Symlinks::Follow,
                 allow_dataless: o.allow_dataless,
                 clone_same_volume: o.clone_same_volume,
+                on_conflict: o.on_conflict,
+                disposal: o.disposal,
+                workers: o.workers,
             },
             dest: Dest {
                 path: plan.dest.clone(),
@@ -598,6 +665,7 @@ impl Engine {
             st: Mutex::new(St {
                 state: JobState::Planned,
                 generation: 0,
+                rules: Rules::default(),
                 seg_gen: vec![0; nseg],
                 work_done: t.work_done,
                 files_done: t.files_done,
@@ -613,6 +681,7 @@ impl Engine {
                 run_base: 0,
             }),
             cv: Condvar::new(),
+            answers: Condvar::new(),
             m,
         };
         {
@@ -689,6 +758,7 @@ impl Engine {
         let running = lock(&job.st).running;
         if running {
             lock(&job.ctl).cancel();
+            job.answers.notify_all();
             self.wait(id, Duration::from_secs(3600));
             return Ok(());
         }
@@ -764,6 +834,57 @@ impl Engine {
             .filter(|j| self.resume(j.id).is_ok())
             .map(|j| j.id)
             .collect()
+    }
+
+    /// The questions a job is waiting for ("“DSC01234.ARW” already exists").
+    pub fn conflicts(&self, id: JobId) -> Vec<ConflictInfo> {
+        self.get(&id).map(|j| j.conflicts()).unwrap_or_default()
+    }
+
+    /// Answers a question: `decision` for item `conflict` (an id from
+    /// [`Event::Conflict`] or [`Engine::conflicts`]). With `apply_to_all`,
+    /// the same answer goes to every waiting item of the same kind (files,
+    /// or folders) and to the ones still to come in this job. A job that
+    /// isn't running keeps the answer for when it resumes.
+    pub fn resolve_conflict(
+        &self,
+        id: JobId,
+        conflict: u32,
+        decision: Decision,
+        apply_to_all: bool,
+    ) -> Result<(), EngineError> {
+        let job = self.get(&id)?;
+        let idx = conflict as usize;
+        let mut st = lock(&job.st);
+        if st.recs.get(idx).map(|r| r.st) != Some(FileSt::Conflict) {
+            return Err(EngineError::NoSuchConflict);
+        }
+        let folder = job.m.files[idx].kind == EntryKind::Dir;
+        match decision {
+            Decision::Ask => return Err(EngineError::BadAnswer("ask")),
+            Decision::Merge if !folder => return Err(EngineError::BadAnswer("merge")),
+            _ => {}
+        }
+        let class = |i: usize| (job.m.files[i].kind == EntryKind::Dir) == folder;
+        for i in 0..st.recs.len() {
+            let pick = i == idx || (apply_to_all && st.recs[i].st == FileSt::Conflict && class(i));
+            if pick {
+                st.recs[i].decision = Some(decision);
+                st.recs[i].st = FileSt::Pending;
+                st.dirty.insert(i / SEGMENT_FILES);
+            }
+        }
+        if apply_to_all {
+            if folder {
+                st.rules.folders = Some(decision);
+            } else {
+                st.rules.files = Some(decision);
+            }
+        }
+        job.save(&mut st, true);
+        drop(st);
+        job.answers.notify_all();
+        Ok(())
     }
 
     /// The job's report as it stands (final once the job is finished).
@@ -857,7 +978,7 @@ impl Engine {
     }
 }
 
-fn set_state(inner: &Inner, job: &Job, state: JobState) {
+pub(crate) fn set_state(inner: &Inner, job: &Job, state: JobState) {
     {
         let mut st = lock(&job.st);
         if st.state == state {
@@ -878,13 +999,32 @@ fn remove_partials(inner: &Inner, job: &Job) {
         return;
     };
     let root = remap(&job.m.dest.path, &job.m.dest.volume.mount, &v.mount);
+    let layout = crate::runner::Layout::new(&job.m);
     let recs = lock(&job.st).recs.clone();
-    for (e, r) in job.m.files.iter().zip(&recs) {
-        if r.st.is_terminal() || r.st == FileSt::Placed || e.kind == EntryKind::Dir {
+    // A replacing folder's hidden partial holds this job's new copies: it
+    // goes to the Trash whole (nothing of yours is in it), and its items
+    // start again on resume.
+    let mut redo: BTreeSet<usize> = BTreeSet::new();
+    for (i, (e, r)) in job.m.files.iter().zip(&recs).enumerate() {
+        if e.kind == EntryKind::Dir && r.replacing && !r.finished {
+            let partial = layout.children_of(&job.m, &recs, &root, job.id, i);
+            if partial.exists() {
+                let _ = inner.p.trash.trash(&partial);
+            }
+            redo.insert(i);
+            redo.extend(layout.inside(i));
+        }
+    }
+    for (i, (e, r)) in job.m.files.iter().zip(&recs).enumerate() {
+        if r.st.is_terminal()
+            || r.st == FileSt::Placed
+            || e.kind == EntryKind::Dir
+            || redo.contains(&i)
+        {
             continue;
         }
         let owner = PartialOwner {
-            final_path: root.join(&e.rel),
+            final_path: layout.dest_of(&job.m, &recs, &root, job.id, i),
             job: job.id,
             n: e.n,
         };
@@ -892,12 +1032,15 @@ fn remove_partials(inner: &Inner, job: &Job) {
     }
     let mut st = lock(&job.st);
     for (i, r) in st.recs.iter_mut().enumerate() {
-        if matches!(r.st, FileSt::Copying | FileSt::Written | FileSt::Flushed) {
-            *r = FileRec {
-                restarted: r.restarted.take(),
-                ..Default::default()
-            };
-            let _ = i;
+        if matches!(r.st, FileSt::Copying | FileSt::Written | FileSt::Flushed) || redo.contains(&i)
+        {
+            // Answers and names chosen stay; the copy itself starts again.
+            r.st = FileSt::Pending;
+            r.chunks.clear();
+            r.hash = None;
+            r.src_ident = None;
+            r.replacing = false;
+            r.outcome = None;
         }
     }
     let nseg = st.seg_gen.len();
@@ -913,21 +1056,14 @@ fn finish_cancel(inner: &Inner, job: &Job, close: bool) {
         set_state(inner, job, JobState::Closed);
         inner.sink.on_event(Event::JobFinished {
             job: job.id,
-            report,
+            report: Box::new(report),
         });
     } else {
         set_state(inner, job, JobState::Cancelled);
     }
 }
 
-/// Why a run stopped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Stop {
-    Done,
-    Cancelled,
-    DestGone,
-    DestFull,
-}
+pub(crate) use crate::runner::Stop;
 
 fn run(inner: Arc<Inner>, job: Arc<Job>) {
     let ctl = lock(&job.ctl).clone();
@@ -937,7 +1073,7 @@ fn run(inner: Arc<Inner>, job: Arc<Job>) {
         st.run_base = st.work_done;
     }
     let t = Instant::now();
-    let stop = Runner::new(&inner, &job, &ctl).go();
+    let stop = crate::runner::Runner::new(&inner, &job, &ctl).go();
     lock(&job.st).seconds += t.elapsed().as_secs_f64();
     match stop {
         Stop::Done => {
@@ -950,7 +1086,7 @@ fn run(inner: Arc<Inner>, job: Arc<Job>) {
                 set_state(&inner, &job, JobState::Finished);
                 inner.sink.on_event(Event::JobFinished {
                     job: job.id,
-                    report,
+                    report: Box::new(report),
                 });
             } else {
                 set_state(&inner, &job, JobState::WaitingForSource);
@@ -979,820 +1115,6 @@ fn run(inner: Arc<Inner>, job: Arc<Job>) {
     st.running = false;
     drop(st);
     job.cv.notify_all();
-}
-
-/// Logs a big file's flushed chunks into its journal record.
-struct Log<'a> {
-    job: &'a Job,
-    idx: usize,
-}
-
-impl ChunkLog for Log<'_> {
-    fn chunk_flushed(&self, index: usize, hash: u64) {
-        self.job.update(self.idx, |r| {
-            r.chunks.truncate(index);
-            r.chunks.push(format!("{hash:016x}"));
-        });
-    }
-}
-
-/// Turns one file's progress into job progress.
-struct FileSink<'a> {
-    inner: &'a Inner,
-    job: &'a Job,
-    idx: usize,
-}
-
-impl ProgressSink for FileSink<'_> {
-    fn progress(&self, fp: &FileProgress) {
-        let e = &self.job.m.files[self.idx];
-        let size = e.size;
-        let w = weight(&self.job.m, e);
-        let off = match fp.phase {
-            Phase::Preparing => 0,
-            Phase::Copying => fp.done,
-            Phase::Flushing => size,
-            Phase::Verifying => size + fp.done,
-            Phase::Rereading => 2 * size + fp.done,
-            Phase::Renaming | Phase::Metadata => w,
-        }
-        .min(w);
-        let (done, total, files_done, files_total, rate) = {
-            let st = lock(&self.job.st);
-            let done = st.work_done + off;
-            let el = st.run_started.map_or(0.0, |t| t.elapsed().as_secs_f64());
-            let rate = if el > 0.2 {
-                (done.saturating_sub(st.run_base) as f64 / el) as u64
-            } else {
-                0
-            };
-            (
-                done,
-                self.job.work_total,
-                st.files_done,
-                self.job.files_total,
-                rate,
-            )
-        };
-        self.inner.sink.on_event(Event::Progress(JobProgress {
-            job: self.job.id,
-            phase: fp.phase,
-            file: Some(e.rel.clone()),
-            done,
-            total,
-            files_done,
-            files_total,
-            bytes_per_sec: rate,
-            eta_secs: (rate > 0).then(|| total.saturating_sub(done) / rate),
-        }));
-    }
-}
-
-struct Runner<'a> {
-    inner: &'a Inner,
-    job: &'a Job,
-    ctl: &'a Control,
-    opts: Options,
-    dest_root: PathBuf,
-    src_mounts: Vec<Option<PathBuf>>,
-}
-
-/// What to do with a file after looking at the disk.
-enum Next {
-    /// Nothing more (the record is already updated).
-    Settled,
-    /// Copy it, continuing `Resume` if given.
-    Copy(Option<Box<Resume>>),
-}
-
-impl<'a> Runner<'a> {
-    fn new(inner: &'a Inner, job: &'a Job, ctl: &'a Control) -> Runner<'a> {
-        let o = &job.m.options;
-        let opts = Options {
-            chunk_size: o.chunk_size,
-            flush_each_chunk: o.flush_each_chunk,
-            reread_source: o.reread_source,
-            symlinks: if o.follow_symlinks {
-                Symlinks::Follow
-            } else {
-                Symlinks::CopyLink
-            },
-            allow_dataless: o.allow_dataless,
-            clone_same_volume: o.clone_same_volume,
-            #[cfg(feature = "fault-injection")]
-            faults: inner.cfg.faults.clone(),
-            ..Options::default()
-        };
-        Runner {
-            inner,
-            job,
-            ctl,
-            opts,
-            dest_root: PathBuf::new(),
-            src_mounts: Vec::new(),
-        }
-    }
-
-    fn p(&self) -> &Platform {
-        &self.inner.p
-    }
-
-    #[cfg_attr(not(feature = "fault-injection"), allow(unused_variables))]
-    fn fault(&self, point: GroupPoint) -> io::Result<()> {
-        #[cfg(feature = "fault-injection")]
-        if let Some(h) = &self.opts.faults {
-            use crate::fault::FaultPoint as F;
-            let p = match point {
-                GroupPoint::BeforeBarrier => F::BeforeGroupBarrier,
-                GroupPoint::AfterBarrier => F::AfterGroupBarrier,
-                GroupPoint::Rename(i) => F::MidGroupRename { index: i as u64 },
-                GroupPoint::BeforeFolderBarrier => F::BeforeFolderBarrier,
-            };
-            h.at(p, &self.dest_root)?;
-        }
-        Ok(())
-    }
-
-    fn go(&mut self) -> Stop {
-        let vols = self.p().volumes.mounted().unwrap_or_default();
-        let m = &self.job.m;
-        let Some(dv) = find(&vols, &m.dest.volume) else {
-            return Stop::DestGone;
-        };
-        self.dest_root = remap(&m.dest.path, &m.dest.volume.mount, &dv.mount);
-        if std::fs::create_dir_all(&self.dest_root).is_err() {
-            return Stop::DestGone;
-        }
-        self.src_mounts = m
-            .sources
-            .iter()
-            .map(|s| find(&vols, s).map(|v| v.mount.clone()))
-            .collect();
-        let mut group: Vec<(usize, CopyRequest)> = Vec::new();
-        let mut group_bytes = 0u64;
-        for idx in 0..m.files.len() {
-            if self.ctl.is_cancelled() {
-                return Stop::Cancelled;
-            }
-            let rec = self.job.rec(idx);
-            if rec.st.is_terminal() {
-                continue;
-            }
-            let e = &m.files[idx];
-            match e.kind {
-                EntryKind::Dir => {
-                    if let Some(s) = self.make_dir(idx, e) {
-                        return self.stop_with_group(s, &mut group);
-                    }
-                }
-                EntryKind::Other => self.job.update(idx, |r| {
-                    r.st = FileSt::Skipped;
-                    r.reason = Some("pipes, sockets and devices can't be copied".into());
-                }),
-                EntryKind::File | EntryKind::Link => {
-                    let Some(src) = self.source_path(e) else {
-                        self.job.update(idx, |r| r.st = FileSt::WaitingSource);
-                        continue;
-                    };
-                    let req = CopyRequest {
-                        source: src,
-                        dest: self.dest_root.join(&e.rel),
-                        job: self.job.id,
-                        index: e.n,
-                    };
-                    let small = e.kind == EntryKind::File && e.size < SMALL_FILE && !self.clones(e);
-                    match self.decide(idx, &req, e, small) {
-                        Next::Settled => {}
-                        Next::Copy(resume) if small && resume.is_none() => {
-                            group_bytes += e.size;
-                            group.push((idx, req));
-                            if group.len() >= GROUP_FILES || group_bytes >= GROUP_BYTES {
-                                group_bytes = 0;
-                                if let Some(s) = self.commit_group(&mut group) {
-                                    return s;
-                                }
-                            }
-                        }
-                        Next::Copy(resume) => {
-                            group_bytes = 0;
-                            if let Some(s) = self.commit_group(&mut group) {
-                                return s;
-                            }
-                            if let Some(s) = self.alone(idx, &req, resume.map(|r| *r)) {
-                                return s;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        self.commit_group(&mut group).unwrap_or(Stop::Done)
-    }
-
-    /// Stops; a pending group is dropped (nothing of it was written yet).
-    fn stop_with_group(&self, s: Stop, group: &mut Vec<(usize, CopyRequest)>) -> Stop {
-        group.clear();
-        s
-    }
-
-    /// Same APFS volume and cloning on: an instant clone, never grouped.
-    fn clones(&self, e: &Entry) -> bool {
-        let s = &self.job.m.sources[e.src_vol as usize];
-        let d = &self.job.m.dest.volume;
-        self.opts.clone_same_volume
-            && s.fs == "apfs"
-            && d.fs == "apfs"
-            && s.uuid.is_some()
-            && s.uuid == d.uuid
-    }
-
-    fn source_path(&self, e: &Entry) -> Option<PathBuf> {
-        let src = e.src.as_ref()?;
-        let v = &self.job.m.sources[e.src_vol as usize];
-        let mount = self.src_mounts.get(e.src_vol as usize)?.as_ref()?;
-        Some(remap(src, &v.mount, mount))
-    }
-
-    fn dest_gone(&self) -> bool {
-        match self.p().volumes.volume_of(&self.dest_root) {
-            Ok(v) => {
-                v.uuid != self.job.m.dest.volume.uuid || v.fs_type != self.job.m.dest.volume.fs
-            }
-            Err(_) => true,
-        }
-    }
-
-    fn source_gone(&self, src_vol: u32) -> bool {
-        let vols = self.p().volumes.mounted().unwrap_or_default();
-        find(&vols, &self.job.m.sources[src_vol as usize]).is_none()
-    }
-
-    fn make_dir(&self, idx: usize, e: &Entry) -> Option<Stop> {
-        let path = self.dest_root.join(&e.rel);
-        let made = match std::fs::create_dir(&path) {
-            Ok(()) => Ok(true),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                if std::fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
-                    Ok(false)
-                } else {
-                    self.job.update(idx, |r| {
-                        r.st = FileSt::Skipped;
-                        r.reason = Some("a file with this name is in the way".into());
-                    });
-                    return None;
-                }
-            }
-            Err(err) => Err(err),
-        };
-        match made {
-            Ok(created) => {
-                if created && let Some(parent) = path.parent() {
-                    let _ = self.p().flush.flush_dir(parent);
-                }
-                self.job.update(idx, |r| {
-                    r.st = FileSt::Done;
-                    r.outcome = Some("folder".into());
-                });
-                None
-            }
-            Err(_) if self.dest_gone() => Some(Stop::DestGone),
-            Err(err) if err.raw_os_error() == Some(libc::ENOSPC) => Some(Stop::DestFull),
-            Err(err) => {
-                self.job.update(idx, |r| {
-                    r.st = FileSt::Failed;
-                    r.reason = Some(format!(
-                        "the folder couldn't be made: {}",
-                        crate::copy::describe(&err)
-                    ));
-                });
-                None
-            }
-        }
-    }
-
-    /// Looks at the disk before copying a file that isn't finished (§6).
-    fn decide(&self, idx: usize, req: &CopyRequest, e: &Entry, small: bool) -> Next {
-        let rec = self.job.rec(idx);
-        let owner = PartialOwner {
-            final_path: req.dest.clone(),
-            job: self.job.id,
-            n: e.n,
-        };
-        let partial = owner.path();
-        let partial_there = std::fs::symlink_metadata(&partial).is_ok();
-        let p = self.p();
-        if std::fs::symlink_metadata(&req.dest).is_ok() {
-            if partial_there {
-                let _ = remove::remove_partial(p, &partial, &owner);
-            }
-            if rec.st == FileSt::Placed {
-                // Renamed before the interruption; only ACLs and flags were left.
-                let _ = p.meta.apply_security(&req.source, &req.dest);
-                self.job.update(idx, |r| {
-                    r.st = FileSt::Done;
-                    r.resumed = true;
-                    r.outcome.get_or_insert_with(|| "verified".into());
-                });
-                return Next::Settled;
-            }
-            // Existing files were marked skipped when the job was planned, so
-            // this one appeared since: most likely our own copy, renamed just
-            // before the journal caught up. It counts only if it is identical.
-            if self.same_content(req, e, &rec) {
-                self.job.update(idx, |r| {
-                    r.st = FileSt::Done;
-                    r.resumed = true;
-                    r.outcome = Some(
-                        if e.kind == EntryKind::Link {
-                            "link"
-                        } else {
-                            "verified"
-                        }
-                        .into(),
-                    );
-                });
-                return Next::Settled;
-            }
-            self.job.update(idx, |r| {
-                r.st = FileSt::Skipped;
-                r.reason = Some("already exists; nothing was replaced".into());
-            });
-            return Next::Settled;
-        }
-        let Ok(smd) = std::fs::symlink_metadata(&req.source) else {
-            return Next::Copy(None); // prepare() reports it
-        };
-        if let Some((size, mtime, ino)) = rec.src_ident {
-            let src_fs = &self.job.m.sources[e.src_vol as usize].fs;
-            let ino_counts = matches!(src_fs.as_str(), "apfs" | "hfs");
-            let now = ident(&smd);
-            if now.size != size || now.mtime_ns != mtime || (ino_counts && now.ino != ino) {
-                if partial_there {
-                    let _ = remove::remove_partial(p, &partial, &owner);
-                }
-                let why = if now.size != size {
-                    format!(
-                        "the original changed ({} → {})",
-                        job::human(size),
-                        job::human(now.size)
-                    )
-                } else {
-                    "the original was modified since its copy started".into()
-                };
-                self.job.update(idx, |r| {
-                    *r = FileRec {
-                        restarted: Some(why),
-                        ..Default::default()
-                    };
-                });
-                return Next::Copy(None);
-            }
-        }
-        if !partial_there {
-            return Next::Copy(None);
-        }
-        if small || e.kind != EntryKind::File {
-            let _ = remove::remove_partial(p, &partial, &owner);
-            return Next::Copy(None);
-        }
-        match resume_from(
-            p,
-            &partial,
-            &rec.chunk_hashes(),
-            self.opts.chunk_size,
-            smd.len(),
-        ) {
-            Ok(r) => Next::Copy(Some(Box::new(r))),
-            Err(_) => {
-                let _ = remove::remove_partial(p, &partial, &owner);
-                Next::Copy(None)
-            }
-        }
-    }
-
-    /// Whether the file at the destination is this job's copy: the same link
-    /// target, or the same content hash (the journal's, else the original's).
-    fn same_content(&self, req: &CopyRequest, e: &Entry, rec: &FileRec) -> bool {
-        if e.kind == EntryKind::Link {
-            return std::fs::read_link(&req.dest).ok() == std::fs::read_link(&req.source).ok();
-        }
-        let p = self.p();
-        let Ok(got) = crate::compare::hash_file(p, &req.dest) else {
-            return false;
-        };
-        let want = match &rec.hash {
-            Some(h) => Some(h.clone()),
-            None => crate::compare::hash_file(p, &req.source).ok().map(hex128),
-        };
-        want == Some(hex128(got))
-    }
-
-    fn start_rec(&self, idx: usize, req: &CopyRequest, keep_chunks: bool) {
-        let si = std::fs::symlink_metadata(&req.source)
-            .ok()
-            .map(|m| ident(&m));
-        self.job.update(idx, |r| {
-            r.st = FileSt::Copying;
-            r.src_ident = si.map(|i| (i.size, i.mtime_ns, i.ino));
-            r.hash = None;
-            if !keep_chunks {
-                r.chunks.clear();
-            }
-        });
-    }
-
-    fn done(&self, idx: usize, report: &FileReport) {
-        let rel = self.job.m.files[idx].rel.clone();
-        self.job.update(idx, |r| {
-            r.st = FileSt::Done;
-            r.outcome = Some(report.outcome.as_str().into());
-            if !report.hashes.chunks.is_empty() || report.outcome == Outcome::Verified {
-                r.hash = Some(report.hashes.file_hex());
-                r.chunks = report
-                    .hashes
-                    .chunks
-                    .iter()
-                    .map(|h| format!("{h:016x}"))
-                    .collect();
-            }
-            r.reread = report.source_reread;
-            r.meta_lost = report.metadata_lost.iter().map(|m| m.describe()).collect();
-            r.os_flush_only = report.flush_level == FlushLevel::OsOnly;
-            r.chunks_reused = report.chunks_reused;
-            r.resumed |= report.chunks_reused > 0;
-        });
-        self.inner.sink.on_event(Event::FileDone {
-            job: self.job.id,
-            path: rel,
-            report: Box::new(report.clone()),
-        });
-    }
-
-    /// Handles a file's error. `Some` stops the whole run.
-    fn error(&self, idx: usize, err: &CopyError) -> Option<Stop> {
-        let e = &self.job.m.files[idx];
-        if matches!(err, CopyError::Cancelled) {
-            self.job.update(idx, |r| {
-                r.st = FileSt::Pending;
-                r.chunks.clear();
-            });
-            return Some(Stop::Cancelled);
-        }
-        if self.dest_gone() {
-            // Leave the record and any partial: resume continues from them.
-            return Some(Stop::DestGone);
-        }
-        if let CopyError::Io { source, .. } = err
-            && source.raw_os_error() == Some(libc::ENOSPC)
-        {
-            self.job.update(idx, |r| {
-                r.st = FileSt::Pending;
-                r.chunks.clear();
-            });
-            return Some(Stop::DestFull);
-        }
-        if self.source_gone(e.src_vol) {
-            self.job.update(idx, |r| {
-                r.st = FileSt::WaitingSource;
-                r.chunks.clear();
-            });
-            return None;
-        }
-        let (st, why) = match err {
-            CopyError::Conflict(_) => (
-                FileSt::Skipped,
-                "already exists; nothing was replaced".to_string(),
-            ),
-            CopyError::Skipped(r) => (FileSt::Skipped, r.clone()),
-            other => (FileSt::Failed, other.to_string()),
-        };
-        self.job.update(idx, |r| {
-            r.st = st;
-            r.reason = Some(why.clone());
-            r.chunks.clear();
-        });
-        self.inner.sink.on_event(Event::FileNotCopied {
-            job: self.job.id,
-            path: e.rel.clone(),
-            failed: st == FileSt::Failed,
-            reason: why,
-        });
-        None
-    }
-
-    fn failure(&self, idx: usize, f: Failure) -> Option<Stop> {
-        self.error(idx, &f.error)
-    }
-
-    /// A big file, link or clone on its own (with chunk-level resume).
-    fn alone(&self, idx: usize, req: &CopyRequest, resume: Option<Resume>) -> Option<Stop> {
-        let keep = resume.as_ref().is_some_and(|r| r.len > 0);
-        self.start_rec(idx, req, keep);
-        if keep {
-            self.job.update(idx, |r| r.resumed = true);
-        }
-        let sink = FileSink {
-            inner: self.inner,
-            job: self.job,
-            idx,
-        };
-        let log = Log { job: self.job, idx };
-        let w = match FileWork::prepare(
-            self.p(),
-            req,
-            &self.opts,
-            self.ctl,
-            &sink,
-            &log,
-            true,
-            Some(&self.job.m.dest.volume.fs),
-        ) {
-            Ok(w) => w,
-            Err(e) => return self.error(idx, &e),
-        };
-        match w.run_alone(resume) {
-            Ok(r) => {
-                self.done(idx, &r);
-                None
-            }
-            Err(f) => self.failure(idx, f),
-        }
-    }
-
-    /// Small files: write and `fsync` each, one drive flush for the group,
-    /// then check and rename each, then one folder flush (§4.7). Nothing gets
-    /// its real name before the drive flush that covers its data.
-    fn commit_group(&self, group: &mut Vec<(usize, CopyRequest)>) -> Option<Stop> {
-        if group.is_empty() {
-            return None;
-        }
-        let reqs = std::mem::take(group);
-        let sinks: Vec<FileSink> = reqs
-            .iter()
-            .map(|(idx, _)| FileSink {
-                inner: self.inner,
-                job: self.job,
-                idx: *idx,
-            })
-            .collect();
-        let logs: Vec<Log> = reqs
-            .iter()
-            .map(|(idx, _)| Log {
-                job: self.job,
-                idx: *idx,
-            })
-            .collect();
-        let mut next = 0;
-        while next < reqs.len() {
-            let t0 = Instant::now();
-            let mut works: Vec<(usize, FileWork)> = Vec::new();
-            while next < reqs.len() && (works.is_empty() || t0.elapsed() < GROUP_TIME) {
-                let k = next;
-                next += 1;
-                let (idx, req) = &reqs[k];
-                self.start_rec(*idx, req, false);
-                let mut w = match FileWork::prepare(
-                    self.p(),
-                    req,
-                    &self.opts,
-                    self.ctl,
-                    &sinks[k],
-                    &logs[k],
-                    true,
-                    Some(&self.job.m.dest.volume.fs),
-                ) {
-                    Ok(w) => w,
-                    Err(e) => match self.error(*idx, &e) {
-                        Some(s) => return Some(self.abandon(works, s)),
-                        None => continue,
-                    },
-                };
-                match w.write(None, false).and_then(|()| w.seal(false)) {
-                    Ok(()) => {
-                        let hash = w.hashes().map(|h| h.file_hex());
-                        self.job.update(*idx, |r| {
-                            r.st = FileSt::Written;
-                            r.hash = hash;
-                        });
-                        works.push((k, w));
-                    }
-                    Err(e) => {
-                        if self.dest_gone() {
-                            w.keep_partial();
-                        } else {
-                            w.discard();
-                        }
-                        if let Some(s) = self.error(*idx, &e) {
-                            return Some(self.abandon(works, s));
-                        }
-                    }
-                }
-            }
-            if works.is_empty() {
-                continue;
-            }
-            // One drive flush for the whole group.
-            let barrier = self.fault(GroupPoint::BeforeBarrier).and_then(|()| {
-                let last = &works
-                    .last()
-                    .map(|(_, w)| w.partial.clone())
-                    .unwrap_or_default();
-                let f = File::open(last)?;
-                self.p().flush.flush_file(&f)
-            });
-            let level = match barrier {
-                Ok(l) => l,
-                Err(e) => return Some(self.barrier_failed(works, &reqs, e)),
-            };
-            if let Err(e) = self.fault(GroupPoint::AfterBarrier) {
-                return Some(self.barrier_failed(works, &reqs, e));
-            }
-            for (k, w) in works.iter_mut() {
-                w.flushed(level);
-                let chunks: Vec<String> = w
-                    .hashes()
-                    .map(|h| h.chunks.iter().map(|c| format!("{c:016x}")).collect())
-                    .unwrap_or_default();
-                self.job.update(reqs[*k].0, |r| {
-                    r.st = FileSt::Flushed;
-                    r.chunks = chunks;
-                });
-            }
-            let mut placed: Vec<(usize, FileWork)> = Vec::new();
-            let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
-            let mut stop = None;
-            let mut rest = works.into_iter().enumerate();
-            for (j, (k, mut w)) in rest.by_ref() {
-                let idx = reqs[k].0;
-                let step = self
-                    .fault(GroupPoint::Rename(j))
-                    .map_err(|e| CopyError::Io {
-                        phase: Phase::Renaming,
-                        message: crate::copy::describe(&e),
-                        source: e,
-                    })
-                    .and_then(|()| w.verify());
-                match step {
-                    Ok(Checked::Good) => match w.place(false) {
-                        Ok(()) => {
-                            self.job.update(idx, |r| r.st = FileSt::Placed);
-                            if let Some(d) = reqs[k].1.dest.parent() {
-                                dirs.insert(d.to_path_buf());
-                            }
-                            placed.push((k, w));
-                        }
-                        Err(e) => {
-                            let f = self.fail_or_keep(w, e);
-                            if let Some(s) = self.failure(idx, f) {
-                                stop = Some(s);
-                                break;
-                            }
-                        }
-                    },
-                    Ok(Checked::Redo) => match w.redo() {
-                        Ok(r) => self.done(idx, &r),
-                        Err(f) => {
-                            if let Some(s) = self.failure(idx, f) {
-                                stop = Some(s);
-                                break;
-                            }
-                        }
-                    },
-                    Err(e) => {
-                        let f = self.fail_or_keep(w, e);
-                        if let Some(s) = self.failure(idx, f) {
-                            stop = Some(s);
-                            break;
-                        }
-                    }
-                }
-            }
-            // Files not reached because the run stopped keep their partials
-            // on a pulled disk, and lose them otherwise.
-            for (_, (k, mut w)) in rest {
-                if stop == Some(Stop::DestGone) {
-                    w.keep_partial();
-                } else {
-                    w.discard();
-                    self.job.update(reqs[k].0, |r| {
-                        r.st = FileSt::Pending;
-                        r.chunks.clear();
-                    });
-                }
-            }
-            if let Some(s) = self.folder_barrier(&dirs, placed, &reqs) {
-                return Some(s);
-            }
-            if let Some(s) = stop {
-                return Some(s);
-            }
-        }
-        None
-    }
-
-    fn fail_or_keep(&self, mut w: FileWork, e: CopyError) -> Failure {
-        if self.dest_gone() {
-            w.keep_partial();
-            Failure {
-                error: e,
-                partial_left: None,
-            }
-        } else {
-            w.fail(e)
-        }
-    }
-
-    /// The renamed files of a group: one folder flush, then their metadata.
-    fn folder_barrier(
-        &self,
-        dirs: &BTreeSet<PathBuf>,
-        placed: Vec<(usize, FileWork)>,
-        reqs: &[(usize, CopyRequest)],
-    ) -> Option<Stop> {
-        if placed.is_empty() {
-            return None;
-        }
-        let r = self.fault(GroupPoint::BeforeFolderBarrier).and_then(|()| {
-            let mut level = FlushLevel::Device;
-            let last = dirs.iter().next_back();
-            for d in dirs {
-                if Some(d) == last {
-                    level = self.p().flush.flush_dir(d)?;
-                } else {
-                    self.p().flush.os_flush(&File::open(d)?)?;
-                }
-            }
-            Ok(level)
-        });
-        let level = match r {
-            Ok(l) => l,
-            Err(_) if self.dest_gone() => return Some(Stop::DestGone),
-            // The files are verified and renamed; only the folder flush is in
-            // doubt. Say so instead of claiming a full flush.
-            Err(_) => FlushLevel::OsOnly,
-        };
-        for (k, mut w) in placed {
-            w.flushed(level);
-            let report = w.finish();
-            self.done(reqs[k].0, &report);
-        }
-        None
-    }
-
-    /// The group's drive flush failed: nothing of it is renamed.
-    fn barrier_failed(
-        &self,
-        works: Vec<(usize, FileWork)>,
-        reqs: &[(usize, CopyRequest)],
-        e: io::Error,
-    ) -> Stop {
-        if self.dest_gone() {
-            return self.abandon(works, Stop::DestGone);
-        }
-        let why = format!("the drive flush failed: {}", crate::copy::describe(&e));
-        for (k, mut w) in works {
-            w.discard();
-            let idx = reqs[k].0;
-            self.job.update(idx, |r| {
-                r.st = FileSt::Failed;
-                r.reason = Some(why.clone());
-                r.chunks.clear();
-            });
-            self.inner.sink.on_event(Event::FileNotCopied {
-                job: self.job.id,
-                path: self.job.m.files[idx].rel.clone(),
-                failed: true,
-                reason: why.clone(),
-            });
-        }
-        if e.raw_os_error() == Some(libc::ENOSPC) {
-            Stop::DestFull
-        } else {
-            Stop::Done
-        }
-    }
-
-    /// Stops mid-group: partials stay on a pulled disk (resume uses them),
-    /// and are removed otherwise.
-    fn abandon(&self, works: Vec<(usize, FileWork)>, s: Stop) -> Stop {
-        for (_, mut w) in works {
-            if s == Stop::DestGone {
-                w.keep_partial();
-            } else {
-                w.discard();
-            }
-        }
-        s
-    }
-}
-
-#[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "fault-injection"), allow(dead_code))]
-enum GroupPoint {
-    BeforeBarrier,
-    AfterBarrier,
-    Rename(usize),
-    BeforeFolderBarrier,
 }
 
 #[cfg(test)]

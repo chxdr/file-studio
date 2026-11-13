@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use safe_transfer::{
-    Cancel, Engine, EngineConfig, Event, Item, JobId, JobInfo, JobReport, JobSpec, JobState,
-    Options, Platform, Resumability, Symlinks, human,
+    Cancel, ConflictPolicy, Decision, Disposal, Engine, EngineConfig, Event, Item, JobId, JobInfo,
+    JobReport, JobSpec, JobState, Mode, Options, Platform, Resumability, Symlinks, human,
 };
 use serde_json::json;
 
@@ -38,6 +38,9 @@ struct Cli {
     /// Longest the journal goes without a write, in milliseconds (tests).
     #[arg(long, global = true, hide = true, default_value_t = 500)]
     journal_interval_ms: u64,
+    /// Use this folder as the Trash instead of the real one (tests, scripts).
+    #[arg(long, global = true, hide = true)]
+    trash_dir: Option<PathBuf>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -84,6 +87,25 @@ enum Cmd {
         #[arg(long)]
         close: bool,
     },
+    /// Answer a question about a taken name (ids from `questions`).
+    Answer {
+        /// The job id.
+        job: String,
+        /// The question id.
+        id: u32,
+        /// skip, skip-identical, replace, keep-both or merge (folders).
+        #[arg(value_parser = parse_decision)]
+        decision: Decision,
+        /// Give the same answer to every waiting item of the same kind, and
+        /// to the ones still to come in this job.
+        #[arg(long)]
+        all: bool,
+    },
+    /// List the questions a job is waiting for.
+    Questions {
+        /// The job id.
+        job: String,
+    },
     /// Show a job's report.
     Report {
         /// The job id.
@@ -118,6 +140,45 @@ struct CopyOpts {
     /// A label for the job ("Smith wedding → CLIENT_A").
     #[arg(long)]
     label: Option<String>,
+    /// Move instead of copy: a rename on the same volume; across volumes
+    /// each original goes to the Trash once its copy is verified.
+    #[arg(long = "move")]
+    move_: bool,
+    /// With --move: keep the originals where they are.
+    #[arg(long, requires = "move_")]
+    keep_originals: bool,
+    /// When a file's name is taken: ask, skip, skip-identical, replace or
+    /// keep-both. Default: ask in a terminal, skip otherwise.
+    #[arg(long, value_parser = parse_decision)]
+    on_conflict: Option<Decision>,
+    /// When a folder's name is taken: merge (default), skip, keep-both,
+    /// replace or ask.
+    #[arg(long, value_parser = parse_decision, default_value = "merge")]
+    folders: Decision,
+    /// Files worked on at once (default: 4 small, 2 big).
+    #[arg(long)]
+    workers: Option<usize>,
+}
+
+fn parse_decision(s: &str) -> Result<Decision, String> {
+    Ok(match s {
+        "ask" => Decision::Ask,
+        "skip" => Decision::Skip,
+        "skip-identical" => Decision::SkipIfIdentical,
+        "replace" => Decision::Replace,
+        "keep-both" => Decision::KeepBoth,
+        "merge" => Decision::Merge,
+        _ => {
+            return Err(format!(
+                "“{s}” isn't one of ask, skip, skip-identical, replace, keep-both, merge"
+            ));
+        }
+    })
+}
+
+fn interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
 }
 
 /// Parses "64M", "1G", "4096", "512K".
@@ -250,6 +311,15 @@ impl Printer {
                     );
                 }
             }
+            Event::Conflict { info, .. } => {
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "conflict", "id": info.id, "path": info.path, "folder": info.folder,
+                               "existing_size": info.existing_size, "source_size": info.source_size})
+                    );
+                }
+            }
             Event::ResumeAvailable { .. } | Event::JobFinished { .. } => {}
         }
     }
@@ -265,7 +335,17 @@ fn open_engine(cli: &Cli, printer: Arc<Printer>) -> Result<Engine, ExitCode> {
             .map(|h| Arc::new(h) as Arc<dyn safe_transfer::fault::FaultHook>);
     }
     let sink = move |e: Event| printer.on(e);
-    Engine::open(cfg, Platform::native(), Arc::new(sink)).map_err(|e| {
+    let mut platform = Platform::native();
+    if let Some(dir) = &cli.trash_dir {
+        match safe_transfer::DirTrash::new(dir) {
+            Ok(t) => platform.trash = Arc::new(t),
+            Err(e) => {
+                eprintln!("safe-transfer: the trash folder: {e}");
+                return Err(ExitCode::from(2));
+            }
+        }
+    }
+    Engine::open(cfg, platform, Arc::new(sink)).map_err(|e| {
         eprintln!("safe-transfer: {e}");
         ExitCode::from(2)
     })
@@ -330,6 +410,28 @@ fn print_report(json_out: bool, r: &JobReport, info: &JobInfo) {
     for n in &r.metadata_lost {
         println!("  couldn't keep for {}: {}", n.path.display(), n.reason);
     }
+    if r.moved > 0 {
+        println!("  {} moved by renaming", r.moved);
+    }
+    for n in &r.replaced {
+        println!("  replaced {}: {}", n.path.display(), n.reason);
+    }
+    for n in &r.kept_both {
+        println!("  kept both for {}: {}", n.path.display(), n.reason);
+    }
+    if !r.sources_trashed.is_empty() {
+        println!("  {} originals moved to the Trash", r.sources_trashed.len());
+    }
+    for n in &r.sources_kept {
+        println!("  original kept {}: {}", n.path.display(), n.reason);
+    }
+    for n in &r.waiting_for_answer {
+        println!(
+            "  waiting for an answer: {} (safe-transfer questions {})",
+            n.path.display(),
+            r.job
+        );
+    }
 }
 
 fn exit_for(r: &JobReport, info: &JobInfo) -> ExitCode {
@@ -351,12 +453,54 @@ fn run_job(engine: &Engine, id: JobId, json_out: bool) -> ExitCode {
         eprintln!("safe-transfer: {e}");
         return ExitCode::from(2);
     }
-    let Some(info) = engine.wait(id, Duration::from_secs(365 * 86_400)) else {
-        return ExitCode::from(2);
+    let info = loop {
+        let Some(info) = engine.wait(id, Duration::from_millis(250)) else {
+            return ExitCode::from(2);
+        };
+        if info.state == JobState::WaitingForAnswer {
+            if json_out || !interactive() {
+                // Scripts answer with `safe-transfer answer`; the job keeps waiting.
+                break info;
+            }
+            ask_in_terminal(engine, id);
+            continue;
+        }
+        if !matches!(info.state, JobState::Running | JobState::Paused) {
+            break info;
+        }
     };
     let r = engine.report(id).unwrap_or_default();
     print_report(json_out, &r, &info);
     exit_for(&r, &info)
+}
+
+/// Asks about each taken name in the terminal.
+fn ask_in_terminal(engine: &Engine, id: JobId) {
+    for q in engine.conflicts(id) {
+        eprint!(
+            "\r\x1b[2K“{}” already exists ({} there, {} new). [r]eplace, [k]eep both, [s]kip{}; add ! to apply to all: ",
+            q.path.display(),
+            human(q.existing_size),
+            human(q.source_size),
+            if q.folder { ", [m]erge" } else { "" }
+        );
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).unwrap_or(0) == 0 {
+            line = "s".into();
+        }
+        let line = line.trim();
+        let all = line.ends_with('!');
+        let d = match line.trim_end_matches('!') {
+            "r" => Decision::Replace,
+            "k" => Decision::KeepBoth,
+            "m" if q.folder => Decision::Merge,
+            _ => Decision::Skip,
+        };
+        if engine.resolve_conflict(id, q.id, d, all).is_ok() && all {
+            break;
+        }
+    }
 }
 
 fn items(sources: &[PathBuf]) -> Vec<Item> {
@@ -404,6 +548,21 @@ fn main() -> ExitCode {
                     Symlinks::CopyLink
                 },
                 clone_same_volume: !opts.no_clone,
+                mode: if opts.move_ { Mode::Move } else { Mode::Copy },
+                disposal: if opts.keep_originals {
+                    Disposal::Keep
+                } else {
+                    Disposal::Trash
+                },
+                on_conflict: ConflictPolicy {
+                    files: opts.on_conflict.unwrap_or(if json_out || !interactive() {
+                        Decision::Skip
+                    } else {
+                        Decision::Ask
+                    }),
+                    folders: opts.folders,
+                },
+                workers: opts.workers,
                 ..Options::default()
             };
             if let Some(l) = &opts.label {
@@ -558,6 +717,43 @@ fn main() -> ExitCode {
                         ExitCode::from(2)
                     }
                 }
+            }
+            Err(c) => c,
+        },
+        Cmd::Answer {
+            job,
+            id,
+            decision,
+            all,
+        } => match find_job(&engine, job) {
+            Ok(j) => match engine.resolve_conflict(j, *id, *decision, *all) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("safe-transfer: {e}");
+                    ExitCode::from(2)
+                }
+            },
+            Err(c) => c,
+        },
+        Cmd::Questions { job } => match find_job(&engine, job) {
+            Ok(j) => {
+                for q in engine.conflicts(j) {
+                    if json_out {
+                        println!(
+                            "{}",
+                            json!({"id": q.id, "path": q.path, "folder": q.folder,
+                                   "existing_size": q.existing_size, "source_size": q.source_size})
+                        );
+                    } else {
+                        println!(
+                            "{}  {}{}",
+                            q.id,
+                            q.path.display(),
+                            if q.folder { "/" } else { "" }
+                        );
+                    }
+                }
+                ExitCode::SUCCESS
             }
             Err(c) => c,
         },

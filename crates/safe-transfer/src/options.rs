@@ -3,7 +3,83 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::chunk::DEFAULT_CHUNK_SIZE;
+
+/// Copy, or move (the original goes to the Trash once its copy is verified).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    /// Copy; the originals stay where they are.
+    #[default]
+    Copy,
+    /// Move: a rename on the same volume; across volumes copy, verify, then
+    /// send the original to the Trash (never a hard delete, §7).
+    Move,
+}
+
+/// What to do when the destination name is taken (proposal §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    /// Ask: the item waits for an answer; the rest of the job carries on.
+    Ask,
+    /// Leave the existing item; don't copy this one.
+    Skip,
+    /// Skip if the existing file has the same content; otherwise ask.
+    SkipIfIdentical,
+    /// The new item is written and verified first; only then does the old
+    /// one go to the Trash, and the new one is renamed into place.
+    Replace,
+    /// Keep both: the new item gets Finder's next free name ("name 2").
+    KeepBoth,
+    /// Folders only: copy into the existing folder.
+    Merge,
+}
+
+impl Decision {
+    /// A short lowercase name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Decision::Ask => "ask",
+            Decision::Skip => "skip",
+            Decision::SkipIfIdentical => "skip_if_identical",
+            Decision::Replace => "replace",
+            Decision::KeepBoth => "keep_both",
+            Decision::Merge => "merge",
+        }
+    }
+}
+
+/// Default answers for files and for folders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictPolicy {
+    /// For files and symlinks. Default: ask.
+    pub files: Decision,
+    /// For folders. Default: merge.
+    pub folders: Decision,
+}
+
+impl Default for ConflictPolicy {
+    fn default() -> Self {
+        ConflictPolicy {
+            files: Decision::Ask,
+            folders: Decision::Merge,
+        }
+    }
+}
+
+/// What happens to a moved original.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposal {
+    /// To the Trash, where Finder's Put Back works (default).
+    #[default]
+    Trash,
+    /// Kept where it is (a move that only copies).
+    Keep,
+}
 
 /// What to do with a symlink among the sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -40,6 +116,15 @@ pub struct Options {
     pub clone_same_volume: bool,
     /// Minimum time between progress reports. Default 16 ms (F-010).
     pub progress_interval: Duration,
+    /// Copy or move (jobs only).
+    pub mode: Mode,
+    /// What to do when a name is taken (jobs only).
+    pub on_conflict: ConflictPolicy,
+    /// What happens to moved originals (jobs only).
+    pub disposal: Disposal,
+    /// Files worked on at once. `None`: 4 for small files and 2 for big
+    /// ones (one copying while the previous is checked).
+    pub workers: Option<usize>,
     /// Test hooks (crash and yank tests). Only with the `fault-injection` feature.
     #[cfg(feature = "fault-injection")]
     pub faults: Option<std::sync::Arc<dyn crate::fault::FaultHook>>,
@@ -55,6 +140,10 @@ impl Default for Options {
             allow_dataless: false,
             clone_same_volume: true,
             progress_interval: Duration::from_millis(16),
+            mode: Mode::Copy,
+            on_conflict: ConflictPolicy::default(),
+            disposal: Disposal::Trash,
+            workers: None,
             #[cfg(feature = "fault-injection")]
             faults: None,
         }

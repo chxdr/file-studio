@@ -276,6 +276,15 @@ fn an_exfat_card_gets_a_flushed_verified_copy_and_honest_metadata() {
     assert_eq!(v.fs_type, "exfat");
     assert!(v.uuid.is_some());
     assert!(no_partials(&img.mount));
+    // AppleDouble placement (proposal §9, decided in M3): the xattrs are
+    // written on the partial and travel with it in the rename, so the card
+    // ends up with the final name's `._` companion and never an orphaned
+    // `._.<name>…st-partial` (resume and cancel remove those with the partial).
+    assert!(
+        names(&img.mount).contains(&"._DSC00001.ARW".to_string()),
+        "{:?}",
+        names(&img.mount)
+    );
     assert!(
         !names(&img.mount).iter().any(|n| n.starts_with("._.")),
         "{:?}",
@@ -593,4 +602,184 @@ fn an_original_changed_while_interrupted_is_copied_again_and_reported() {
         safe_transfer::compare::compare(&Platform::native(), &src, &img.mount.join("shoot"))
             .unwrap();
     assert!(diffs.is_empty(), "{diffs:?}");
+}
+
+// ───────────── M3: moves and replaces, yanked ─────────────
+
+fn m3_engine(journal: &Path, hook: Arc<dyn FaultHook>, ev: &Events, trash: &Path) -> Engine {
+    let mut cfg = EngineConfig::new(journal);
+    cfg.journal_interval = Duration::ZERO;
+    cfg.faults = Some(hook);
+    let mut p = Platform::native();
+    p.trash = Arc::new(safe_transfer::DirTrash::new(trash).unwrap());
+    Engine::open(cfg, p, ev.sink()).unwrap()
+}
+
+fn all_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+fn contents(dir: &Path) -> Vec<Vec<u8>> {
+    all_files(dir)
+        .into_iter()
+        .filter(|p| !p.file_name().unwrap().to_string_lossy().starts_with("._"))
+        .filter_map(|p| std::fs::read(p).ok())
+        .collect()
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn a_move_onto_a_card_never_loses_a_file_when_the_card_is_pulled() {
+    let img = Image::new("ExFAT", 256);
+    for (point, offset, nth) in [
+        ("mid_chunk", 5 << 20, 1),
+        ("before_source_trash", 0, 3),
+        ("before_group_barrier", 0, 1),
+        ("mid_group_rename", 5, 1),
+        ("before_folder_barrier", 0, 1),
+    ] {
+        let what = format!("move {point}#{nth}");
+        let (s, keep, j, t) = (
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+        );
+        let src = shoot(s.path());
+        let pristine = shoot(keep.path());
+        let trash = t.path().join("Trash");
+        let dest = img.mount.join(point);
+        std::fs::create_dir(&dest).unwrap();
+        let hook = YankAt::new(point, offset, nth, &img);
+        let ev = Events::default();
+        let e = m3_engine(j.path(), hook.clone(), &ev, &trash);
+        let mut spec = job_spec(&src, &dest);
+        spec.options.mode = safe_transfer::Mode::Move;
+        let id = e.create(spec).unwrap();
+        e.start(id).unwrap();
+        assert_eq!(
+            e.wait(id, Duration::from_secs(300)).unwrap().state,
+            JobState::WaitingForDestination,
+            "{what}"
+        );
+        assert!(hook.fired(), "{what}");
+        img.put_back();
+        // Every original is somewhere whole: still in place, in the Trash, or
+        // complete on the card. Nothing is missing from all three.
+        let (here, trashed, there) = (contents(&src), contents(&trash), contents(&dest));
+        real_names_are_complete(&pristine, &dest.join("shoot"), &what);
+        for want in contents(&pristine) {
+            assert!(
+                here.contains(&want) || trashed.contains(&want) || there.contains(&want),
+                "{what}: a file of {} bytes is nowhere",
+                want.len()
+            );
+        }
+        e.volumes_changed();
+        e.resume(id).unwrap();
+        assert_eq!(
+            e.wait(id, Duration::from_secs(300)).unwrap().state,
+            JobState::Finished,
+            "{what}"
+        );
+        let diffs =
+            safe_transfer::compare::compare(&Platform::native(), &pristine, &dest.join("shoot"))
+                .unwrap();
+        assert!(diffs.is_empty(), "{what}: {diffs:?}");
+        assert!(
+            all_files(&src).is_empty(),
+            "{what}: originals left: {:?}",
+            all_files(&src)
+        );
+        assert!(no_partials_under(&dest).is_empty(), "{what}");
+    }
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn replacing_on_a_card_never_loses_the_old_or_shows_a_half_new() {
+    let img = Image::new("ExFAT", 256);
+    for (point, nth) in [
+        ("before_replace_trash", 3),
+        ("after_rename", 4),
+        ("before_folder_swap", 1),
+    ] {
+        let what = format!("replace {point}#{nth}");
+        let (s, j) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let src = shoot(s.path());
+        let dest = img.mount.join(point);
+        // Older versions of everything are already on the card.
+        for f in all_files(&src) {
+            let rel = f.strip_prefix(s.path()).unwrap();
+            let q = dest.join(rel);
+            std::fs::create_dir_all(q.parent().unwrap()).unwrap();
+            std::fs::write(&q, format!("old {}", rel.display())).unwrap();
+        }
+        let trash = img.mount.join(format!("Trash-{point}"));
+        let hook = YankAt::new(point, 0, nth, &img);
+        let ev = Events::default();
+        let e = m3_engine(j.path(), hook.clone(), &ev, &trash);
+        let mut spec = job_spec(&src, &dest);
+        spec.options.on_conflict.files = safe_transfer::Decision::Replace;
+        if point == "before_folder_swap" {
+            spec.options.on_conflict.folders = safe_transfer::Decision::Replace;
+        }
+        let id = e.create(spec).unwrap();
+        e.start(id).unwrap();
+        assert_eq!(
+            e.wait(id, Duration::from_secs(300)).unwrap().state,
+            JobState::WaitingForDestination,
+            "{what}"
+        );
+        img.put_back();
+        let trashed = contents(&trash);
+        for f in all_files(&src) {
+            let rel = f.strip_prefix(s.path()).unwrap();
+            let old = format!("old {}", rel.display()).into_bytes();
+            let new = std::fs::read(&f).unwrap();
+            let now = std::fs::read(dest.join(rel)).ok();
+            if point != "before_folder_swap" {
+                match &now {
+                    None => {}
+                    Some(b) => assert!(
+                        *b == old || *b == new,
+                        "{what}: {rel:?} is neither old nor new"
+                    ),
+                }
+            }
+            assert!(
+                now.as_deref() == Some(&old[..])
+                    || trashed.contains(&old)
+                    || contents(&dest).contains(&old),
+                "{what}: the old {rel:?} is lost"
+            );
+        }
+        e.volumes_changed();
+        e.resume(id).unwrap();
+        assert_eq!(
+            e.wait(id, Duration::from_secs(300)).unwrap().state,
+            JobState::Finished,
+            "{what}"
+        );
+        let diffs = safe_transfer::compare::compare(&Platform::native(), &src, &dest.join("shoot"))
+            .unwrap();
+        assert!(diffs.is_empty(), "{what}: {diffs:?}");
+        assert!(
+            no_partials_under(&dest).is_empty(),
+            "{what}: {:?}",
+            no_partials_under(&dest)
+        );
+    }
 }

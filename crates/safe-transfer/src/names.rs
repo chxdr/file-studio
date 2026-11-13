@@ -103,6 +103,50 @@ pub fn is_partial_name(path: &Path) -> bool {
         .is_some_and(|n| n.starts_with('.') && n.ends_with(PARTIAL_SUFFIX))
 }
 
+/// Splits a name into stem and extension the way Finder numbers copies:
+/// folders and dot-files have no extension; otherwise the last `.ext` is kept.
+fn split_ext(name: &str, is_dir: bool) -> (&str, &str) {
+    if is_dir {
+        return (name, "");
+    }
+    match name.rfind('.') {
+        Some(0) | None => (name, ""),
+        Some(i) => (&name[..i], &name[i..]),
+    }
+}
+
+/// Splits a trailing " N" (N ≥ 2) from a stem: "photo 3" → ("photo", Some(3)).
+fn split_number(stem: &str) -> (&str, Option<u64>) {
+    if let Some(i) = stem.rfind(' ') {
+        let tail = &stem[i + 1..];
+        if !tail.is_empty()
+            && tail.bytes().all(|b| b.is_ascii_digit())
+            && !tail.starts_with('0')
+            && let Ok(n) = tail.parse::<u64>()
+            && n >= 2
+            && i > 0
+        {
+            return (&stem[..i], Some(n));
+        }
+    }
+    (stem, None)
+}
+
+fn fit(stem: &str, tail: &str, ext: &str) -> String {
+    let room = NAME_MAX.saturating_sub(tail.len() + ext.len());
+    format!("{}{tail}{ext}", truncate_bytes(stem, room))
+}
+
+/// "Keep Both" names in the order Finder tries them: `report.pdf` →
+/// `report 2.pdf`, `report 3.pdf`…; `report 2.pdf` → `report 3.pdf`…;
+/// folders `Photos` → `Photos 2`.
+pub fn keep_both_names(name: &str, is_dir: bool) -> impl Iterator<Item = String> + '_ {
+    let (stem, ext) = split_ext(name, is_dir);
+    let (base, n) = split_number(stem);
+    let start = n.map_or(2, |n| n + 1);
+    (start..).map(move |i| fit(base, &format!(" {i}"), ext))
+}
+
 /// The comparison key for a name: NFC, plus case folding on case-insensitive
 /// volumes. Only for comparing; never for display or I/O.
 pub fn name_key(name: &str, case_sensitive: bool) -> String {
@@ -132,6 +176,27 @@ mod tests {
         assert_ne!(
             JobId::from_random([0; 5]),
             JobId::from_random([0, 0, 0, 0, 1])
+        );
+    }
+
+    #[test]
+    fn keep_both_names_count_like_finder() {
+        let take = |n: &str, d: bool| keep_both_names(n, d).take(2).collect::<Vec<_>>();
+        assert_eq!(
+            take("DSC01234.ARW", false),
+            ["DSC01234 2.ARW", "DSC01234 3.ARW"]
+        );
+        assert_eq!(
+            take("report 2.pdf", false),
+            ["report 3.pdf", "report 4.pdf"]
+        );
+        assert_eq!(take("Photos", true), ["Photos 2", "Photos 3"]);
+        assert!(
+            keep_both_names(&"a".repeat(255), false)
+                .next()
+                .unwrap()
+                .len()
+                <= 255
         );
     }
 

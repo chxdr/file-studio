@@ -9,6 +9,7 @@ spikes/safe-transfer/bench_m2.sh                                            # sm
 **The suites:**
 - `copy.rs`: the single-file pipeline (M1) on temp folders of the internal disk.
 - `jobs.rs`: multi-file jobs through the engine (M2), on temp folders.
+- `m3.rs`: conflicts, moves (cross-volume simulated with a second volume UUID), folder metadata and workers (M3). It uses a folder as the Trash, never the real one.
 - `faults.rs`:
   - named fault points (`--features fault-injection`)
   - the `#[ignore]`d disk-image tests, for single files and for jobs
@@ -29,10 +30,11 @@ The yank tests are all `#[ignore]`d, so a plain `cargo test` never touches a dis
 
 The tests only touch the images they create, found by their own image path, never volumes you mounted (cards, drives, other images). They list mounted volumes to find their own by UUID; that only reads `getmntinfo`.
 
-**Expect notifications.** macOS shows a **"Disk Not Ejected Properly"** notification for every yank (the volumes are called `STTEST`). That's the point of the test, not a problem. A full `--ignored` run yanks about **32** times:
+**Expect notifications.** macOS shows a **"Disk Not Ejected Properly"** notification for every yank (the volumes are called `STTEST`). That's the point of the test, not a problem. A full `--ignored` run yanks about **40** times:
 - the single-file suites: 5 points on each of 2 filesystems
 - the job suites: 9 points on each of 2 filesystems
 - the remount, pulled-source-card and changed-original tests: one each
+- the M3 move suite (5 points) and replace suite (3 points)
 - the negative control: one
 
 The notifications can be cleared in Notification Centre.

@@ -35,6 +35,10 @@ fn main() {
     }
     let opts = Options {
         clone_same_volume: false,
+        // ST_WORKERS=n to compare worker counts; default is automatic.
+        workers: std::env::var("ST_WORKERS")
+            .ok()
+            .and_then(|w| w.parse().ok()),
         ..Options::default()
     };
     let journal = tempfile::tempdir().unwrap();

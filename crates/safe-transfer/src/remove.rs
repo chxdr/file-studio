@@ -2,9 +2,11 @@
 //! (`tests/safety_grep.rs`) fails if `remove_file`, `remove_dir`,
 //! `remove_dir_all`, `unlink` or `rmdir` appear anywhere else in the crate.
 //!
-//! There are exactly two ways to remove something:
+//! There are exactly three ways to remove something:
 //! - [`remove_partial`], for a partial file Safe Transfer itself wrote;
-//! - [`remove_job_dir`], for a finished job's own journal folder on the Mac.
+//! - [`remove_job_dir`], for a finished job's own journal folder on the Mac;
+//! - [`remove_empty_source_dir`], for a moved folder's original once it is
+//!   empty (`rmdir`, which refuses a folder with anything left in it).
 //!
 //! Safe Transfer never removes a user's file; a move sends the original to
 //! the Trash instead.
@@ -63,6 +65,13 @@ pub fn remove_partial(platform: &Platform, path: &Path, owner: &PartialOwner) ->
         }
     }
     Ok(())
+}
+
+/// Removes the original folder of a move once every item in it was moved
+/// (copied, verified and sent to the Trash). Uses `rmdir`, which refuses a
+/// folder that still holds anything, so nothing in it can be lost.
+pub fn remove_empty_source_dir(dir: &Path) -> io::Result<()> {
+    std::fs::remove_dir(dir)
 }
 
 /// Whether `name` is one of the files a job's journal folder holds.
