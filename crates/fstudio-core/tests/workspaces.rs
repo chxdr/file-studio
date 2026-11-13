@@ -499,3 +499,29 @@ fn workspace_changes_are_announced() {
         matches!(e, CoreEvent::WorkspacesChanged)
     });
 }
+
+#[test]
+fn deleted_workspace_ids_are_never_reused() {
+    let mut h = harness();
+    h.window_at("");
+    let a = h
+        .engine
+        .create_workspace("A", "", NewWorkspace::Empty)
+        .unwrap();
+    h.engine.switch_workspace_at(0).unwrap();
+    h.engine.delete_workspace(a).unwrap();
+    let b = h
+        .engine
+        .create_workspace("B", "", NewWorkspace::Empty)
+        .unwrap();
+    assert!(b.0 > a.0, "{b:?} reuses or precedes {a:?}");
+    h.engine.switch_workspace_at(0).unwrap();
+    h.engine.delete_workspace(b).unwrap();
+    h.relaunch();
+    h.engine.restore_session();
+    let c = h
+        .engine
+        .create_workspace("C", "", NewWorkspace::Empty)
+        .unwrap();
+    assert!(c.0 > b.0, "{c:?} reuses or precedes {b:?} after a relaunch");
+}

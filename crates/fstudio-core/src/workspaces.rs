@@ -45,6 +45,10 @@ pub(crate) const MIGRATIONS: Migrations = Migrations {
 
 /// The key holding the active workspace's id.
 const ACTIVE_KEY: &str = "core.workspaces.active";
+/// The key holding the next workspace id. Ids are never reused, so anything
+/// keyed on a workspace id (per-workspace favourites, later) can never wake
+/// up attached to a different workspace after a delete.
+const NEXT_ID_KEY: &str = "core.workspaces.next_id";
 
 /// The first workspace's name.
 pub const DEFAULT_WORKSPACE_NAME: &str = "Everyday";
@@ -192,6 +196,12 @@ fn neighbour(index: usize, len: usize) -> Option<usize> {
     }
 }
 
+/// The id for a new workspace: the stored counter, but never at or below an
+/// id already in the table (an older database without the counter).
+fn next_id(counter: Option<i64>, max_existing: i64) -> i64 {
+    counter.unwrap_or(1).max(max_existing + 1).max(1)
+}
+
 /// The index `delta` steps from `index`, wrapping around `len`.
 fn cycle(index: usize, len: usize, delta: i64) -> usize {
     let len = len as i64;
@@ -236,12 +246,31 @@ fn insert_row(
     let tx = c.transaction()?;
     let mut order: Vec<WorkspaceId> = read_rows(&tx)?.into_iter().map(|r| r.id).collect();
     let now = now_ns();
-    tx.execute(
-        "INSERT INTO core_workspaces(name, icon, state, position, created_ns, updated_ns)
-         VALUES (?1, ?2, ?3, 0, ?4, ?4)",
-        params![name, icon, state, now],
+    // SQLite would hand out the highest deleted row id again; never reuse one.
+    let counter: Option<String> = tx
+        .query_row(
+            "SELECT value FROM db_kv WHERE key = ?1",
+            [NEXT_ID_KEY],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let max: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(id), 0) FROM core_workspaces",
+        [],
+        |r| r.get(0),
     )?;
-    let id = WorkspaceId(tx.last_insert_rowid() as u64);
+    let id = next_id(counter.and_then(|c| c.parse().ok()), max);
+    tx.execute(
+        "INSERT INTO core_workspaces(id, name, icon, state, position, created_ns, updated_ns)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+        params![id, name, icon, state, now],
+    )?;
+    tx.execute(
+        "INSERT INTO db_kv(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![NEXT_ID_KEY, (id + 1).to_string()],
+    )?;
+    let id = WorkspaceId(id as u64);
     order.insert(index.min(order.len()), id);
     renumber(&tx, &order)?;
     tx.commit()?;
@@ -261,6 +290,27 @@ impl crate::Engine {
 
     pub(crate) fn workspaces_changed(&self) {
         self.shared.emit(CoreEvent::WorkspacesChanged);
+    }
+
+    /// The active workspace's id, without touching the database. `None`
+    /// only before the first session restore or workspace call. Anything
+    /// kept per workspace (per-workspace favourites, later) keys on this.
+    pub fn active_workspace_id(&self) -> Option<WorkspaceId> {
+        self.live.lock().active
+    }
+
+    /// Runs after the active workspace changed from `from` to `to` (both
+    /// committed). Per-workspace data that the shell shows outside the
+    /// windows (the sidebar's favourites, later) reloads here.
+    fn after_switch(&self, _from: WorkspaceId, _to: WorkspaceId) {
+        self.workspaces_changed();
+    }
+
+    /// Forgets everything kept for a deleted workspace. Only layouts and
+    /// in-memory history live here; per-workspace favourites, when they come,
+    /// are dropped here too (never any file).
+    fn forget_workspace(&self, id: WorkspaceId) {
+        self.live.lock().closed.remove(&id);
     }
 
     /// The active workspace from the database, creating "Everyday" when
@@ -508,7 +558,7 @@ impl crate::Engine {
         self.model.lock().closed = live.closed.remove(&id).unwrap_or_default();
         self.save_session_locked(&live, Some(id));
         drop(live);
-        self.workspaces_changed();
+        self.after_switch(current, id);
         Ok(self.workspace_state())
     }
 
@@ -662,7 +712,7 @@ impl crate::Engine {
                 tx.commit()
             })?;
         }
-        self.live.lock().closed.remove(&id);
+        self.forget_workspace(id);
         self.workspaces_changed();
         Ok(())
     }
@@ -838,6 +888,16 @@ mod tests {
         assert_eq!(clean_icon(""), FALLBACK_ICON);
         assert_eq!(clean_icon("camera"), "camera");
         assert_eq!(clean_icon("rm -rf"), FALLBACK_ICON);
+    }
+
+    #[test]
+    fn ids_are_never_reused() {
+        assert_eq!(next_id(None, 0), 1);
+        assert_eq!(next_id(None, 7), 8);
+        // The counter is ahead of the table after the newest row was deleted.
+        assert_eq!(next_id(Some(9), 7), 9);
+        // An older database: the table is ahead of a missing or stale counter.
+        assert_eq!(next_id(Some(3), 7), 8);
     }
 
     #[test]
