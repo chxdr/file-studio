@@ -65,6 +65,8 @@ expect "first launch has Everyday, active, on ⌃⌘1" "^WORKSPACE 0 Everyday ic
 expect "the sheet created Photo work" "^WSCREATE ok$"
 expect "Photo work is second, with the camera icon and ⌃⌘2" "^WORKSPACE 1 Photo work icon=camera tabs=3 windows=1 active key=⌃⌘2$"
 expect "the switcher lists both, Photo work ticked" "^WSMENU \[x\] Photo work$"
+n=$(echo "$OUT" | grep -cE "^WSMENU \\[.\\] .*Photo work$")
+if [ "$n" = 1 ]; then echo "  ok   the open switcher lists Photo work once"; else echo "  FAIL the open switcher lists Photo work $n times"; BAD=1; fi
 expect "the Workspaces menu lists Photo work on ⌃⌘2" "^MAINMENU Workspaces: \[x\] Photo work key=⌃⌘2$"
 expect_seq "⌃⌘1 / ⌃⌘2 bring each layout back" \
   "^STEP key:ctrl\+cmd\+1" "^WSLAYOUT window panes=1 tabs=1 .*locations=Documents$" \

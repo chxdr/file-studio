@@ -209,3 +209,34 @@ The right-click menus have a core model, `context_menu(target, ctx) -> Vec<MenuI
 Safe Transfer's batched barrier (one drive flush per group of files, renames only after it) is the planned way to win the speed back.
 
 **Safe Transfer (`docs/SAFE-TRANSFER-PROPOSAL.md`) was approved with its recommended §14 defaults,** plus an opt-in "re-read originals" mode that first-run setup explains.
+
+## F-026: Safe Transfer, the standalone copy engine (accepted 2026-11-13; the user approved docs/SAFE-TRANSFER-PROPOSAL.md)
+`crates/safe-transfer` (library) and `crates/safe-transfer-cli` (the `safe-transfer` binary) do every verified byte copy. They have no File Studio types and no fstudio-db, so Import Studio can reuse them unchanged.
+- **Name:** `safe-transfer` / `safe_transfer`. This is a deliberate exception to F-003's `fstudio-` prefix, because the crate is meant to be shared.
+- **Pipeline:** each file goes through these steps:
+  1. it is written to a partial named `.<name>.<job>-<n>.st-partial`, with `F_NOCACHE`
+  2. each 64 MB chunk is hashed while it is written (xxh3-64 per chunk, xxh3-128 per file) and flushed
+  3. metadata is copied, then `F_FULLFSYNC`
+  4. the partial's cache is evicted (`msync(MS_SYNC|MS_INVALIDATE)`, and `mincore` must show 0 resident pages)
+  5. it is read back uncached and the hashes compared
+  6. optionally, the original is read a second time
+  7. `renamex_np(RENAME_EXCL)`, with check-then-rename on exFAT and FAT
+  8. the folder gets `F_FULLFSYNC`
+  9. ACLs and immutable flags are applied
+  10. kept metadata is checked against the source
+
+  A file whose pages couldn't be evicted is reported as "verified from memory", never as "verified".
+- **Defaults** (proposal §14):
+  - chunk size 64 MB, configurable 1–256 MB
+  - verify always, except instant APFS clones (`copyfile(CLONE_FORCE)`, reported as "cloned"), with no off switch in v1
+  - journal in JSON (M2): two-line files with an xxh3 checksum trailer, A/B slots, segments of 1,024 files, kept in the host's App Support folder, kept 30 days
+  - volumes keyed by `ATTR_VOL_UUID`, never by name or `st_dev`
+  - moves send originals to the Trash (a card's own `.Trashes`). Safe Transfer never hard-deletes; permanent delete stays behind ops' gated path (F-007)
+  - small-file group commit (M2)
+  - "skip if identical" offered, not the default (M3)
+  - two destinations from one read: v2, with Import Studio
+- **Re-read originals:** opt-in, off by default. Settings key `operations.reread_originals`, explained on a first-run setup page (text in proposal §4.6, wired in ST M4). It reads the original a second time and requires both reads to agree, which catches a failing card or reader. It costs roughly twice the reading time from the source.
+- **Removal:** `safe-transfer/src/remove.rs::remove_partial` is the only removal. It only accepts the exact partial path derived from (destination, job, index). A grep test enforces this.
+- **Integration (ST M4):** fstudio-ops keeps the queue, the undo and conflict UX, F-023 and Trash/Put Back, and hands each copy or cross-volume move to Safe Transfer behind a `copy_backend` switch. The default flips after the yank and kill suites pass through the app and the user signs off. Migration steps A–D are in proposal §0.4.
+- **Unsafe code** is only in `safe-transfer/src/sys/`. Linux and Windows stubs exist under `sys/` but aren't exercised. The pipeline itself uses Unix file APIs, so a Windows build needs work there too.
+

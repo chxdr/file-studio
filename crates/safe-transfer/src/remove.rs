@@ -138,6 +138,7 @@ mod tests {
         remove_partial(&p, &part, &o).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn job_dirs_lose_only_journal_files() {
         let d = tempfile::tempdir().unwrap();
