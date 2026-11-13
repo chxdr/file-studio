@@ -804,3 +804,204 @@ fn replacing_on_a_card_never_loses_the_old_or_shows_a_half_new() {
         );
     }
 }
+
+/// Three big files in flight on three workers when the card goes, as in the
+/// coordinator's demo (two raws marked "the disk is no longer connected"
+/// instead of kept for resume): `a` pulls the card mid-chunk, `b` is held
+/// mid-verify and `c` mid-chunk until it is gone.
+///
+/// A card mounted under /Volumes stays listed for a moment after it is
+/// pulled, while I/O on it already fails (ENXIO, then EIO). Our private
+/// test mounts are cleared at once, so [`ListedAfterPull`] keeps the dead
+/// card listed by volume lookups for 5 s, as the demo's was.
+#[derive(Debug)]
+struct InFlightYank {
+    listed: Arc<ListedAfterPull>,
+    img: PathBuf,
+    mount: PathBuf,
+    b_verifying: std::sync::atomic::AtomicBool,
+    c_writing: std::sync::atomic::AtomicBool,
+    yanked: Arc<std::sync::atomic::AtomicBool>,
+    fired: std::sync::atomic::AtomicBool,
+    problems: Mutex<Vec<String>>,
+}
+
+impl InFlightYank {
+    fn wait_for(&self, what: &str, flag: &std::sync::atomic::AtomicBool) -> bool {
+        let t = std::time::Instant::now();
+        while !flag.load(Ordering::Acquire) {
+            if t.elapsed() > Duration::from_secs(60) {
+                self.problems
+                    .lock()
+                    .unwrap()
+                    .push(format!("timed out waiting: {what}"));
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    }
+}
+
+impl FaultHook for InFlightYank {
+    fn at(&self, point: FaultPoint, src: &Path) -> io::Result<()> {
+        let name = src.file_name().map(|n| n.to_string_lossy().into_owned());
+        let yanked = self.yanked.load(Ordering::Acquire);
+        match (point.name(), name.as_deref()) {
+            ("mid_verify", Some("b.bin")) if !yanked => {
+                self.b_verifying.store(true, Ordering::Release);
+                self.wait_for("the yank (b)", &self.yanked);
+            }
+            ("mid_chunk", Some("c.bin")) if !yanked && point.offset() >= 4 << 20 => {
+                self.c_writing.store(true, Ordering::Release);
+                self.wait_for("the yank (c)", &self.yanked);
+            }
+            ("mid_chunk", Some("a.bin"))
+                if point.offset() >= 12 << 20 && !self.fired.swap(true, Ordering::AcqRel) =>
+            {
+                if self.wait_for("b mid-verify", &self.b_verifying)
+                    && self.wait_for("c mid-chunk", &self.c_writing)
+                {
+                    self.listed
+                        .keep_listing(&self.mount, Duration::from_secs(5));
+                    let flag = self.yanked.clone();
+                    if let Err(e) =
+                        try_yank_stale(&self.img, &self.mount, Duration::ZERO, move || {
+                            flag.store(true, Ordering::Release)
+                        })
+                    {
+                        self.problems.lock().unwrap().push(e);
+                    }
+                }
+                // Never leave b and c waiting.
+                self.yanked.store(true, Ordering::Release);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// Volume lookups that keep a pulled card listed for a while, the way a
+/// card mounted under /Volumes stays listed after it is pulled.
+#[derive(Debug, Default)]
+struct ListedAfterPull {
+    dead: Mutex<Option<(PathBuf, safe_transfer::VolumeInfo, std::time::Instant)>>,
+}
+
+impl ListedAfterPull {
+    fn keep_listing(&self, mount: &Path, for_how_long: Duration) {
+        let v = Platform::native().volumes.volume_of(mount).unwrap();
+        let mount = std::fs::canonicalize(mount).unwrap();
+        *self.dead.lock().unwrap() = Some((mount, v, std::time::Instant::now() + for_how_long));
+    }
+    fn listed(&self) -> Option<(PathBuf, safe_transfer::VolumeInfo)> {
+        let d = self.dead.lock().unwrap();
+        d.as_ref()
+            .filter(|(_, _, until)| std::time::Instant::now() < *until)
+            .map(|(m, v, _)| (m.clone(), v.clone()))
+    }
+}
+
+/// Shared with the hook, so it can start the window at the pull.
+#[derive(Debug)]
+struct Listing(Arc<ListedAfterPull>);
+
+impl safe_transfer::VolumeIdentity for Listing {
+    fn volume_of(&self, p: &Path) -> io::Result<safe_transfer::VolumeInfo> {
+        if let Some((m, v)) = self.0.listed() {
+            let c = std::fs::canonicalize(p).unwrap_or(p.to_path_buf());
+            if c.starts_with(&m) || p.starts_with(&m) {
+                return Ok(v);
+            }
+        }
+        Platform::native().volumes.volume_of(p)
+    }
+    fn mounted(&self) -> io::Result<Vec<safe_transfer::VolumeInfo>> {
+        let mut all = Platform::native().volumes.mounted()?;
+        if let Some((_, v)) = self.0.listed()
+            && !all.iter().any(|x| x.uuid == v.uuid)
+        {
+            all.push(v);
+        }
+        Ok(all)
+    }
+    fn case_sensitive(&self, dir: &Path) -> io::Result<bool> {
+        Platform::native().volumes.case_sensitive(dir)
+    }
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn files_in_flight_when_the_card_goes_are_kept_for_resume_never_failed() {
+    let s = tempfile::tempdir().unwrap();
+    let src = s.path().join("shoot");
+    std::fs::create_dir_all(&src).unwrap();
+    for (name, mb, seed) in [("a.bin", 40, 1), ("b.bin", 10, 2), ("c.bin", 24, 3)] {
+        std::fs::write(src.join(name), bytes(mb << 20, seed)).unwrap();
+    }
+    let card = Image::new("ExFAT", 256);
+    let j = tempfile::tempdir().unwrap();
+    let listed = Arc::new(ListedAfterPull::default());
+    let hook = Arc::new(InFlightYank {
+        listed: listed.clone(),
+        img: card.img.clone(),
+        mount: card.mount.clone(),
+        b_verifying: Default::default(),
+        c_writing: Default::default(),
+        yanked: Default::default(),
+        fired: Default::default(),
+        problems: Mutex::new(Vec::new()),
+    });
+    let ev = Events::default();
+    let mut cfg = EngineConfig::new(j.path());
+    cfg.journal_interval = Duration::ZERO;
+    cfg.faults = Some(hook.clone());
+    let mut p = Platform::native();
+    p.volumes = Arc::new(Listing(listed.clone()));
+    let e = Engine::open(cfg, p, ev.sink()).unwrap();
+    let mut spec = job_spec(&src, &card.mount);
+    spec.options.workers = Some(3);
+    let id = e.create(spec).unwrap();
+    e.start(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(300)).unwrap();
+    assert!(
+        hook.problems.lock().unwrap().is_empty(),
+        "{:?}",
+        hook.problems.lock().unwrap()
+    );
+    assert!(
+        hook.fired.load(Ordering::Acquire),
+        "the card was never pulled"
+    );
+    assert_eq!(info.state, JobState::WaitingForDestination, "{info:?}");
+    // The point: none of the three in-flight files is failed or skipped.
+    let entries = e.entries(id).unwrap();
+    let lost: Vec<_> = entries
+        .iter()
+        .filter(|x| x.state.is_terminal() && x.state != safe_transfer::journal::FileSt::Done)
+        .collect();
+    assert!(
+        lost.is_empty(),
+        "failed instead of kept for resume: {lost:?}"
+    );
+    assert!(
+        e.report(id).unwrap().failed.is_empty(),
+        "{:?}",
+        e.report(id).unwrap().failed
+    );
+
+    card.put_back();
+    real_names_are_complete(&src, &card.mount.join("shoot"), "after the yank");
+    e.volumes_changed();
+    e.resume(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(300)).unwrap();
+    assert_eq!(info.state, JobState::Finished, "{info:?}");
+    let r = e.report(id).unwrap();
+    assert!(r.failed.is_empty() && r.skipped.is_empty(), "{r:?}");
+    let diffs =
+        safe_transfer::compare::compare(&Platform::native(), &src, &card.mount.join("shoot"))
+            .unwrap();
+    assert!(diffs.is_empty(), "{diffs:?}");
+    assert!(no_partials_under(&card.mount).is_empty());
+}

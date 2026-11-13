@@ -1436,6 +1436,16 @@ The default is unchanged: `operations.copy_backend` is `"ops"` until the user si
 7. **Sparse files count their real size** on disks that keep holes (APFS, HFS+).
 8. **Purgeable free space** (`volumeAvailableCapacityForImportantUsage`) was asked on every volume listing. That listing happens often: the bridge looks every second, and so do the sidebar and resume checks. The call can be slow on a busy disk, and was the likely cause of an intermittent 120 s stall in two queue tests. It is now asked only when a job wouldn't fit in `statfs`'s figure.
 
+9. **A file in flight when its card was pulled could be failed instead of kept for resume** (found in the coordinator's demo: two of 120 raws "the disk is no longer connected").
+   - **Cause:** a card mounted under /Volumes stays listed for a moment after it is pulled, while I/O on it already fails (ENXIO, then EIO). The "is the disk gone?" check asked only whether the volume was still listed.
+   - **The check now uses three signals:**
+     - the destination's device node (`/dev/diskN…`) is gone, which happens at once;
+     - its folder is now on another device (the mount point fell back to the disk below);
+     - "device not configured" (ENXIO, ENODEV) always means the disk is gone.
+   - **Ambiguous errors** (EIO, ENOENT, ESTALE, EBADF) wait up to 3 s for the disk to go before they count against the file. Any other error still fails only its file.
+   - **Every path that can fail a file uses this:** single files, small-file groups, the group and folder flushes, folders, and job-level steps.
+   - **Regression test:** `files_in_flight_when_the_card_goes_are_kept_for_resume_never_failed` (yank suite). Three workers; the card is pulled mid-chunk on one file, with a second file held mid-verify and a third mid-chunk, and the dead card kept listed for 5 s. Before the fix all three were failed and the job "finished". Now none is failed, and resume finishes them. Each new signal passes the test on its own.
+
 ### 18.3 Where the backends deliberately differ (tests assert the stricter result on Safe Transfer)
 
 - **The 100 MB free-space margin (§10):** ops' disk-image tests get more room on the Safe Transfer run. The 8 MB full-disk test asserts the up-front refusal instead.

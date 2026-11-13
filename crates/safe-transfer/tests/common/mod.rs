@@ -479,6 +479,20 @@ pub fn yank(img: &Path, mount: &Path) {
 /// [`yank`], returning what went wrong. On success the helper has exited and
 /// the image is no longer listed by `hdiutil info`.
 pub fn try_yank(img: &Path, mount: &Path) -> Result<(), String> {
+    try_yank_stale(img, mount, Duration::ZERO, || {})
+}
+
+/// [`try_yank`] as macOS really does it: the drive is gone (its helper is
+/// killed), `dead` runs, and the dead mount stays listed for `stale` before
+/// it is cleared. I/O on it fails while `statfs` still finds the volume,
+/// which is the window where a copy must not mistake a pulled card for a
+/// broken file.
+pub fn try_yank_stale(
+    img: &Path,
+    mount: &Path,
+    stale: Duration,
+    dead: impl FnOnce(),
+) -> Result<(), String> {
     let pid = helper_pid(img).map_err(|e| format!("yank of {}: {e}", img.display()))?;
     let _ = run_limited("kill", &["-9", &pid.to_string()], None, TOOL_LIMIT)?;
     if !wait_until(GONE_LIMIT, || !alive(pid)) {
@@ -488,6 +502,8 @@ pub fn try_yank(img: &Path, mount: &Path) -> Result<(), String> {
             GONE_LIMIT.as_secs()
         ));
     }
+    dead();
+    std::thread::sleep(stale);
     // Clear the dead mount. Failures here are expected (the device is gone);
     // what matters is the check below.
     let _ = run_limited(

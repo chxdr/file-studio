@@ -45,11 +45,12 @@ If a run still fails with "didn't finish in 60 s", the disk-image service itself
 
 The tests only touch the images they create, found by their own image path, never volumes you mounted (cards, drives, other images). They list mounted volumes to find their own by UUID; that only reads `getmntinfo`.
 
-**Expect notifications.** macOS shows a **"Disk Not Ejected Properly"** notification for every yank (the volumes are called `STTEST`). That's the point of the test, not a problem. A full `--ignored` run yanks about **40** times:
+**Expect notifications.** macOS shows a **"Disk Not Ejected Properly"** notification for every yank (the volumes are called `STTEST`). That's the point of the test, not a problem. A full `--ignored` run yanks about **41** times:
 - the single-file suites: 5 points on each of 2 filesystems
 - the job suites: 9 points on each of 2 filesystems
 - the remount, pulled-source-card and changed-original tests: one each
 - the M3 move suite (5 points) and replace suite (3 points)
+- the in-flight test (one pull with three files in flight)
 - the negative control: one
 
 The notifications can be cleared in Notification Centre.

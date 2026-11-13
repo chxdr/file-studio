@@ -236,6 +236,13 @@ pub(crate) struct Runner<'a> {
     opts: Options,
     layout: Layout,
     dest_root: PathBuf,
+    /// The destination folder's device when the run started (0: unknown).
+    /// A pulled card's mount point falls back to the disk below it.
+    dest_dev: u64,
+    /// The destination's device node ("/dev/disk4s1") when the run started.
+    /// It disappears as soon as the drive does, even while the volume is
+    /// still listed.
+    dest_node: Option<PathBuf>,
     src_mounts: Vec<Option<PathBuf>>,
     small_workers: usize,
     big_workers: usize,
@@ -277,6 +284,8 @@ impl<'a> Runner<'a> {
             opts,
             layout: Layout::new(&job.m),
             dest_root: PathBuf::new(),
+            dest_dev: 0,
+            dest_node: None,
             src_mounts: Vec::new(),
             small_workers,
             big_workers,
@@ -327,6 +336,11 @@ impl<'a> Runner<'a> {
         if std::fs::create_dir_all(&self.dest_root).is_err() {
             return Stop::DestGone;
         }
+        self.dest_dev = std::fs::metadata(&self.dest_root)
+            .map(|m| std::os::unix::fs::MetadataExt::dev(&m))
+            .unwrap_or(0);
+        self.dest_node =
+            Some(PathBuf::from(&dv.device)).filter(|d| d.starts_with("/dev/") && d.exists());
         self.src_mounts = m
             .sources
             .iter()
@@ -585,13 +599,73 @@ impl<'a> Runner<'a> {
         Some(remap(src, &v.mount, mount))
     }
 
+    /// The destination disk isn't there: its device node is gone, its
+    /// folder is now on the disk below (a pulled card's mount point), or it
+    /// isn't listed (or another disk is at its mount point). See [`Self::lost`] for a card that is pulled but still
+    /// listed for a moment.
     fn dest_gone(&self) -> bool {
+        if self.dest_node.as_deref().is_some_and(|d| !d.exists()) {
+            return true;
+        }
+        if self.dest_dev != 0
+            && std::fs::metadata(&self.dest_root).map_or(true, |m| {
+                std::os::unix::fs::MetadataExt::dev(&m) != self.dest_dev
+            })
+        {
+            return true;
+        }
         match self.p().volumes.volume_of(&self.dest_root) {
             Ok(v) => {
                 v.uuid != self.job.m.dest.volume.uuid || v.fs_type != self.job.m.dest.volume.fs
             }
             Err(_) => true,
         }
+    }
+
+    /// Whether an error means a disk went away (pulled, powered off) rather
+    /// than something wrong with one file, and which disk.
+    ///
+    /// A card mounted under /Volumes stays listed for a moment after it is
+    /// pulled while I/O on it already fails, so being listed proves nothing:
+    /// - "device not configured" (ENXIO, ENODEV) is a disk that is gone;
+    /// - an error that a vanishing disk also gives (EIO, ENOENT, ESTALE,
+    ///   EBADF) waits up to [`SETTLE`] for the disk to go before it counts
+    ///   against the file;
+    /// - anything else is the file's own problem.
+    fn lost(&self, err: Option<&io::Error>, src_vol: Option<u32>) -> Lost {
+        let now = || {
+            if self.dest_gone() {
+                Some(Lost::Dest)
+            } else if src_vol.is_some_and(|v| self.source_gone(v)) {
+                Some(Lost::Source)
+            } else {
+                None
+            }
+        };
+        if let Some(l) = now() {
+            return l;
+        }
+        let kind = err.map_or(ErrKind::Own, |e| err_kind(e.raw_os_error()));
+        if kind == ErrKind::Own {
+            return Lost::No;
+        }
+        let t = Instant::now();
+        while t.elapsed() < SETTLE {
+            std::thread::sleep(Duration::from_millis(100));
+            if let Some(l) = now() {
+                return l;
+            }
+        }
+        if kind == ErrKind::DeviceGone {
+            Lost::Dest
+        } else {
+            Lost::No
+        }
+    }
+
+    /// [`Self::lost`] for the destination only.
+    fn dest_lost(&self, err: Option<&io::Error>) -> bool {
+        self.lost(err, None) == Lost::Dest
     }
 
     fn source_gone(&self, src_vol: u32) -> bool {
@@ -813,7 +887,7 @@ impl<'a> Runner<'a> {
                 });
                 None
             }
-            Err(_) if self.dest_gone() => Some(Stop::DestGone),
+            Err(err) if self.dest_lost(Some(&err)) => Some(Stop::DestGone),
             Err(err) if err.raw_os_error() == Some(libc::ENOSPC) => Some(Stop::DestFull),
             Err(err) => {
                 self.fail(
@@ -919,7 +993,7 @@ impl<'a> Runner<'a> {
                     match self.p().trash.trash(&dest) {
                         Ok(loc) => self.job.update_now(idx, |r| r.replaced_trash = Some(loc)),
                         Err(err) => {
-                            if self.dest_gone() {
+                            if self.dest_lost(Some(&err)) {
                                 return Some(Stop::DestGone);
                             }
                             self.fail(idx, format!("the existing folder couldn't be moved to the Trash, so it was kept: {}", describe(&err)));
@@ -934,7 +1008,7 @@ impl<'a> Runner<'a> {
                         }
                     }
                     Err(err) => {
-                        if self.dest_gone() {
+                        if self.dest_lost(Some(&err)) {
                             return Some(Stop::DestGone);
                         }
                         self.fail(
@@ -1007,7 +1081,7 @@ impl<'a> Runner<'a> {
     }
 
     fn job_error(&self, idx: usize, err: io::Error) -> Option<Stop> {
-        if self.dest_gone() {
+        if self.dest_lost(Some(&err)) {
             return Some(Stop::DestGone);
         }
         self.fail(idx, describe(&err));
@@ -1459,9 +1533,17 @@ impl<'a> Runner<'a> {
             });
             return Some(Stop::Cancelled);
         }
-        if self.dest_gone() {
+        match self.lost(io_of(err), Some(e.src_vol)) {
             // Leave the record and any partial: resume continues from them.
-            return Some(Stop::DestGone);
+            Lost::Dest => return Some(Stop::DestGone),
+            Lost::Source => {
+                self.job.update(idx, |r| {
+                    r.st = FileSt::WaitingSource;
+                    r.chunks.clear();
+                });
+                return None;
+            }
+            Lost::No => {}
         }
         if let CopyError::Io { source, .. } = err
             && source.raw_os_error() == Some(libc::ENOSPC)
@@ -1471,13 +1553,6 @@ impl<'a> Runner<'a> {
                 r.chunks.clear();
             });
             return Some(Stop::DestFull);
-        }
-        if self.source_gone(e.src_vol) {
-            self.job.update(idx, |r| {
-                r.st = FileSt::WaitingSource;
-                r.chunks.clear();
-            });
-            return None;
         }
         match err {
             // The name was taken while it was being copied: decide again.
@@ -1668,7 +1743,7 @@ impl<'a> Runner<'a> {
             let mut works = written.into_inner().unwrap_or_else(|e| e.into_inner());
             works.sort_by_key(|(k, _)| *k);
             let errors = errors.into_inner().unwrap_or_else(|e| e.into_inner());
-            let gone = !errors.is_empty() && self.dest_gone();
+            let gone = errors.iter().any(|(_, e, _)| self.dest_lost(io_of(e)));
             let mut stop = None;
             for (k, e, w) in errors {
                 if let Some(mut w) = w {
@@ -1748,7 +1823,7 @@ impl<'a> Runner<'a> {
                                         lock(&placed).push((k, w));
                                     }
                                     Err(e) => {
-                                        halt.store(self.dest_gone(), Ordering::Release);
+                                        halt.store(self.dest_lost(io_of(&e)), Ordering::Release);
                                         let f = self.fail_or_keep(w, e);
                                         lock(&failed).push((k, f));
                                     }
@@ -1758,7 +1833,7 @@ impl<'a> Runner<'a> {
                                     lock(&redo).push((k, r));
                                 }
                                 Err(e) => {
-                                    halt.store(self.dest_gone(), Ordering::Release);
+                                    halt.store(self.dest_lost(io_of(&e)), Ordering::Release);
                                     let f = self.fail_or_keep(w, e);
                                     lock(&failed).push((k, f));
                                 }
@@ -1808,7 +1883,7 @@ impl<'a> Runner<'a> {
     }
 
     fn fail_or_keep(&self, mut w: FileWork, e: CopyError) -> Failure {
-        if self.dest_gone() {
+        if self.dest_lost(io_of(&e)) {
             w.keep_partial();
             Failure {
                 error: e,
@@ -1847,7 +1922,7 @@ impl<'a> Runner<'a> {
         });
         let level = match r {
             Ok(l) => l,
-            Err(_) if self.dest_gone() => return Some(Stop::DestGone),
+            Err(e) if self.dest_lost(Some(&e)) => return Some(Stop::DestGone),
             // The files are verified and renamed; only the folder flush is in
             // doubt. Say so instead of claiming a full flush.
             Err(_) => FlushLevel::OsOnly,
@@ -1867,7 +1942,7 @@ impl<'a> Runner<'a> {
         reqs: &[(usize, CopyRequest)],
         e: io::Error,
     ) -> Stop {
-        if self.dest_gone() {
+        if self.dest_lost(Some(&e)) {
             return self.abandon(works, Stop::DestGone);
         }
         let why = format!("the drive flush failed: {}", describe(&e));
@@ -1913,9 +1988,73 @@ fn same_object(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// How long an ambiguous I/O error waits for its disk to disappear before
+/// it counts against the file (a pulled card under /Volumes stays listed
+/// for a moment; measured under a second, with room for a busy Mac).
+const SETTLE: Duration = Duration::from_secs(3);
+
+/// Whether a disk went away, and which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lost {
+    /// The destination: the job waits for it.
+    Dest,
+    /// The file's source card: the file waits for it.
+    Source,
+    /// Neither: the error is the file's own.
+    No,
+}
+
+/// What an errno says about its disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrKind {
+    /// "Device not configured": the disk is gone, listed or not.
+    DeviceGone,
+    /// What a vanishing disk also gives; wait and see.
+    Maybe,
+    /// Nothing to do with the disk going.
+    Own,
+}
+
+fn err_kind(errno: Option<i32>) -> ErrKind {
+    match errno {
+        Some(libc::ENXIO | libc::ENODEV) => ErrKind::DeviceGone,
+        Some(libc::EIO | libc::ENOENT | libc::ESTALE | libc::EBADF) => ErrKind::Maybe,
+        _ => ErrKind::Own,
+    }
+}
+
+/// The I/O error behind a copy error, if there is one.
+fn io_of(e: &CopyError) -> Option<&io::Error> {
+    match e {
+        CopyError::Io { source, .. } => Some(source),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vanished_device_is_never_a_file_error() {
+        assert_eq!(err_kind(Some(libc::ENXIO)), ErrKind::DeviceGone);
+        assert_eq!(err_kind(Some(libc::ENODEV)), ErrKind::DeviceGone);
+        for e in [libc::EIO, libc::ENOENT, libc::ESTALE, libc::EBADF] {
+            assert_eq!(err_kind(Some(e)), ErrKind::Maybe, "{e}");
+        }
+        for e in [libc::EACCES, libc::ENAMETOOLONG, libc::EROFS, libc::ENOSPC] {
+            assert_eq!(err_kind(Some(e)), ErrKind::Own, "{e}");
+        }
+        assert_eq!(err_kind(None), ErrKind::Own);
+        let io = CopyError::Io {
+            phase: crate::events::Phase::Copying,
+            message: String::new(),
+            source: io::Error::from_raw_os_error(libc::ENXIO),
+        };
+        assert_eq!(io_of(&io).and_then(|e| e.raw_os_error()), Some(libc::ENXIO));
+        assert!(io_of(&CopyError::VerifyFailed).is_none());
+    }
+
     use crate::journal::{Dest, JobOptions, VolRef};
 
     fn manifest(rels: &[(&str, bool)]) -> Manifest {
