@@ -9,6 +9,7 @@
 import AppKit
 import QuickLookThumbnailing
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ConflictSheetView: View {
     let ops: OpsModel
@@ -16,21 +17,41 @@ struct ConflictSheetView: View {
 
     var body: some View {
         if let c = ops.pending.first {
-            content(c)
+            ConflictCard(conflict: c, answered: ops.conflictsAnswered, total: ops.conflictsTotal,
+                         remaining: ops.pending.count, applyToAll: $applyToAll) { d in
+                ops.resolve(c, d, applyToAll: applyToAll)
+                applyToAll = false
+            }
+            .onChange(of: c.id) { applyToAll = false }
         } else {
             Color.clear.frame(width: 1, height: 1)
         }
     }
+}
 
-    private func content(_ c: Conflict) -> some View {
+/// The sheet's content for one conflict (also drawn by the power tour's demo).
+struct ConflictCard: View {
+    let conflict: Conflict
+    /// "2 of 5" when more than one conflict is in this run.
+    let answered: Int
+    let total: Int
+    /// Conflicts waiting, this one included.
+    let remaining: Int
+    @Binding var applyToAll: Bool
+    let decide: (ConflictDecision) -> Void
+    /// Drawing only (the power tour): no key shortcuts, so the window it sits
+    /// in keeps its own Return and Esc; Keep Both keeps the default-button look.
+    var drawingOnly = false
+
+    var body: some View {
+        let c = conflict
         let name = (c.dest as NSString).lastPathComponent
-        let remaining = ops.pending.count
-        return VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 Text("“\(name)” already exists").font(.headline).lineLimit(2)
                 Spacer()
-                if ops.conflictsTotal > 1 {
-                    Text("\(ops.conflictsAnswered + 1) of \(ops.conflictsTotal)")
+                if total > 1 {
+                    Text("\(answered + 1) of \(total)")
                         .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
@@ -43,33 +64,40 @@ struct ConflictSheetView: View {
             }
             HStack {
                 Toggle(remaining > 1 ? "Apply to all (\(remaining - 1) more)" : "Apply to all", isOn: $applyToAll)
-                    .keyboardShortcut("a", modifiers: [])
+                    .shortcut("a", [], unless: drawingOnly)
                 Spacer()
                 Button("Compare") { QuickLookController.shared.toggle([c.source, c.dest]) }
-                    .keyboardShortcut("y", modifiers: .command)
+                    .shortcut("y", .command, unless: drawingOnly)
                     .help("Open both in Quick Look (⌘Y)")
             }
             Divider()
             HStack {
                 Text("Replace moves the old item to the Trash.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Skip") { decide(c, .skip) }.keyboardShortcut("s", modifiers: [])
-                if c.canMerge { Button("Merge") { decide(c, .merge) }.keyboardShortcut("m", modifiers: []) }
-                Button("Replace") { decide(c, .replace) }.keyboardShortcut("r", modifiers: .command)
-                Button("Keep Both") { decide(c, .keepBoth) }.keyboardShortcut(.defaultAction)
+                Button("Skip") { decide(.skip) }.shortcut("s", [], unless: drawingOnly)
+                if c.canMerge { Button("Merge") { decide(.merge) }.shortcut("m", [], unless: drawingOnly) }
+                Button("Replace") { decide(.replace) }.shortcut("r", .command, unless: drawingOnly)
+                if drawingOnly {
+                    Button("Keep Both") {}.buttonStyle(.borderedProminent)
+                } else {
+                    Button("Keep Both") { decide(.keepBoth) }.keyboardShortcut(.defaultAction)
+                }
             }
             // Esc skips, too.
-            Button("") { decide(c, .skip) }.keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
+            if !drawingOnly {
+                Button("") { decide(.skip) }.keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
+            }
         }
         .padding(20)
         .frame(width: 600)
         .id(c.id)
-        .onChange(of: c.id) { applyToAll = false }
     }
+}
 
-    private func decide(_ c: Conflict, _ d: ConflictDecision) {
-        ops.resolve(c, d, applyToAll: applyToAll)
-        applyToAll = false
+private extension View {
+    /// A key shortcut, left off when the view only draws.
+    @ViewBuilder func shortcut(_ key: KeyEquivalent, _ mods: EventModifiers, unless off: Bool) -> some View {
+        if off { self } else { keyboardShortcut(key, modifiers: mods) }
     }
 }
 
@@ -133,6 +161,10 @@ private struct ItemCard: View {
         if let d = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.localizedTypeDescriptionKey]).localizedTypeDescription {
             return d
         }
+        // Gone (or not readable): describe it by its extension.
+        if kind == .file, let d = UTType(filenameExtension: (path as NSString).pathExtension)?.localizedDescription {
+            return d.prefix(1).uppercased() + d.dropFirst()
+        }
         switch kind {
         case .dir: return "Folder"
         case .symlink: return "Alias"
@@ -149,10 +181,17 @@ private struct FileThumbnail: View {
     @State private var image: NSImage?
 
     var body: some View {
-        Image(nsImage: image ?? NSWorkspace.shared.icon(forFile: path))
+        Image(nsImage: image ?? Self.icon(path))
             .resizable().scaledToFit()
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .task(id: path) { image = await Self.thumbnail(path) }
+    }
+
+    /// The item's icon, or its type's icon when it is gone.
+    private static func icon(_ path: String) -> NSImage {
+        if FileManager.default.fileExists(atPath: path) { return NSWorkspace.shared.icon(forFile: path) }
+        let ext = (path as NSString).pathExtension
+        return ext.isEmpty ? NSWorkspace.shared.icon(for: .data) : NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
     }
 
     private static func isDataless(_ path: String) -> Bool {

@@ -263,15 +263,8 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
 
     /// Flat at rest; a capsule on hover (QSpace) and while editing; red on error.
     private func updateCapsule(animated: Bool = true) {
-        var stroke: NSColor?, fill: NSColor?, width: CGFloat = 1
-        if mode == .edit {
-            stroke = (offer != nil || errorText != nil) ? PathBarStyle.errorStroke : .keyboardFocusIndicatorColor
-            fill = PathBarStyle.editFill
-            width = 1.5
-        } else if hovering || strip.openChevron != nil {
-            stroke = PathBarStyle.hoverStroke
-            fill = PathBarStyle.hoverFill
-        }
+        let (stroke, fill, width) = Self.capsuleStyle(editing: mode == .edit, error: offer != nil || errorText != nil,
+                                                      hovering: hovering || strip.openChevron != nil)
         CATransaction.begin()
         CATransaction.setDisableActions(!animated)
         CATransaction.setAnimationDuration(PathBarStyle.fade)
@@ -282,6 +275,13 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         capsule.lineWidth = width
         capsule.opacity = stroke == nil ? 0 : 1
         CATransaction.commit()
+    }
+
+    /// The capsule's stroke, fill and line width (nil stroke: no capsule).
+    static func capsuleStyle(editing: Bool, error: Bool, hovering: Bool) -> (NSColor?, NSColor?, CGFloat) {
+        if editing { return (error ? PathBarStyle.errorStroke : .keyboardFocusIndicatorColor, PathBarStyle.editFill, 1.5) }
+        if hovering { return (PathBarStyle.hoverStroke, PathBarStyle.hoverFill, 1) }
+        return (nil, nil, 1)
     }
 
     private var tracking: NSTrackingArea?
@@ -539,7 +539,8 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
 
     // MARK: The suggestion list
 
-    private func completionRow(_ c: Completion) -> PopupRow {
+    /// A suggestion row (also drawn by the power tour's demo).
+    static func completionRow(_ c: Completion) -> PopupRow {
         var r = PopupRow(kind: .item, icon: CrumbIcons.folder(path: c.fullPath), title: c.displayName,
                          bold: Self.nsRanges(c.matchRanges, in: c.displayName), detail: c.breadcrumbText,
                          payload: c.fullPath)
@@ -580,26 +581,11 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         // Nearest Folder", so a typo plus a second Return can't litter the disk.
         var defaultPayload = "create"
         if let o = offer {
-            let home = model.engine.home()
-            let tilde = { (p: String) in p == home || p.hasPrefix(home + "/") ? "~" + p.dropFirst(home.count) : p }
-            rows.append(PopupRow(kind: .error, title: "“\(tilde(o.path))” doesn’t exist",
-                                 detail: "Nearest folder: \(tilde(o.nearest))"))
-            let missing = Self.missingCount(path: o.path, nearest: o.nearest)
-            // The part that would be created ("x/y" when there are two).
-            let name = o.path.hasPrefix(o.nearest + "/") ? String(o.path.dropFirst(o.nearest.count + 1))
-                : (o.path as NSString).lastPathComponent
-            if missing > 1 { defaultPayload = "nearest" }
-            rows.append(PopupRow(kind: .action, icon: PathBarStyle.symbol("folder.badge.plus", size: 13, color: .controlAccentColor),
-                                 title: missing > 1 ? "Create \(missing) Folders “\(name)”" : "Create Folder “\(name)”",
-                                 detail: missing > 1 ? tilde(o.path) : nil,
-                                 badgeText: defaultPayload == "create" ? "↩" : nil, payload: "create"))
-            rows.append(PopupRow(kind: .action, icon: CrumbIcons.folder(path: o.nearest),
-                                 title: "Go to Nearest Folder", detail: tilde(o.nearest),
-                                 badgeText: defaultPayload == "nearest" ? "↩" : nil, payload: "nearest"))
+            (rows, defaultPayload) = Self.offerRows(path: o.path, nearest: o.nearest, home: model.engine.home())
         } else if let e = errorText {
             rows.append(PopupRow(kind: .error, title: e))
         } else {
-            rows = completions.items.map(completionRow)
+            rows = completions.items.map(Self.completionRow)
             if completions.skippedSlow {
                 rows.append(PopupRow(kind: .note, title: "Slow folder: not listed", detail: "Type the full name"))
             }
@@ -620,6 +606,30 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
             list.needsDisplay = true
             announceList()
         }
+    }
+
+    /// The rows for a path that doesn't exist: the error line, Create Folder
+    /// and Go to Nearest Folder, and which of the two Return picks (also drawn
+    /// by the power tour's demo).
+    static func offerRows(path: String, nearest: String, home: String) -> (rows: [PopupRow], defaultPayload: String) {
+        var rows: [PopupRow] = []
+        var defaultPayload = "create"
+        let tilde = { (p: String) in p == home || p.hasPrefix(home + "/") ? "~" + p.dropFirst(home.count) : p }
+        rows.append(PopupRow(kind: .error, title: "“\(tilde(path))” doesn’t exist",
+                             detail: "Nearest folder: \(tilde(nearest))"))
+        let missing = missingCount(path: path, nearest: nearest)
+        // The part that would be created ("x/y" when there are two).
+        let name = path.hasPrefix(nearest + "/") ? String(path.dropFirst(nearest.count + 1))
+            : (path as NSString).lastPathComponent
+        if missing > 1 { defaultPayload = "nearest" }
+        rows.append(PopupRow(kind: .action, icon: PathBarStyle.symbol("folder.badge.plus", size: 13, color: .controlAccentColor),
+                             title: missing > 1 ? "Create \(missing) Folders “\(name)”" : "Create Folder “\(name)”",
+                             detail: missing > 1 ? tilde(path) : nil,
+                             badgeText: defaultPayload == "create" ? "↩" : nil, payload: "create"))
+        rows.append(PopupRow(kind: .action, icon: CrumbIcons.folder(path: nearest),
+                             title: "Go to Nearest Folder", detail: tilde(nearest),
+                             badgeText: defaultPayload == "nearest" ? "↩" : nil, payload: "nearest"))
+        return (rows, defaultPayload)
     }
 
     /// Folders that "Create" would make (more than one: show the count).

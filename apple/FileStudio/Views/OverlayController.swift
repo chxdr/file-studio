@@ -9,6 +9,9 @@
 // * The Edit menu's Undo/Redo titles follow `AppModel.undoState`.
 //
 // Hosting: one transparent, click-through view per core window (OverlayHost).
+// While the held list is up, its panel is solid: the host takes the wheel
+// (and swallows clicks) over it, so a mouse can scroll a long list while the
+// modifier stays held.
 
 import AppKit
 import SwiftUI
@@ -29,6 +32,9 @@ final class OverlayController {
     func install(_ model: AppModel) {
         guard self.model == nil else { return }
         self.model = model
+        #if DEBUG
+        OverlayDebugSteps.install()
+        #endif
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] e in
             MainActor.assumeIsolated {
                 if e.type == .flagsChanged { self?.modifiersChanged(e.modifierFlags) } else if self?.state.held == nil {
@@ -119,6 +125,7 @@ final class OverlayController {
 
     private func hideHeld() {
         guard state.held != nil else { return }
+        state.heldScroll.panelFrame = .zero
         withAnimation(AppearanceModel.of(model).animation(.smooth(duration: 0.25))) { state.held = nil }
     }
 
@@ -174,10 +181,14 @@ final class OverlayController {
 }
 
 /// A transparent view over a window's content that passes clicks through
-/// except where a toast or hint is drawn.
+/// except where a toast or hint is drawn, and over the held list's panel
+/// while it is up (the wheel scrolls it).
 @MainActor
 final class OverlayHost: NSHostingView<OverlayRoot> {
+    private let state: OverlayState
+
     init(window: NSWindow, model: AppModel, state: OverlayState) {
+        self.state = state
         let root = OverlayRoot(model: model, state: state, toasts: ToastCenter.of(model), appearance: AppearanceModel.of(model))
         super.init(rootView: root)
         translatesAutoresizingMaskIntoConstraints = true
@@ -191,7 +202,27 @@ final class OverlayHost: NSHostingView<OverlayRoot> {
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        if overHeldPanel(point) { return self }
         let v = super.hitTest(point)
         return v === self ? nil : v
     }
+
+    /// Is `point` (in the superview's coordinates) over the held list's panel?
+    func overHeldPanel(_ point: NSPoint) -> Bool {
+        guard state.held != nil, !state.heldScroll.panelFrame.isEmpty, let sv = superview else { return false }
+        let p = convert(point, from: sv)
+        let topLeft = CGPoint(x: p.x, y: isFlipped ? p.y : bounds.height - p.y)
+        return state.heldScroll.panelFrame.contains(topLeft)
+    }
+
+    /// The wheel over the held list scrolls it (a mouse wheel moves by lines,
+    /// a trackpad or smooth-scrolling mouse by points).
+    override func scrollWheel(with e: NSEvent) {
+        guard state.held != nil else { return super.scrollWheel(with: e) }
+        state.heldScroll.scroll(by: e.hasPreciseScrollingDeltas ? e.scrollingDeltaY : e.scrollingDeltaY * 24)
+    }
+
+    // A click on the panel does nothing (it covers the list; nothing under it is clicked).
+    override func mouseDown(with e: NSEvent) { if state.held == nil { super.mouseDown(with: e) } }
+    override func rightMouseDown(with e: NSEvent) { if state.held == nil { super.rightMouseDown(with: e) } }
 }

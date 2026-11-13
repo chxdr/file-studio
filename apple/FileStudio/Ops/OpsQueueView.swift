@@ -9,12 +9,25 @@ struct OpsQueueView: View {
     let ops: OpsModel
 
     var body: some View {
-        let active = ops.active, finished = ops.finished, interrupted = ops.interrupted
+        OpsQueueContent(active: ops.active, finished: ops.finished, interrupted: ops.interrupted, ops: ops)
+            .onAppear { ops.refreshInterrupted(); ops.refreshOrder() }
+    }
+}
+
+/// The popover's content for a given list of ops. With no `ops` model (the
+/// power tour's demo) it only draws: the buttons do nothing.
+struct OpsQueueContent: View {
+    let active: [OpStatus]
+    let finished: [OpStatus]
+    let interrupted: [OpStatus]
+    let ops: OpsModel?
+
+    var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Operations").font(.headline)
                 Spacer()
-                Button("Clear Finished") { ops.clearFinished() }
+                Button("Clear Finished") { ops?.clearFinished() }
                     .buttonStyle(.link).disabled(finished.isEmpty)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
@@ -40,7 +53,7 @@ struct OpsQueueView: View {
                                     guard let f = from.first else { return }
                                     let moved = ids[f]
                                     ids.move(fromOffsets: from, toOffset: to)
-                                    ops.moved(moved, visible: ids)
+                                    ops?.moved(moved, visible: ids)
                                 }
                         }
                     }
@@ -55,7 +68,6 @@ struct OpsQueueView: View {
             }
         }
         .frame(width: 440, height: height(active.count, finished.count, interrupted.count))
-        .onAppear { ops.refreshInterrupted(); ops.refreshOrder() }
     }
 
     private func height(_ a: Int, _ f: Int, _ i: Int) -> CGFloat {
@@ -80,7 +92,7 @@ private func kindSymbol(_ k: OpKind) -> String {
 
 private struct ActiveRow: View {
     let op: OpStatus
-    let ops: OpsModel
+    let ops: OpsModel?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -100,15 +112,15 @@ private struct ActiveRow: View {
                     Text((c as NSString).lastPathComponent).font(.caption2).foregroundStyle(.tertiary)
                         .lineLimit(1).truncationMode(.middle)
                 }
-                ErrorsDisclosure(errors: ops.errors(of: op))
+                ErrorsDisclosure(errors: ops?.errors(of: op) ?? op.errors)
             }
             VStack(spacing: 6) {
                 if op.state == .paused {
-                    Button { ops.resume(op) } label: { Image(systemName: "play.fill") }.help("Resume")
+                    Button { ops?.resume(op) } label: { Image(systemName: "play.fill") }.help("Resume")
                 } else if op.state != .waitingForDecision {
-                    Button { ops.pause(op) } label: { Image(systemName: "pause.fill") }.help("Pause")
+                    Button { ops?.pause(op) } label: { Image(systemName: "pause.fill") }.help("Pause")
                 }
-                Button { ops.cancel(op) } label: { Image(systemName: "xmark") }.help("Cancel")
+                Button { ops?.cancel(op) } label: { Image(systemName: "xmark") }.help("Cancel")
             }
             .buttonStyle(.borderless).controlSize(.small)
         }
@@ -133,10 +145,10 @@ private struct ActiveRow: View {
 
 private struct FinishedRow: View {
     let op: OpStatus
-    let ops: OpsModel
+    let ops: OpsModel?
 
     var body: some View {
-        let errors = ops.errors(of: op)
+        let errors = ops?.errors(of: op) ?? op.errors
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbol).foregroundStyle(color).frame(width: 20).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
@@ -146,7 +158,7 @@ private struct FinishedRow: View {
             }
             Spacer(minLength: 0)
             if op.current != nil || !errors.isEmpty {
-                Button("Show in Folder") { ops.reveal(op) }.buttonStyle(.link).font(.caption)
+                Button("Show in Folder") { ops?.reveal(op) }.buttonStyle(.link).font(.caption)
             }
         }
         .padding(.vertical, 3)
@@ -176,7 +188,7 @@ private struct FinishedRow: View {
 
 private struct InterruptedRow: View {
     let op: OpStatus
-    let ops: OpsModel
+    let ops: OpsModel?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -188,8 +200,8 @@ private struct InterruptedRow: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             VStack(spacing: 4) {
-                Button("Resume") { ops.resume(op) }.buttonStyle(.borderedProminent)
-                Button("Cancel") { ops.cancel(op) }.buttonStyle(.bordered)
+                Button("Resume") { ops?.resume(op) }.buttonStyle(.borderedProminent)
+                Button("Cancel") { ops?.cancel(op) }.buttonStyle(.bordered)
             }
             .controlSize(.small)
         }

@@ -355,25 +355,26 @@ private struct LayoutPage: View {
         }
     }
 
+    /// The window as it will open: the app's own panes (TourDemoParts), shrunk.
     private func diagram(panes: Int) -> some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 2).fill(Color.secondary.opacity(0.25)).frame(width: 26)
-            ForEach(0..<panes, id: \.self) { i in
-                VStack(spacing: 3) {
-                    ForEach(0..<5, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 1).fill(Color.secondary.opacity(0.3)).frame(height: 5)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(6)
-                .overlay(i == 0 && panes == 2 ? RoundedRectangle(cornerRadius: 3).strokeBorder(Color.accentColor, lineWidth: 1.5) : nil)
-                if i < panes - 1 { Rectangle().fill(Color.secondary.opacity(0.4)).frame(width: 1) }
-            }
-        }
-        .frame(width: 150, height: 90)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.15)))
-        .accessibilityHidden(true)
+        let cols: [(ColumnID, CGFloat)] = panes == 2 ? [(.name, 0), (.size, 56)] : [(.name, 0), (.size, 70), (.modified, 140)]
+        let docs = [("Design", "--"), ("Budget.numbers", "220 KB"), ("Notes.txt", "4 KB"), ("Report.pdf", "1.3 MB")]
+        let left = DemoPaneSpec(crumbs: TourDemoData.crumbs(["Documents"]), bar: .rest(TourDemoData.crumbs(["Documents"])),
+                                subtitle: TourDemoData.subtitle(4),
+                                rows: docs.map { TourDemoData.row($0.0, folder: $0.1 == "--", size: $0.1,
+                                                                  selected: $0.0 == "Report.pdf") },
+                                columns: cols, marked: panes == 2, status: PaneText.items(4))
+        let right = DemoPaneSpec(crumbs: TourDemoData.crumbs(["Downloads"]), bar: .rest(TourDemoData.crumbs(["Downloads"])),
+                                 subtitle: TourDemoData.subtitle(2),
+                                 rows: [TourDemoData.row("fonts.zip", size: "6.4 MB"), TourDemoData.row("scan.jpg", size: "1.2 MB")],
+                                 columns: cols, focused: false, status: PaneText.items(2))
+        return DemoWindow(panes: panes == 2 ? [left, right] : [left])
+            .frame(width: 400, height: 210)
+            .demoWindowFrame()
+            .scaleEffect(0.45)
+            .frame(width: 180, height: 95)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func set(_ dual: Bool) {

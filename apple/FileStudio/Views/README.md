@@ -8,8 +8,12 @@ and the look-and-motion settings. Settings itself is `App/Settings*.swift`.
 `OverlayHost` on each core window and draws, from `OverlayState`:
 - **Held modifiers** (`ShortcutToasts.swift`): ⌘ ⇧ ⌥ ⌃ (or Fn alone) held for
   `overlay.delayMs` asks the core (`engine.heldShortcuts`) and shows a pill,
-  "+", and a scrolling column of key cards grouped by category, in
-  `overlay.corner`. It knows no shortcuts itself.
+  "+", and key cards grouped by category, in `overlay.corner`. It knows no
+  shortcuts itself. The cards flow into as many columns as fit beside the
+  pill (up to four), shrink to compact cards when the full size would
+  overflow, and only then scroll: while the list is up its panel takes the
+  mouse wheel (`OverlayHost.scrollWheel`), so a mouse scrolls it with the
+  modifier still held; elsewhere the overlay stays click-through.
 - **Hint**: whatever sets `AppModel.hint` (an `Outcome.hint` after a command
   done with `Via.mouse` / `.menu`, or a `.hint` event) is shown for
   `hints.seconds` in `hints.corner`, with a bounce. Its ⋯ menu turns hints off
