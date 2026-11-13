@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, Result};
 use crate::events::{CoreEvent, EventHub, EventSink, OpsBridge, VolumeSummary};
 use crate::ids::{PaneId, TabId, WindowId, WorkspaceId};
+use crate::listing::ListingState;
 use crate::outcome::{Outcome, ShellRequest};
 use crate::probe::FsCoreProbe;
 use crate::settings::{SETTINGS_KEY, Settings};
@@ -1271,18 +1272,25 @@ impl Engine {
     // ───────────────────────── OS hooks ─────────────────────────
 
     /// The shell saw a volume mount or unmount. Re-reads volumes, emits
-    /// `VolumesChanged` and re-lists tabs whose folder is gone.
+    /// `VolumesChanged` and re-lists the tabs it may affect: a folder that is
+    /// gone, one that couldn't be read (its card may be back), and any folder
+    /// on a disk that just came or went. A card put back mounts at the same
+    /// path, and its folder's old listing (empty, or rows from before it was
+    /// pulled) would otherwise only gain the files created after.
     pub fn volumes_changed(&self) {
         self.sweep_leftover_partials();
         self.transfers_volumes_changed();
         let vols = fstudio_fs::volumes().unwrap_or_default();
+        let changed = changed_mounts(&self.shared.volumes.read(), &vols);
         *self.shared.volumes.write() = vols;
         self.shared.emit(CoreEvent::VolumesChanged {
             volumes: self.volumes(),
         });
         let tabs: Vec<Arc<Tab>> = self.model.lock().tabs.values().cloned().collect();
         for t in tabs {
-            if !t.location_path().exists() {
+            let loc = t.location_path();
+            let failed = t.listing().state() == ListingState::Error;
+            if failed || !loc.exists() || changed.iter().any(|m| loc.starts_with(m)) {
                 t.refresh();
             }
         }
@@ -1455,5 +1463,59 @@ mod tests {
             "/users/me/code/fstudio",
             &["stu".into(), "code".into()]
         ));
+    }
+}
+
+/// Mount points that appeared, disappeared or were mounted again between
+/// two volume lists. A card pulled and put back between two checks keeps
+/// its mount point but gets a new device number.
+fn changed_mounts(old: &[fstudio_fs::VolumeInfo], new: &[fstudio_fs::VolumeInfo]) -> Vec<PathBuf> {
+    let same = |a: &fstudio_fs::VolumeInfo, list: &[fstudio_fs::VolumeInfo]| {
+        list.iter()
+            .any(|v| v.mount_path == a.mount_path && v.device_id == a.device_id)
+    };
+    let mut out: Vec<PathBuf> = old
+        .iter()
+        .filter(|v| !same(v, new))
+        .chain(new.iter().filter(|v| !same(v, old)))
+        .map(|v| v.mount_path.clone())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::*;
+
+    fn vol(p: &str, dev: u64) -> fstudio_fs::VolumeInfo {
+        fstudio_fs::VolumeInfo {
+            mount_path: PathBuf::from(p),
+            name: p.rsplit('/').next().unwrap_or(p).into(),
+            fs_type: "exfat".into(),
+            case_sensitive: false,
+            supports_clone: false,
+            is_removable: true,
+            is_internal: false,
+            is_network: false,
+            is_read_only: false,
+            total_bytes: 0,
+            free_bytes: 0,
+            device_id: dev,
+        }
+    }
+
+    #[test]
+    fn a_card_put_back_counts_as_changed() {
+        let w2 = PathBuf::from("/Volumes/W2");
+        let before = [vol("/", 1), vol("/Volumes/W2", 7)];
+        let pulled = [vol("/", 1)];
+        assert_eq!(changed_mounts(&before, &pulled), vec![w2.clone()]);
+        assert_eq!(changed_mounts(&pulled, &before), vec![w2.clone()]);
+        assert!(changed_mounts(&before, &before).is_empty());
+        // Pulled and put back between two checks: same path, new device.
+        let back = [vol("/", 1), vol("/Volumes/W2", 9)];
+        assert_eq!(changed_mounts(&before, &back), vec![w2]);
     }
 }
