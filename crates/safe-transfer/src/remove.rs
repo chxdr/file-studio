@@ -95,6 +95,7 @@ mod tests {
         remove_partial(&p, &part, &o).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn clears_a_deny_delete_acl_first() {
         let d = tempfile::tempdir().unwrap();
