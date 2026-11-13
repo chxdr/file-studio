@@ -599,10 +599,129 @@ fn free_space_counts_purgeable_space_like_finder() {
             .unwrap()
             * 1024
     };
-    // At least what statfs says (purgeable space can only add to it).
+    // The volume's own figure is statfs's (cheap, listed often).
     assert!(
         v.free + (1 << 30) >= statfs_free,
         "{} < {statfs_free}",
         v.free
     );
+    // Purgeable space (asked only when a job wouldn't otherwise fit) can
+    // only add to it.
+    let purgeable = Platform::native()
+        .volumes
+        .purgeable_free(Path::new("/"))
+        .expect("APFS reports its important-usage free space");
+    assert!(
+        purgeable + (1 << 30) >= statfs_free,
+        "{purgeable} < {statfs_free}"
+    );
+}
+
+// ───────────────────────── M4: exact folders and entries ─────────────────────────
+
+/// A folder given as an exact item is copied whole under its new name
+/// (File Studio's "name copy" duplicates), and `entries()` lists every item
+/// with where it went, as File Studio's undo needs.
+#[test]
+fn an_exact_folder_is_copied_under_its_new_name_and_every_entry_is_reported() {
+    let (s, j, t) = (tempdir(), tempdir(), tempdir());
+    let src = s.path().join("shoot");
+    put(&src, "a.ARW", b"aaa");
+    put(&src, "sub/b.XMP", b"bb");
+    let trash = TestTrash::new(t.path());
+    let ev = Events::default();
+    let e = engine(j.path(), platform(&trash, None), &ev);
+    let mut spec = JobSpec::new(
+        vec![Item::Exact {
+            source: src.clone(),
+            dest_rel: PathBuf::from("shoot copy"),
+        }],
+        s.path(),
+    );
+    spec.options = no_clone();
+    let id = run(&e, spec);
+    assert_eq!(finish(&e, id), JobState::Finished);
+    let copy = s.path().join("shoot copy");
+    assert_eq!(std::fs::read(copy.join("a.ARW")).unwrap(), b"aaa");
+    assert_eq!(std::fs::read(copy.join("sub/b.XMP")).unwrap(), b"bb");
+    let canon = std::fs::canonicalize(s.path()).unwrap();
+    let got: Vec<(PathBuf, PathBuf, bool)> = e
+        .entries(id)
+        .unwrap()
+        .into_iter()
+        .map(|x| {
+            assert_eq!(x.state, safe_transfer::journal::FileSt::Done, "{x:?}");
+            assert!(!x.merged && !x.moved, "{x:?}");
+            (x.rel, x.dest, x.source.is_some())
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("shoot copy".into(), canon.join("shoot copy"), true),
+            (
+                "shoot copy/a.ARW".into(),
+                canon.join("shoot copy/a.ARW"),
+                true
+            ),
+            ("shoot copy/sub".into(), canon.join("shoot copy/sub"), true),
+            (
+                "shoot copy/sub/b.XMP".into(),
+                canon.join("shoot copy/sub/b.XMP"),
+                true
+            ),
+        ]
+    );
+    // A folder can't go inside itself this way either.
+    let mut inside = JobSpec::new(
+        vec![Item::Exact {
+            source: src.clone(),
+            dest_rel: PathBuf::from("again"),
+        }],
+        &src,
+    );
+    inside.options = no_clone();
+    assert!(matches!(
+        e.create(inside),
+        Err(safe_transfer::EngineError::IntoItself)
+    ));
+}
+
+/// A question names the original and the taken path, so a host can show
+/// both; "keep both" is reported with its new name in `entries()`.
+#[test]
+fn a_question_names_both_items_and_entries_show_the_new_name() {
+    let (s, d, j, t) = (tempdir(), tempdir(), tempdir(), tempdir());
+    let src = put(s.path(), "a.ARW", b"new");
+    put(d.path(), "a.ARW", b"old");
+    let trash = TestTrash::new(t.path());
+    let ev = Events::default();
+    let e = engine(j.path(), platform(&trash, None), &ev);
+    let id = run(&e, job(&src, d.path(), |_| {}));
+    questions(&e, id);
+    let q = e.conflicts(id).pop().unwrap();
+    assert_eq!(
+        q.source.as_deref(),
+        Some(std::fs::canonicalize(&src).unwrap().as_path())
+    );
+    assert!(q.dest.ends_with("a.ARW"), "{q:?}");
+    let from_event = ev.0.lock().unwrap().iter().find_map(|e| match e {
+        Event::Conflict { info, .. } => Some(info.dest.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        from_event
+            .as_deref()
+            .map(std::fs::canonicalize)
+            .map(Result::unwrap),
+        Some(std::fs::canonicalize(d.path().join("a.ARW")).unwrap())
+    );
+    e.resolve_conflict(id, q.id, Decision::KeepBoth, false)
+        .unwrap();
+    assert_eq!(finish(&e, id), JobState::Finished);
+    let x = e.entries(id).unwrap().pop().unwrap();
+    assert_eq!(x.decision, Some(Decision::KeepBoth));
+    assert!(x.dest.ends_with("a 2.ARW"), "{x:?}");
+    assert_eq!(std::fs::read(&x.dest).unwrap(), b"new");
+    assert_eq!(std::fs::read(d.path().join("a.ARW")).unwrap(), b"old");
 }

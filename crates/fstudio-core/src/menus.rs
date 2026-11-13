@@ -469,6 +469,8 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
             "sidebar.rename",
             "drive.eject",
             "drive.info",
+            "transfer.resume",
+            "transfer.resume_all",
         ]),
         MenuKind::Tab => v.extend([
             "tab.new",
@@ -619,6 +621,8 @@ struct Ctx {
     can_reopen: bool,
     tabs_in_pane: usize,
     any_folder: bool,
+    /// Interrupted transfers to or from the sidebar disk (Resume Transfer).
+    transfers: usize,
 }
 
 impl Engine {
@@ -848,7 +852,20 @@ impl Engine {
             MenuKind::Multi => paths.iter().any(|p| p.is_dir()),
             _ => false,
         };
+        // Only a sidebar disk asks Safe Transfer (it lists volumes).
+        let transfers = match &target {
+            MenuTarget::SidebarItem {
+                path,
+                kind: SidebarItemKind::Volume,
+            } => self
+                .ops()
+                .interrupted_on_volume(Path::new(path))
+                .map(|v| v.len())
+                .unwrap_or(0),
+            _ => 0,
+        };
         let ctx = Ctx {
+            transfers,
             kind,
             act_tab: tab.as_ref().map(|t| t.id()),
             dual: tab
@@ -950,6 +967,12 @@ impl Engine {
             }
             "drive.eject" => shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.removable),
             "drive.info" => shown(ctx.sidebar == Some(SidebarItemKind::Volume)),
+            "transfer.resume" => {
+                shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.transfers > 0)
+            }
+            "transfer.resume_all" => {
+                shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.transfers > 1)
+            }
             "addressbar.add_favourite" => shown(!ctx.favourite),
             "favourites.add" => shown(ctx.any_folder && !ctx.favourite),
             "favourites.remove" => shown(ctx.any_folder && ctx.favourite),

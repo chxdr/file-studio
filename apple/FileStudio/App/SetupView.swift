@@ -124,6 +124,7 @@ struct SetupView: View {
         case .keymap: KeymapPage(model: model)
         case .layout: LayoutPage(model: model)
         case .zoxide: ZoxidePage(model: model)
+        case .reread: RereadPage(model: model)
         case .done: DonePage(model: model)
         }
     }
@@ -429,6 +430,53 @@ private struct ZoxidePage: View {
             failed = true
             withAnimation(Motion.fade) { result = error.localizedDescription }
         }
+    }
+}
+
+/// "Read originals twice?" (Safe Transfer proposal §4.6): opt-in, off by
+/// default; the choice is `operations.reread_originals`.
+private struct RereadPage: View {
+    let model: AppModel
+    @State private var chosen: Bool?
+
+    var body: some View {
+        StepPage(title: "Read originals twice?",
+                 subtitle: "File Studio always checks every copy against the original before giving it its real name. That catches a copy that went wrong on the way to the disk.") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("It can’t catch a copy that was wrong from the start: if a failing card or card reader hands over a bad byte while the original is being read, the copy matches that bad byte perfectly.")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                Text("**Turn this on to read each original a second time** and make sure both reads agree. If they don’t, the file is flagged and your original is left untouched.")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Who it’s for:").font(.callout.bold())
+                    Text("• copying straight off camera cards that have shown errors")
+                    Text("• ageing or unreliable card readers")
+                    Text("• archives and client deliveries, where a second read is worth the time")
+                }
+                .font(.callout)
+                Text("**The cost:** copies take longer, about twice the reading time from the original’s disk. From a card, a 30 GB job takes about 3 minutes more.")
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button("Read originals twice") { set(true) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Not now") { set(false) }
+                    if let chosen {
+                        Label(chosen ? "On" : "Off", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+                .controlSize(.large)
+                Text("You can change this any time in Settings › Operations.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func set(_ on: Bool) {
+        do {
+            try Core.set(model.engine, "operations.reread_originals", bool: on)
+            chosen = on
+        } catch { model.statusMessage = error.localizedDescription }
     }
 }
 

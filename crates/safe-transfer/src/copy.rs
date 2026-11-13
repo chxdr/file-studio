@@ -327,6 +327,8 @@ pub(crate) struct FileWork<'a> {
     pub(crate) partial: PathBuf,
     /// The partial exists and is ours to remove.
     ours: bool,
+    /// The `before_copy` fault point was passed (it fires once per file).
+    begun: bool,
     same_volume: bool,
     is_link: bool,
     dest_fs: String,
@@ -464,6 +466,7 @@ impl<'a> FileWork<'a> {
             lost: Vec::new(),
             written: None,
             retries: 0,
+            begun: false,
             reread: false,
             rename: RenameMode::Exclusive,
             from_device: false,
@@ -597,8 +600,17 @@ impl<'a> FileWork<'a> {
         }
     }
 
+    /// The `before_copy` fault point, once per file (alone or in a group).
+    fn begin(&mut self) -> Res<()> {
+        if !self.begun {
+            self.begun = true;
+            self.fault(FaultPointArg::BeforeCopy)?;
+        }
+        Ok(())
+    }
+
     fn alone(&mut self, mut resume: Option<Resume>) -> Res<()> {
-        self.fault(FaultPointArg::BeforeCopy)?;
+        self.begin()?;
         if self.is_link {
             return self.copy_link();
         }
@@ -663,6 +675,8 @@ impl<'a> FileWork<'a> {
             Err(e) => return Err(io_err(Phase::Copying)(e)),
         }
         self.thr.report(Phase::Copying, len, len);
+        // The clone is complete; before it is flushed (as for a written copy).
+        self.fault(FaultPointArg::AfterWrite)?;
         if let Err(e) = self.p.meta.clear_security(&self.partial) {
             self.lost.push(MetaLoss::Failed(format!(
                 "flags couldn't be cleared: {}",
@@ -682,6 +696,7 @@ impl<'a> FileWork<'a> {
     /// With `chunk_barriers`, files bigger than one chunk get a drive flush
     /// after each chunk, which is logged as complete only afterwards.
     pub(crate) fn write(&mut self, resume: Option<Resume>, chunk_barriers: bool) -> Res<()> {
+        self.begin()?;
         if self.opts.reread_source {
             // Both reads of the original should come from the disk.
             let _ = self.p.uncached.evict(&self.source);
@@ -708,6 +723,7 @@ impl<'a> FileWork<'a> {
     /// Makes the written partial durable: a drive flush (`barrier`), or only
     /// an OS-level `fsync` when a group barrier will follow (proposal §4.7).
     pub(crate) fn seal(&mut self, barrier: bool) -> Res<()> {
+        self.fault(FaultPointArg::AfterWrite)?;
         self.thr.report(Phase::Flushing, 0, 0);
         let f = match self.written.as_mut().and_then(|w| w.file.take()) {
             Some(f) => f,
@@ -1093,6 +1109,7 @@ pub fn metadata_lost(src: &MetaSnapshot, dest: &MetaSnapshot) -> Vec<MetaLoss> {
 #[cfg_attr(not(feature = "fault-injection"), allow(dead_code))]
 enum FaultPointArg {
     BeforeCopy,
+    AfterWrite,
     MidChunk(u64),
     BeforeFlush(Option<usize>),
     AfterFlush(Option<usize>),
@@ -1109,6 +1126,7 @@ impl From<FaultPointArg> for crate::fault::FaultPoint {
         use crate::fault::FaultPoint as P;
         match a {
             FaultPointArg::BeforeCopy => P::BeforeCopy,
+            FaultPointArg::AfterWrite => P::AfterWrite,
             FaultPointArg::MidChunk(offset) => P::MidChunk { offset },
             FaultPointArg::BeforeFlush(chunk) => P::BeforeFlush { chunk },
             FaultPointArg::AfterFlush(chunk) => P::AfterFlush { chunk },

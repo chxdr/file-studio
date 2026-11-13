@@ -410,6 +410,26 @@ impl fstudio_ops::EventSink for OpsBridge {
             },
             OpEvent::OpFinished { op, report } => CoreEvent::OpFinished { op, report },
             OpEvent::UndoChanged(state) => CoreEvent::UndoChanged { state },
+            OpEvent::ResumeAvailable {
+                op,
+                title,
+                volume,
+                files_left,
+                bytes_left,
+            } => CoreEvent::Shell {
+                tab: None,
+                request: crate::feedback::resume_prompt(
+                    op, &title, &volume, files_left, bytes_left,
+                ),
+            },
+            OpEvent::Waiting {
+                op,
+                volumes,
+                sources,
+            } => CoreEvent::Shell {
+                tab: None,
+                request: crate::feedback::waiting(op, &volumes, sources),
+            },
         });
     }
 }

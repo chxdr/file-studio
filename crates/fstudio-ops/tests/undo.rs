@@ -167,14 +167,12 @@ fn undo_stack_survives_a_restart() {
         sources: vec![e.p("s/a.txt")],
         dest_dir: e.p("d"),
     });
-    let db = fstudio_db::Db::open(&e.db_path).unwrap();
-    let q2 = OpQueue::open(
-        db,
+    let q2 = open_queue(
+        &e.db_path,
         OpsConfig::default(),
-        std::sync::Arc::new(DirTrasher::new(&e.trash).unwrap()),
+        &e.trash,
         std::sync::Arc::new(NullSink),
-    )
-    .unwrap();
+    );
     assert_eq!(
         q2.undo_state().undo.as_deref(),
         Some("Undo Copy of “a.txt”")

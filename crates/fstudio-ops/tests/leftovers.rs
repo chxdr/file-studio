@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::*;
-use fstudio_db::Db;
 use fstudio_ops::*;
 
 /// Makes the destination folder unreachable right after the temporary file
@@ -34,13 +33,7 @@ impl FaultHook for FolderGoesAway {
 
 fn reopen(e: &Env) -> OpQueue {
     let (tx, _rx) = crossbeam_channel::unbounded();
-    OpQueue::open(
-        Db::open(&e.db_path).unwrap(),
-        OpsConfig::default(),
-        Arc::new(DirTrasher::new(&e.trash).unwrap()),
-        Arc::new(tx),
-    )
-    .unwrap()
+    open_queue(&e.db_path, OpsConfig::default(), &e.trash, Arc::new(tx))
 }
 
 /// A failure with the folder reachable: the temporary file goes at once.
@@ -86,6 +79,27 @@ fn a_partial_on_a_disk_that_went_away_is_removed_when_it_returns() {
         sources: vec![e.p("src/bigfile")],
         dest_dir: card.clone(),
     });
+    if on_safe_transfer() {
+        // Stricter: Safe Transfer doesn't fail the file. The copy stops,
+        // resumable, keeping its journal-matched partial on the card; when
+        // the card is back, resuming finishes it and leaves nothing behind.
+        assert_eq!(st.state, OpState::Interrupted, "{st:?}");
+        assert!(st.errors.is_empty(), "{st:?}");
+        let left = partials(&parked);
+        assert!(left.len() <= 1, "{left:?}");
+        write(&parked.join("mine.txt"), b"keep");
+        std::fs::rename(&parked, &card).unwrap();
+        let q = reopen(&e);
+        let int = q.interrupted().unwrap();
+        assert_eq!(int.len(), 1, "{int:?}");
+        q.resume(int[0].id).unwrap();
+        let st = q.wait(int[0].id, WAIT).unwrap();
+        assert_eq!(st.state, OpState::Completed, "{st:?}");
+        assert_eq!(read(&card.join("bigfile")), vec![7u8; 1 << 20]);
+        assert_eq!(read(&card.join("mine.txt")), b"keep");
+        assert!(partials(&card).is_empty());
+        return;
+    }
     assert_eq!(st.errors.len(), 1, "{st:?}");
     // Left on the "card", which is away.
     let left = partials(&parked);

@@ -85,6 +85,10 @@ pub struct Engine {
     data_dir: PathBuf,
     ops: RwLock<OpQueue>,
     ops_pending: Mutex<Option<fstudio_ops::OpsConfig>>,
+    /// Safe Transfer (F-026), with the auto-resume setting it was opened
+    /// with. `None` if its journal folder couldn't be opened; copies then
+    /// stay on ops' own engine.
+    transfer: Mutex<Option<(fstudio_ops::Transfer, bool)>>,
     trasher: Arc<dyn Trasher>,
     ops_bridge: Arc<OpsBridge>,
     pub(crate) keymap: Mutex<Keymap>,
@@ -178,11 +182,14 @@ impl Engine {
             hub: hub.clone(),
             toaster: Arc::new(crate::feedback::Toaster::new(hub.clone())),
         });
-        let ops = OpQueue::open(
+        let auto_resume = settings.operations.auto_resume;
+        let transfer = open_transfer(&data_dir, auto_resume, &trasher).map(|t| (t, auto_resume));
+        let ops = OpQueue::open_with_transfer(
             db.clone(),
             settings.ops_config(),
             trasher.clone(),
             ops_bridge.clone(),
+            transfer.as_ref().map(|t| t.0.clone()),
         )?;
 
         let mut keymap = Keymap::new(settings.keymap.clone());
@@ -210,6 +217,7 @@ impl Engine {
             data_dir,
             ops: RwLock::new(ops),
             ops_pending: Mutex::new(None),
+            transfer: Mutex::new(transfer),
             trasher,
             ops_bridge,
             keymap: Mutex::new(keymap),
@@ -323,11 +331,22 @@ impl Engine {
         if busy {
             return;
         }
-        if let Ok(q) = OpQueue::open(
+        let auto_resume = self.settings().operations.auto_resume;
+        let transfer = {
+            let mut t = self.transfer.lock();
+            if t.as_ref().is_some_and(|(_, a)| *a != auto_resume) {
+                // Auto-resume is fixed when the engine opens: open it again.
+                *t = open_transfer(&self.data_dir, auto_resume, &self.trasher)
+                    .map(|x| (x, auto_resume));
+            }
+            t.as_ref().map(|(x, _)| x.clone())
+        };
+        if let Ok(q) = OpQueue::open_with_transfer(
             self.db.clone(),
             cfg,
             self.trasher.clone(),
             self.ops_bridge.clone(),
+            transfer,
         ) {
             *self.ops.write() = q;
             *pending = None;
@@ -1255,6 +1274,7 @@ impl Engine {
     /// `VolumesChanged` and re-lists tabs whose folder is gone.
     pub fn volumes_changed(&self) {
         self.sweep_leftover_partials();
+        self.transfers_volumes_changed();
         let vols = fstudio_fs::volumes().unwrap_or_default();
         *self.shared.volumes.write() = vols;
         self.shared.emit(CoreEvent::VolumesChanged {
@@ -1266,6 +1286,18 @@ impl Engine {
                 t.refresh();
             }
         }
+    }
+
+    /// On a background thread: tells Safe Transfer the disks changed, so an
+    /// interrupted copy whose disks are back is offered for resuming
+    /// (`ShellRequest::ResumePrompt`), or resumed when auto-resume is on.
+    fn transfers_volumes_changed(&self) {
+        let Some(t) = self.transfer.lock().as_ref().map(|(t, _)| t.clone()) else {
+            return;
+        };
+        let _ = std::thread::Builder::new()
+            .name("fstudio-transfers-volumes".into())
+            .spawn(move || t.volumes_changed());
     }
 
     /// On a background thread: removes the temporary files of failed
@@ -1381,6 +1413,28 @@ fn session_saver(engine: Weak<Engine>, rx: crossbeam_channel::Receiver<()>) {
         match engine.upgrade() {
             Some(e) => e.save_session_now(),
             None => return,
+        }
+    }
+}
+
+/// Opens Safe Transfer with its journals in `<data_dir>/transfers` (so a
+/// debug build's `-FSDataDir` keeps tests and proofs away from the real
+/// folder). A failure is printed and leaves copies on ops' own engine.
+fn open_transfer(
+    data_dir: &std::path::Path,
+    auto_resume: bool,
+    trasher: &Arc<dyn Trasher>,
+) -> Option<fstudio_ops::Transfer> {
+    match fstudio_ops::Transfer::open(
+        data_dir.join("transfers"),
+        auto_resume,
+        trasher.clone(),
+        None,
+    ) {
+        Ok(t) => Some(t),
+        Err(e) => {
+            eprintln!("File Studio: Safe Transfer couldn't open its journal folder: {e}");
+            None
         }
     }
 }

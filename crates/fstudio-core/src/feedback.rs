@@ -659,6 +659,66 @@ pub(crate) fn rename_warning(
     })
 }
 
+/// "“A”", "“A” and “B”", "“A”, “B” and “C”".
+fn names_list(names: &[String]) -> String {
+    let q: Vec<String> = names.iter().map(|n| format!("“{n}”")).collect();
+    match q.as_slice() {
+        [] => "a disk".into(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The question when an interrupted copy's disks are back (Safe Transfer
+/// proposal §6.1).
+pub(crate) fn resume_prompt(
+    op: fstudio_ops::OpId,
+    title: &str,
+    volume: &str,
+    files_left: u64,
+    bytes_left: u64,
+) -> ShellRequest {
+    let files = match files_left {
+        1 => "1 file left".to_string(),
+        n => format!("{n} files left"),
+    };
+    let size = fstudio_view::format_size(bytes_left, &fstudio_view::SizeFormat::default());
+    ShellRequest::ResumePrompt {
+        op,
+        question: format!("Resume “{title}”?"),
+        detail: format!(
+            "{files} ({size}). Files already copied are kept, and so is anything \
+             partly copied that still checks out."
+        ),
+        discard_question: "Discard the rest of this copy?".into(),
+        discard_detail: format!(
+            "The finished files on “{volume}” stay. The unfinished hidden copies are \
+             removed. Your originals aren't touched."
+        ),
+    }
+}
+
+/// What to say when a copy stops for missing disks.
+pub(crate) fn waiting(op: fstudio_ops::OpId, volumes: &[String], sources: bool) -> ShellRequest {
+    let them = names_list(volumes);
+    if sources {
+        ShellRequest::SourceMissing {
+            op,
+            text: format!(
+                "Some files wait for {them}. Insert it, then resume the copy from the \
+                 operations list."
+            ),
+        }
+    } else {
+        ShellRequest::Toast {
+            text: format!("{them} was disconnected. The copy stopped safely; insert it to resume."),
+            button: Some("Show".into()),
+            command: Some("view.show_operations".into()),
+            style: ToastStyle::Warning,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -695,6 +755,42 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_resume_prompt_says_what_is_left_and_what_discard_keeps() {
+        let r = resume_prompt(
+            fstudio_ops::OpId(7),
+            "Copying 800 items to “CLIENT_A”",
+            "CLIENT_A",
+            312,
+            11_300_000_000,
+        );
+        let ShellRequest::ResumePrompt {
+            op,
+            question,
+            detail,
+            discard_detail,
+            ..
+        } = r
+        else {
+            panic!("{r:?}")
+        };
+        assert_eq!(op, fstudio_ops::OpId(7));
+        assert_eq!(question, "Resume “Copying 800 items to “CLIENT_A””?");
+        assert!(detail.starts_with("312 files left (11.3 GB)."), "{detail}");
+        assert!(
+            discard_detail.contains("on “CLIENT_A” stay"),
+            "{discard_detail}"
+        );
+        assert!(matches!(
+            waiting(fstudio_ops::OpId(7), &["Untitled".into()], true),
+            ShellRequest::SourceMissing { text, .. } if text.contains("“Untitled”")
+        ));
+        assert!(matches!(
+            waiting(fstudio_ops::OpId(7), &["CLIENT_A".into()], false),
+            ShellRequest::Toast { text, .. } if text.starts_with("“CLIENT_A” was disconnected")
+        ));
+    }
 
     #[test]
     fn cleanup_after_a_pulled_card_is_worded_plainly() {

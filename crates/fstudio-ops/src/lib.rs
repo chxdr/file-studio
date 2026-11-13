@@ -39,7 +39,9 @@ mod queue;
 mod recover;
 mod remove;
 mod runner;
+mod st_bridge;
 mod sys;
+mod transfer;
 mod trash;
 mod types;
 mod undo;
@@ -47,6 +49,7 @@ mod undo;
 pub use journal::MIGRATIONS;
 pub use queue::OpQueue;
 pub use recover::SweptPartial;
+pub use transfer::Transfer;
 pub use trash::{DirTrasher, SystemTrasher, Trasher};
 pub use types::*;
 

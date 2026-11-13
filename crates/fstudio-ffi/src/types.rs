@@ -632,6 +632,19 @@ pub enum FfiShellRequest {
     CloseWindow {
         window: u64,
     },
+    /// An interrupted copy's disks are back: Resume, Later, Discard….
+    ResumePrompt {
+        op: i64,
+        question: String,
+        detail: String,
+        discard_question: String,
+        discard_detail: String,
+    },
+    /// A copy waits for source disks.
+    SourceMissing {
+        op: i64,
+        text: String,
+    },
 }
 
 impl From<core::ShellRequest> for FfiShellRequest {
@@ -716,6 +729,20 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::EditTags { paths } => Self::EditTags { paths },
             S::OpenWindow { window } => Self::OpenWindow { window: window.0 },
             S::CloseWindow { window } => Self::CloseWindow { window: window.0 },
+            S::ResumePrompt {
+                op,
+                question,
+                detail,
+                discard_question,
+                discard_detail,
+            } => Self::ResumePrompt {
+                op: op.0,
+                question,
+                detail,
+                discard_question,
+                discard_detail,
+            },
+            S::SourceMissing { op, text } => Self::SourceMissing { op: op.0, text },
         }
     }
 }
@@ -1615,13 +1642,23 @@ pub struct FfiOpStatus {
     pub conflicts: Vec<FfiConflict>,
     /// The finished-row line ("Failed · 0 of 1 done · 1 failed").
     pub summary: String,
+    /// Disks the op waits for, by name.
+    pub waiting_for: Vec<String>,
+    /// An interrupted op's Resume button is enabled.
+    pub can_resume: bool,
+    /// The line by it ("Insert “CLIENT_A” to resume").
+    pub resume_note: Option<String>,
 }
 
 impl From<core::OpStatus> for FfiOpStatus {
     fn from(s: core::OpStatus) -> Self {
         let summary = s.summary();
+        let (can_resume, resume_note) = s.resume_hint();
         FfiOpStatus {
             summary,
+            can_resume,
+            resume_note,
+            waiting_for: s.waiting_for.clone(),
             id: s.id.0,
             kind: s.kind.into(),
             title: s.title,

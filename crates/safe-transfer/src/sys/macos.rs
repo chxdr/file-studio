@@ -438,11 +438,9 @@ fn info_from(s: &libc::statfs) -> VolumeInfo {
     };
     let bsize = s.f_bsize as u64;
     let fs_type = c_chars(&s.f_fstypename);
-    let mut free = s.f_bavail * bsize;
-    if fs_type == "apfs" {
-        // Finder's figure: purgeable space counts as free (it is freed on demand).
-        free = free.max(super::important_free(&mount).unwrap_or(0));
-    }
+    // What `statfs` says; purgeable space is only asked for when a job
+    // needs it (`VolumeIdentity::purgeable_free`): the query can be slow.
+    let free = s.f_bavail * bsize;
     VolumeInfo {
         uuid: volume_uuid(&mount),
         fs_type,
@@ -450,6 +448,7 @@ fn info_from(s: &libc::statfs) -> VolumeInfo {
         capacity: s.f_blocks * bsize,
         free,
         block_size: bsize,
+        read_only: s.f_flags & libc::MNT_RDONLY as u32 != 0,
         device: c_chars(&s.f_mntfromname),
         mount,
     }

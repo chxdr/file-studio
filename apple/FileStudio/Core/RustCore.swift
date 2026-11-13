@@ -168,6 +168,9 @@ extension ShellRequest {
         case .editTags(let p): self = .editTags(paths: p)
         case .openWindow(let w): self = .openWindow(w)
         case .closeWindow(let w): self = .closeWindow(w)
+        case .resumePrompt(let op, let q, let d, let dq, let dd):
+            self = .resumePrompt(op: op, question: q, detail: d, discardQuestion: dq, discardDetail: dd)
+        case .sourceMissing(let op, let t): self = .sourceMissing(op: op, text: t)
         }
     }
 }
@@ -482,7 +485,8 @@ extension OpStatus {
         self.init(id: s.id, kind: OpKind(s.kind), title: s.title, state: OpState(s.state), filesDone: s.filesDone,
                   filesTotal: s.filesTotal, bytesDone: s.bytesDone, bytesTotal: s.bytesTotal, current: s.current,
                   speedBps: s.speedBps, etaSecs: s.etaSecs, errors: s.errors.map(ItemError.init),
-                  conflicts: s.conflicts.map(Conflict.init), summary: s.summary)
+                  conflicts: s.conflicts.map(Conflict.init), summary: s.summary,
+                  waitingFor: s.waitingFor, canResume: s.canResume, resumeNote: s.resumeNote)
     }
 }
 

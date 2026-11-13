@@ -236,6 +236,24 @@ pub fn run(inner: &Inner, op: &OpShared) {
     }
     let _ = journal.set_op_state(op.id, op.status.lock().state);
 
+    // Safe Transfer (F-026): an op that already has a job resumes on it; a
+    // new copy goes to it when the backend says so. An op ops' own engine
+    // started stays on ops.
+    let started_on_ops = items.iter().any(|i| i.state != ItemState::Pending);
+    let route = if row.st_job.is_some() {
+        crate::st_bridge::route(inner, &row.request, true)
+    } else if started_on_ops {
+        None
+    } else {
+        crate::st_bridge::route(inner, &row.request, false)
+    };
+    if let Some(r) = route {
+        return crate::st_bridge::run(inner, op, &row, &plan, r);
+    }
+    if row.st_job.is_some() {
+        return fail_all("this copy was started by Safe Transfer, which isn't open".into());
+    }
+
     let mut g = Graph::new(items);
     let workers = if op.kind.copies() {
         inner.cfg.file_workers.max(1)

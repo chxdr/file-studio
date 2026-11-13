@@ -13,7 +13,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class SetupState {
-    enum Page: String, CaseIterable { case welcome, fullDiskAccess, keymap, layout, zoxide, done }
+    enum Page: String, CaseIterable { case welcome, fullDiskAccess, keymap, layout, zoxide, reread, done }
 
     let pages: [Page]
     var index = 0
@@ -21,8 +21,12 @@ final class SetupState {
     var forward = true
     var hasFullDiskAccess = SetupController.hasFullDiskAccess()
 
-    init(offerZoxide: Bool) {
-        pages = Page.allCases.filter { $0 != .zoxide || offerZoxide }
+    /// `offerReread`: Safe Transfer copies (`operations.copy_backend`), so
+    /// "Read originals twice?" applies (Safe Transfer proposal §4.6).
+    init(offerZoxide: Bool, offerReread: Bool = false) {
+        pages = Page.allCases.filter {
+            ($0 != .zoxide || offerZoxide) && ($0 != .reread || offerReread)
+        }
     }
 
     var page: Page { pages[index] }
@@ -36,6 +40,7 @@ final class SetupState {
             case .keymap: "Keys"
             case .layout: "Layout"
             case .zoxide: "History"
+            case .reread: "Copies"
             case .done: "Done"
             }
         }
@@ -68,7 +73,8 @@ enum SetupController {
             _ = s
             return
         }
-        let s = SetupState(offerZoxide: zoxideDatabase(model: model) != nil)
+        let s = SetupState(offerZoxide: zoxideDatabase(model: model) != nil,
+                           offerReread: Core.string(model.engine, "operations.copy_backend") == "safe_transfer")
         s.index = min(max(page, 0), s.pages.count - 1)
         state = s
         let vc = NSHostingController(rootView: SetupView(model: model, state: s, finish: { finish(model: model) }))

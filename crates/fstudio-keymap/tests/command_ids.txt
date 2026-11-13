@@ -70,6 +70,8 @@ view.refresh
 view.toggle_sidebar
 view.toggle_inspector
 view.show_operations
+transfer.resume
+transfer.resume_all
 sort.name
 sort.kind
 sort.size

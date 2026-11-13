@@ -198,9 +198,14 @@ private struct InterruptedRow: View {
                 ProgressView(value: op.fraction).tint(.blue)
                 Text("Stopped at \(Int((op.fraction * 100).rounded())) % · \(op.filesDone.formatted()) of \(op.filesTotal.formatted()) files")
                     .font(.caption).foregroundStyle(.secondary)
+                // What it needs, worded by the core ("Insert “CLIENT_A” to resume").
+                if let note = op.resumeNote {
+                    Text(note).font(.caption).foregroundStyle(op.canResume ? Color.secondary : Color.orange)
+                }
             }
             VStack(spacing: 4) {
-                Button("Resume") { ops?.resume(op) }.buttonStyle(.borderedProminent)
+                Button("Resume Transfer") { ops?.resume(op) }.buttonStyle(.borderedProminent)
+                    .disabled(!op.canResume)
                 Button("Cancel") { ops?.cancel(op) }.buttonStyle(.bordered)
             }
             .controlSize(.small)

@@ -134,7 +134,7 @@ final class OpsModel {
         if let p = op.current ?? errors(of: op).first?.path { PlatformActions.reveal([p]) }
     }
 
-    private func run(_ f: () throws -> Void) {
+    func run(_ f: () throws -> Void) {
         do { try f() } catch { ToastCenter.of(app).show(error.localizedDescription, style: .error) }
     }
 

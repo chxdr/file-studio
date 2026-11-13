@@ -56,6 +56,12 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+      # F-026: ops' whole suite again on the safe_transfer copy backend, so
+      # both backends stay green until the default flips.
+      - name: fstudio-ops on Safe Transfer
+        env:
+          FSTUDIO_COPY_BACKEND: safe_transfer
+        run: cargo test -p fstudio-ops --features st-faults
 
   # Builds the app against the real core and runs the Swift tests.
   app-macos:

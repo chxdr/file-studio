@@ -236,6 +236,16 @@ pub struct OperationsSettings {
     /// Ask before a rename gives an item a name that starts with a dot,
     /// which hides it (safety audit S14).
     pub warn_hidden_rename: bool,
+    /// Which engine copies file content: `"ops"` (default) or
+    /// `"safe_transfer"` (F-026). Stays `"ops"` until the user signs off.
+    pub copy_backend: String,
+    /// Safe Transfer: read each original a second time and require both
+    /// reads to agree. Catches a failing card or reader; costs roughly twice
+    /// the reading time. Off by default (Safe Transfer proposal §4.6).
+    pub reread_originals: bool,
+    /// Safe Transfer: resume an interrupted copy by itself when its disks
+    /// are back. Off by default: the app offers to resume instead (§6.1).
+    pub auto_resume: bool,
 }
 
 impl Default for OperationsSettings {
@@ -250,6 +260,9 @@ impl Default for OperationsSettings {
             protected_folders: crate::protect::default_protected_folders(),
             warn_extension_change: true,
             warn_hidden_rename: true,
+            copy_backend: fstudio_ops::CopyBackend::Ops.as_str().into(),
+            reread_originals: false,
+            auto_resume: false,
         }
     }
 }
@@ -295,6 +308,10 @@ impl Settings {
         check(
             (1..=16).contains(&o.file_workers),
             "operations.file_workers must be 1–16",
+        )?;
+        check(
+            matches!(o.copy_backend.as_str(), "ops" | "safe_transfer"),
+            "operations.copy_backend must be \"ops\" or \"safe_transfer\"",
         )?;
         check(
             (1..=8).contains(&o.ops_per_volume),
@@ -394,6 +411,8 @@ impl Settings {
             file_workers: o.file_workers as usize,
             ops_per_volume: o.ops_per_volume as usize,
             undo_limit: o.undo_limit as usize,
+            copy_backend: fstudio_ops::CopyBackend::parse(&o.copy_backend),
+            reread_originals: o.reread_originals,
             ..fstudio_ops::OpsConfig::default()
         }
     }
@@ -402,6 +421,34 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F-026: the copy engine stays ops until the user signs off; Safe
+    /// Transfer's re-read and auto-resume are off by default.
+    #[test]
+    fn safe_transfer_settings_default_off_and_check_their_values() {
+        let s = Settings::default();
+        assert_eq!(s.operations.copy_backend, "ops");
+        assert!(!s.operations.reread_originals && !s.operations.auto_resume);
+        let cfg = s.ops_config();
+        assert_eq!(cfg.copy_backend, fstudio_ops::CopyBackend::Ops);
+        let st = s
+            .with_key("operations.copy_backend", "safe_transfer")
+            .unwrap();
+        assert_eq!(
+            st.ops_config().copy_backend,
+            fstudio_ops::CopyBackend::SafeTransfer
+        );
+        let st = st.with_key("operations.reread_originals", "true").unwrap();
+        assert!(st.ops_config().reread_originals);
+        assert!(s.with_key("operations.copy_backend", "fast").is_err());
+        // Settings saved before M4 load with the defaults.
+        let old = r#"{"operations":{"verify_copies":true}}"#;
+        let v: OperationsSettings = serde_json::from_value(
+            serde_json::from_str::<serde_json::Value>(old).unwrap()["operations"].clone(),
+        )
+        .unwrap();
+        assert_eq!(v.copy_backend, "ops");
+    }
 
     #[test]
     fn defaults_validate_and_roundtrip() {

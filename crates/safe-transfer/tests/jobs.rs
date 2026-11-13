@@ -180,6 +180,10 @@ fn small_files_share_one_drive_flush_per_group() {
     assert_eq!(r.os_flush_only, 0);
 }
 
+/// A taken name and two items with the same name on this disk are both
+/// decided like any taken name (here: skip), and nothing is ever replaced.
+/// (Before M4 the second same-name item was skipped at planning; now it
+/// waits for the first and is asked about, so it can be kept as "name 2".)
 #[test]
 fn existing_files_and_same_name_files_are_skipped_never_replaced() {
     let (s, d, j) = (tempdir(), tempdir(), tempdir());
@@ -202,8 +206,14 @@ fn existing_files_and_same_name_files_are_skipped_never_replaced() {
         dest_rel: "job/FRESH.TXT".into(),
     });
     let plan = e.plan(&sp).unwrap();
-    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
-    assert_eq!(plan.conflicts, vec![PathBuf::from("job/keep.txt")]);
+    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+    assert_eq!(
+        plan.conflicts,
+        vec![
+            PathBuf::from("job/keep.txt"),
+            PathBuf::from("job/FRESH.TXT")
+        ]
+    );
     let id = e.create(sp).unwrap();
     e.start(id).unwrap();
     e.wait(id, Duration::from_secs(60)).unwrap();
@@ -220,9 +230,71 @@ fn existing_files_and_same_name_files_are_skipped_never_replaced() {
     assert!(
         r.skipped
             .iter()
-            .any(|n| n.reason.contains("already exists"))
+            .all(|n| n.reason.contains("already exists")),
+        "{r:?}"
     );
-    assert!(r.skipped.iter().any(|n| n.reason.contains("same name")));
+    assert!(r.skipped.iter().any(|n| n.path.ends_with("FRESH.TXT")));
+    assert_eq!(
+        std::fs::read_dir(d.path().join("job")).unwrap().count(),
+        3,
+        "keep.txt, fresh.txt and sub only"
+    );
+}
+
+/// "File" and "file" onto a case-insensitive disk: the second waits for the
+/// first, is asked about, and "keep both" gives it a free name.
+#[test]
+fn a_same_name_item_waits_for_its_twin_then_is_asked() {
+    let (s, d, j) = (tempdir(), tempdir(), tempdir());
+    let a = s.path().join("a");
+    let b = s.path().join("b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("File.txt"), b"upper").unwrap();
+    std::fs::write(b.join("file.txt"), b"lower").unwrap();
+    let ev = Events::default();
+    let e = engine(j.path(), Platform::native(), &ev);
+    let sp = JobSpec::new(
+        vec![
+            Item::Exact {
+                source: a.join("File.txt"),
+                dest_rel: "File.txt".into(),
+            },
+            Item::Exact {
+                source: b.join("file.txt"),
+                dest_rel: "file.txt".into(),
+            },
+        ],
+        d.path(),
+    );
+    let id = e.create(sp).unwrap();
+    e.start(id).unwrap();
+    let t = std::time::Instant::now();
+    let q = loop {
+        if let Some(q) = e.conflicts(id).pop() {
+            break q;
+        }
+        assert!(t.elapsed() < Duration::from_secs(60), "{:?}", e.job(id));
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(q.path.ends_with("file.txt"), "{q:?}");
+    e.resolve_conflict(id, q.id, Decision::KeepBoth, false)
+        .unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(60)).unwrap().state,
+        safe_transfer::JobState::Finished
+    );
+    let mut got: Vec<Vec<u8>> = std::fs::read_dir(d.path())
+        .unwrap()
+        .map(|x| std::fs::read(x.unwrap().path()).unwrap())
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        vec![b"lower".to_vec(), b"upper".to_vec()],
+        "{:?}",
+        e.report(id)
+    );
 }
 
 #[test]
@@ -252,12 +324,14 @@ fn exact_items_land_where_asked_with_their_folders() {
     );
 }
 
-/// A destination that says it is nearly full.
+/// A destination that says it is a nearly full exFAT card (no holes, so a
+/// sparse file costs its whole size there).
 struct Tiny;
 impl VolumeIdentity for Tiny {
     fn volume_of(&self, p: &Path) -> io::Result<VolumeInfo> {
         let mut v = Platform::native().volumes.volume_of(p)?;
         v.free = 50_000_000;
+        v.fs_type = "exfat".into();
         Ok(v)
     }
     fn mounted(&self) -> io::Result<Vec<VolumeInfo>> {
@@ -283,6 +357,30 @@ fn a_job_that_wont_fit_is_refused_up_front() {
     assert!(err.to_string().contains("free"), "{err}");
     assert!(e.jobs().is_empty());
     assert!(std::fs::read_dir(d.path()).unwrap().next().is_none());
+    // On a disk that keeps holes the same sparse file takes almost nothing,
+    // so it fits (F-015).
+    let mut p = Platform::native();
+    p.volumes = Arc::new(TinyApfs);
+    let e = engine(j.path(), p, &Events::default());
+    let plan = e.plan(&spec(&src, d.path())).unwrap();
+    assert!(plan.fits && plan.need < 1_000_000, "{}", plan.need);
+}
+
+/// A nearly full APFS destination.
+struct TinyApfs;
+impl VolumeIdentity for TinyApfs {
+    fn volume_of(&self, p: &Path) -> io::Result<VolumeInfo> {
+        let mut v = Platform::native().volumes.volume_of(p)?;
+        v.free = 150_000_000;
+        v.fs_type = "apfs".into();
+        Ok(v)
+    }
+    fn mounted(&self) -> io::Result<Vec<VolumeInfo>> {
+        Platform::native().volumes.mounted()
+    }
+    fn case_sensitive(&self, dir: &Path) -> io::Result<bool> {
+        Platform::native().volumes.case_sensitive(dir)
+    }
 }
 
 #[test]

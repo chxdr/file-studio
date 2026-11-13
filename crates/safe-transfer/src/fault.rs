@@ -18,6 +18,9 @@ pub enum FaultPoint {
         /// Byte offset in the file.
         offset: u64,
     },
+    /// The partial is completely written; before it is flushed (every file,
+    /// grouped or not).
+    AfterWrite,
     /// Before a flush (`chunk` is `None` for the end-of-file flush).
     BeforeFlush {
         /// The chunk just completed, if this is a per-chunk flush.
@@ -70,6 +73,7 @@ impl FaultPoint {
         match self {
             FaultPoint::BeforeCopy => "before_copy",
             FaultPoint::MidChunk { .. } => "mid_chunk",
+            FaultPoint::AfterWrite => "after_write",
             FaultPoint::BeforeFlush { .. } => "before_flush",
             FaultPoint::AfterFlush { .. } => "after_flush",
             FaultPoint::MidVerify { .. } => "mid_verify",
