@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncWindows()
         ConflictPresenter.shared.install(model)
         ConfirmSheets.install(model)
+        WorkspaceSheets.install(model)
         OverlayController.shared.install(model)
         NSApp.activate()
         #if DEBUG

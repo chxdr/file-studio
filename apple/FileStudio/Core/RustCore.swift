@@ -360,7 +360,8 @@ extension WorkspaceState {
                             panes: win.panes.map { PaneState(id: $0.id, tabs: $0.tabs.map(TabState.init),
                                                              activeTab: Int($0.activeTab)) },
                             activePane: Int(win.activePane), orientation: Orientation(win.orientation),
-                            splitRatio: win.splitRatio)
+                            splitRatio: win.splitRatio, sidebarWidth: win.sidebarWidth,
+                            sidebarHidden: win.sidebarHidden)
             },
             activeWindow: w.activeWindow)
     }
@@ -762,6 +763,7 @@ func coreEvent(_ e: FfiEvent) -> CoreEvent {
     case .settingsChanged: .settingsChanged
     case .favouritesChanged: .favouritesChanged
     case .shell(let t, let r): .shell(tab: t, request: ShellRequest(r))
+    case .workspacesChanged: .workspacesChanged
     }
 }
 
@@ -873,18 +875,36 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     }
     func swapPanes(window: WindowID) throws { try wrap { try ffi.swapPanes(window: window) } }
     func saveWorkspace(name: String) throws -> WorkspaceID { try wrap { try ffi.saveWorkspace(name: name) } }
-    func savedWorkspaces() throws -> [WorkspaceSummary] {
-        try wrap {
-            try ffi.savedWorkspaces().map {
-                WorkspaceSummary(id: $0.id, name: $0.name, windows: $0.windows, tabs: $0.tabs, updatedNs: $0.updatedNs)
-            }
-        }
-    }
+    func savedWorkspaces() throws -> [WorkspaceSummary] { try workspaces() }
     func openWorkspace(_ id: WorkspaceID) throws -> WorkspaceState {
         try wrap { WorkspaceState(try ffi.openWorkspace(id: id)) }
     }
     func renameWorkspace(_ id: WorkspaceID, name: String) throws { try wrap { try ffi.renameWorkspace(id: id, name: name) } }
     func deleteWorkspace(_ id: WorkspaceID) throws { try wrap { try ffi.deleteWorkspace(id: id) } }
+    func workspaces() throws -> [WorkspaceSummary] {
+        try wrap {
+            try ffi.workspaces().map {
+                WorkspaceSummary(id: $0.id, name: $0.name, icon: $0.icon, position: $0.position, active: $0.active,
+                                 shortcut: $0.shortcut, windows: $0.windows, tabs: $0.tabs, updatedNs: $0.updatedNs)
+            }
+        }
+    }
+    func workspaceIcons() -> [String] { ffi.workspaceIcons() }
+    func createWorkspace(name: String, icon: String, copyCurrent: Bool) throws -> WorkspaceID {
+        try wrap { try ffi.createWorkspace(name: name, icon: icon, copyCurrent: copyCurrent) }
+    }
+    func switchWorkspace(_ id: WorkspaceID) throws -> WorkspaceState {
+        try wrap { WorkspaceState(try ffi.switchWorkspace(id: id)) }
+    }
+    func setWorkspaceIcon(_ id: WorkspaceID, icon: String) throws { try wrap { try ffi.setWorkspaceIcon(id: id, icon: icon) } }
+    func moveWorkspace(_ id: WorkspaceID, to index: UInt32) throws { try wrap { try ffi.moveWorkspace(id: id, index: index) } }
+    func duplicateWorkspace(_ id: WorkspaceID) throws -> WorkspaceID { try wrap { try ffi.duplicateWorkspace(id: id) } }
+    func askDeleteWorkspace(_ id: WorkspaceID) throws -> Outcome {
+        try wrap { Outcome(try ffi.askDeleteWorkspace(id: id)) }
+    }
+    func setSidebar(window: WindowID, width: Double, hidden: Bool) throws {
+        try wrap { try ffi.setSidebar(window: window, width: width, hidden: hidden) }
+    }
 
     // Commands
     func handleKey(_ chord: KeyChord, context: InputContext) -> Outcome? {

@@ -49,6 +49,30 @@ pub struct WindowState {
     /// The second pane while dual-pane is off, so it comes back as it was.
     #[serde(default)]
     pub hidden_pane: Option<PaneState>,
+    /// The sidebar's width in points (F-019's 200 by default).
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f64,
+    /// Whether the sidebar is collapsed.
+    #[serde(default)]
+    pub sidebar_hidden: bool,
+}
+
+/// The sidebar width a new window starts with (F-019).
+pub const DEFAULT_SIDEBAR_WIDTH: f64 = 200.0;
+/// The narrowest and widest sidebar the shell allows.
+pub const SIDEBAR_WIDTH_RANGE: (f64, f64) = (160.0, 320.0);
+
+fn default_sidebar_width() -> f64 {
+    DEFAULT_SIDEBAR_WIDTH
+}
+
+/// Keeps a sidebar width inside [`SIDEBAR_WIDTH_RANGE`] (NaN gives the default).
+pub(crate) fn clamp_sidebar(w: f64) -> f64 {
+    if w.is_finite() {
+        w.clamp(SIDEBAR_WIDTH_RANGE.0, SIDEBAR_WIDTH_RANGE.1)
+    } else {
+        DEFAULT_SIDEBAR_WIDTH
+    }
 }
 
 /// Every window, for session restore and saved workspaces.
@@ -71,13 +95,25 @@ impl WorkspaceState {
     }
 }
 
-/// A saved workspace, for the list.
+/// A workspace, for the switcher and the manager.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceSummary {
     /// Its id.
     pub id: WorkspaceId,
-    /// Its name.
+    /// Its name, exactly as the user typed it (trimmed).
     pub name: String,
+    /// Its SF Symbol name (`camera`, `house`…).
+    #[serde(default)]
+    pub icon: String,
+    /// Its place in the switcher, from 0.
+    #[serde(default)]
+    pub position: u32,
+    /// Whether it is the one on screen now.
+    #[serde(default)]
+    pub active: bool,
+    /// The key that switches to it (`⌃⌘1`), if it has one.
+    #[serde(default)]
+    pub shortcut: Option<String>,
     /// Windows in it.
     pub windows: u32,
     /// Tabs in it.
@@ -103,6 +139,8 @@ pub(crate) struct WindowRt {
     pub(crate) orientation: Orientation,
     pub(crate) split_ratio: f64,
     pub(crate) hidden: Option<PaneRt>,
+    pub(crate) sidebar_width: f64,
+    pub(crate) sidebar_hidden: bool,
 }
 
 /// A closed tab, for "Reopen Closed Tab".
@@ -295,6 +333,8 @@ mod tests {
                 orientation: Orientation::Horizontal,
                 split_ratio: 0.5,
                 hidden: None,
+                sidebar_width: DEFAULT_SIDEBAR_WIDTH,
+                sidebar_hidden: false,
             }],
             active_window: Some(WindowId(1)),
             ..Default::default()

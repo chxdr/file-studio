@@ -17,7 +17,8 @@ enum MainMenu {
         ("File", ["File", "Paths & Open In", "Quick Look & Info"]),
         ("Edit", ["Edit", "Selection"]),
         ("View", ["View", "Sort", "Panes"]),
-        ("Go", ["Navigation", "Workspaces"]),
+        ("Go", ["Navigation"]),
+        ("Workspaces", ["Workspaces"]),
         ("Window", ["Tabs & Windows"]),
     ]
 
@@ -57,6 +58,8 @@ enum MainMenu {
             }
             main.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = m
             if title == "Window" { NSApp.windowsMenu = m }
+            // The list of workspaces (⌃⌘1…) goes under the commands, rebuilt on open.
+            if title == "Workspaces" { m.delegate = WorkspacesMenuDelegate.shared }
         }
 
         // Help › File Studio Power Tour (`app.power_tour`).

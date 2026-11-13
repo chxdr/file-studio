@@ -1159,6 +1159,10 @@ pub struct FfiWindowState {
     pub active_pane: u32,
     pub orientation: FfiOrientation,
     pub split_ratio: f64,
+    /// The sidebar's width in points, for this window in this workspace.
+    pub sidebar_width: f64,
+    /// Whether the sidebar is collapsed.
+    pub sidebar_hidden: bool,
 }
 
 /// Every window.
@@ -1180,6 +1184,8 @@ impl From<core::WorkspaceState> for FfiWorkspaceState {
                     active_pane: w.active_pane,
                     orientation: w.orientation.into(),
                     split_ratio: w.split_ratio,
+                    sidebar_width: w.sidebar_width,
+                    sidebar_hidden: w.sidebar_hidden,
                 })
                 .collect(),
             active_window: w.active_window.map(|w| w.0),
@@ -1187,11 +1193,19 @@ impl From<core::WorkspaceState> for FfiWorkspaceState {
     }
 }
 
-/// A saved workspace.
+/// A workspace, for the switcher and the manager.
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct FfiWorkspaceSummary {
     pub id: u64,
     pub name: String,
+    /// SF Symbol name.
+    pub icon: String,
+    /// Place in the switcher, from 0.
+    pub position: u32,
+    /// The one on screen now.
+    pub active: bool,
+    /// The key that switches to it (`⌃⌘1`).
+    pub shortcut: Option<String>,
     pub windows: u32,
     pub tabs: u32,
     pub updated_ns: i64,
@@ -1202,6 +1216,10 @@ impl From<core::WorkspaceSummary> for FfiWorkspaceSummary {
         FfiWorkspaceSummary {
             id: w.id.0,
             name: w.name,
+            icon: w.icon,
+            position: w.position,
+            active: w.active,
+            shortcut: w.shortcut,
             windows: w.windows,
             tabs: w.tabs,
             updated_ns: w.updated_ns,
@@ -2074,6 +2092,8 @@ pub enum FfiEvent {
         tab: Option<u64>,
         request: FfiShellRequest,
     },
+    /// Re-read the workspaces list.
+    WorkspacesChanged,
 }
 
 impl From<core::CoreEvent> for FfiEvent {
@@ -2120,6 +2140,7 @@ impl From<core::CoreEvent> for FfiEvent {
                 tab: tab.map(|t| t.0),
                 request: request.into(),
             },
+            E::WorkspacesChanged => FfiEvent::WorkspacesChanged,
         }
     }
 }

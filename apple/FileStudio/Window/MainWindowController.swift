@@ -48,6 +48,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         w.delegate = self
         toolbarController = WindowToolbar(model: model, window: wm)
         w.toolbar = toolbarController.toolbar
+        toolbarController.addWorkspaceSwitcherIfNew()
         buildContent()
         observer = model.observe { [weak self] e in self?.event(e) }
         installHandlers()
@@ -107,11 +108,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         let item = NSSplitViewItem(viewController: content)
         item.minimumThickness = 460
         split.addSplitViewItem(item)
-        split.splitView.autosaveName = "FileStudioSidebar"
         window?.contentViewController = split
-        if UserDefaults.standard.object(forKey: "NSSplitView Subview Frames FileStudioSidebar") == nil
-            || UserDefaults.standard.string(forKey: "FSDebugScript") != nil {
-            split.splitView.setPosition(200, ofDividerAt: 0)
+        migrateSidebarWidth()
+        applySidebar()
+        NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification,
+                                               object: split.splitView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sidebarResized() }
         }
         panesView.onRatioChanged = { [weak self] r in
             guard let self else { return }
@@ -138,6 +140,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
             for p in panes { p.listingChanged() }
         case .settingsChanged:
             syncPanes()
+        case .workspacesChanged:
+            toolbarController.workspacesChanged()
         default:
             break
         }
@@ -165,10 +169,52 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
             }
         }
         lastFocusPane = focusedPaneIndex
+        applySidebar()
         rebuildKeyViewLoop()
         updateTitle()
         toolbarController.refresh()
         sidebar.locationChanged()
+    }
+
+    // MARK: Sidebar width (kept per window, per workspace, by the core)
+
+    /// True while the sidebar is being set from the core, so it isn't reported back.
+    private var applyingSidebar = false
+    private var sidebarItem: NSSplitViewItem? { split.splitViewItems.first }
+
+    /// Makes the sidebar match the core's width and collapsed state.
+    private func applySidebar() {
+        guard let item = sidebarItem else { return }
+        let st = windowModel.state
+        applyingSidebar = true
+        defer { applyingSidebar = false }
+        if item.isCollapsed != st.sidebarHidden { item.isCollapsed = st.sidebarHidden }
+        if !st.sidebarHidden, abs(item.viewController.view.frame.width - st.sidebarWidth) >= 1 {
+            split.splitView.setPosition(st.sidebarWidth, ofDividerAt: 0)
+        }
+    }
+
+    /// The user dragged the divider or collapsed the sidebar.
+    private func sidebarResized() {
+        guard !applyingSidebar, let item = sidebarItem, window?.isVisible == true else { return }
+        let width = item.isCollapsed ? windowModel.state.sidebarWidth : Double(item.viewController.view.frame.width)
+        guard width >= 1 else { return }
+        if abs(width - windowModel.state.sidebarWidth) < 1 && item.isCollapsed == windowModel.state.sidebarHidden { return }
+        try? model.engine.setSidebar(window: coreWindowID, width: width, hidden: item.isCollapsed)
+    }
+
+    /// Before workspaces the split view remembered the sidebar width itself;
+    /// hand that width to the core once.
+    private func migrateSidebarWidth() {
+        let old = "NSSplitView Subview Frames FileStudioSidebar"
+        let d = UserDefaults.standard
+        guard d.string(forKey: "FSDebugScript") == nil, let frames = d.array(forKey: old) as? [String],
+              let first = frames.first else { return }
+        d.removeObject(forKey: old)
+        // "x, y, width, height, collapsed, hidden"
+        let parts = first.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 4, let w = Double(parts[2]), w > 0 else { return }
+        try? model.engine.setSidebar(window: coreWindowID, width: w, hidden: windowModel.state.sidebarHidden)
     }
 
     private func updateTitle() {
@@ -270,6 +316,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         handlers.append(model.registerShellHandler(for: "toggleSidebar") { [weak self] _, ctx in
             guard let self, ctx.window == nil || ctx.window == self.coreWindowID else { return false }
             self.split.toggleSidebar(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { self.sidebarResized() } }
             return true
         })
     }

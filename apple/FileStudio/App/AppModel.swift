@@ -151,6 +151,8 @@ public final class AppModel {
     public private(set) var undoState = UndoState()
     public private(set) var volumes: [Volume] = []
     public private(set) var favourites: [Favourite] = []
+    /// Every workspace, in switcher order; the active one has `active` set.
+    public private(set) var workspaces: [WorkspaceSummary] = []
     public private(set) var settings = Settings()
     /// The last "Did you know?" hint (the toast session shows it).
     public private(set) var hint: Hint?
@@ -209,6 +211,7 @@ public final class AppModel {
         workspace = engine.restoreSession()
         volumes = engine.volumes()
         favourites = engine.favourites()
+        workspaces = (try? engine.workspaces()) ?? []
         ops = engine.opsList()
         undoState = engine.undoState()
         syncWorkspace()
@@ -270,6 +273,7 @@ public final class AppModel {
         case .favouritesChanged: favourites = engine.favourites()
         case .shell(let tab, let req):
             dispatch(req, ShellContext(window: tab.flatMap { window(of: $0)?.id } ?? keyWindowID, tab: tab))
+        case .workspacesChanged: workspaces = (try? engine.workspaces()) ?? workspaces
         }
         for o in observers { o.fn(e) }
     }

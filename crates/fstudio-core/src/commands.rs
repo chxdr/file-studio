@@ -1093,15 +1093,28 @@ impl Engine {
             "workspace.switch" => {
                 return match &inv.arg {
                     Some(CommandArg::Index(i)) => {
-                        let list = self.saved_workspaces()?;
-                        let w = list
-                            .get(*i)
-                            .ok_or_else(|| CoreError::NotFound(format!("workspace {}", i + 1)))?;
-                        self.open_workspace(w.id)?;
-                        Ok(Outcome::message(format!("Opened “{}”", w.name)))
+                        self.switch_workspace_at(*i)?;
+                        Ok(Outcome::none())
                     }
                     _ => Ok(Outcome::shell(ShellRequest::ManageWorkspaces)),
                 };
+            }
+            "workspace.next" | "workspace.previous" => {
+                self.switch_workspace_by(if id == "workspace.next" { 1 } else { -1 })?;
+                return Ok(Outcome::none());
+            }
+            "workspace.duplicate" | "workspace.delete" => {
+                let list = self.workspaces()?;
+                let w = match &inv.arg {
+                    Some(CommandArg::Index(i)) => list.get(*i),
+                    _ => list.iter().find(|w| w.active),
+                }
+                .ok_or_else(|| CoreError::NotFound("workspace".into()))?;
+                if id == "workspace.delete" {
+                    return self.ask_delete_workspace(w.id);
+                }
+                self.duplicate_workspace(w.id)?;
+                return Ok(Outcome::message(format!("Duplicated “{}”", w.name)));
             }
             _ if id.starts_with("addressbar.")
                 || id.starts_with("palette.")

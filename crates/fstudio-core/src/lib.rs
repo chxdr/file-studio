@@ -57,6 +57,7 @@ mod tab;
 mod view;
 mod view_columns;
 mod workspace;
+mod workspaces;
 
 pub use commands::{
     BindingSummary, CommandInvocation, CommandSummary, DropAction, Handling, InputContext,
@@ -97,7 +98,11 @@ pub use view::{SortBy, ViewState};
 pub use view_columns::{
     ColumnId, ColumnSpec, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, sanitize_columns,
 };
-pub use workspace::{Orientation, PaneState, WindowState, WorkspaceState, WorkspaceSummary};
+pub use workspace::{
+    DEFAULT_SIDEBAR_WIDTH, Orientation, PaneState, SIDEBAR_WIDTH_RANGE, WindowState,
+    WorkspaceState, WorkspaceSummary,
+};
+pub use workspaces::{NewWorkspace, WORKSPACE_ICONS};
 
 // The types from other crates that appear on this crate's surface.
 pub use fstudio_keymap::{

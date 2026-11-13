@@ -540,6 +540,56 @@ impl FfiEngine {
     pub fn delete_workspace(&self, id: u64) -> R<()> {
         Ok(self.inner.delete_workspace(core::WorkspaceId(id))?)
     }
+    /// Every workspace, in switcher order (at least one).
+    pub fn workspaces(&self) -> R<Vec<FfiWorkspaceSummary>> {
+        Ok(self
+            .inner
+            .workspaces()?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+    /// The SF Symbols offered for workspaces.
+    pub fn workspace_icons(&self) -> Vec<String> {
+        self.inner.workspace_icons()
+    }
+    /// Makes a workspace (empty, or a copy of the active one) and switches to it.
+    pub fn create_workspace(&self, name: String, icon: String, copy_current: bool) -> R<u64> {
+        let start = if copy_current {
+            core::NewWorkspace::CopyCurrent
+        } else {
+            core::NewWorkspace::Empty
+        };
+        Ok(self.inner.create_workspace(&name, &icon, start)?.0)
+    }
+    /// Saves the active workspace, then shows another.
+    pub fn switch_workspace(&self, id: u64) -> R<FfiWorkspaceState> {
+        Ok(self.inner.switch_workspace(core::WorkspaceId(id))?.into())
+    }
+    pub fn set_workspace_icon(&self, id: u64, icon: String) -> R<()> {
+        Ok(self
+            .inner
+            .set_workspace_icon(core::WorkspaceId(id), &icon)?)
+    }
+    pub fn move_workspace(&self, id: u64, index: u32) -> R<()> {
+        Ok(self.inner.move_workspace(core::WorkspaceId(id), index)?)
+    }
+    pub fn duplicate_workspace(&self, id: u64) -> R<u64> {
+        Ok(self.inner.duplicate_workspace(core::WorkspaceId(id))?.0)
+    }
+    /// Asks before deleting (a `Confirm` request; the answer goes to `confirm`).
+    pub fn ask_delete_workspace(&self, id: u64) -> R<FfiOutcome> {
+        Ok(self
+            .inner
+            .ask_delete_workspace(core::WorkspaceId(id))?
+            .into())
+    }
+    /// Records the sidebar's width and collapsed state for a window.
+    pub fn set_sidebar(&self, window: u64, width: f64, hidden: bool) -> R<()> {
+        Ok(self
+            .inner
+            .set_sidebar(core::WindowId(window), width, hidden)?)
+    }
 
     // ── commands and keys ──
 
