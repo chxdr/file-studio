@@ -86,7 +86,7 @@ s5() {
   home
   mkdir -p "$H/w"
   echo a > "$H/w/Notes.txt"; echo b > "$H/w/a.txt"; echo c > "$H/w/b.txt"
-  run s5 "wait:1;go:$H/w;wait:1;focus:list;select:Notes.txt;key:return;wait:0.5;key:cmd+a;type:NOTES.txt;key:return;wait:3;listlog;ls:$H/w;quit"
+  run s5 "wait:1;go:$H/w;wait:1;focus:list;select:Notes.txt;key:return;wait:0.5;action:selectAll:;type:NOTES.txt;key:return;wait:3;listlog;ls:$H/w;quit"
   expect "the disk has NOTES.txt" "^LS .*/w: NOTES.txt, a.txt, b.txt$"
   expect "the list has 3 rows" "^LIST mode=.* rows=3 "
   expect "the row is NOTES.txt" "^LIST row 2 \\[x\\]> NOTES.txt"
