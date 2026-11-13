@@ -16,6 +16,10 @@ fn unsupported<T>(what: &str) -> io::Result<T> {
     ))
 }
 
+/// Not yet: always succeeds (no locking), so two processes could run one job.
+pub fn try_lock(_f: &File) -> io::Result<bool> {
+    Ok(true)
+}
 /// Not yet: needs `renameat2(RENAME_NOREPLACE)`.
 pub fn rename_excl(_from: &Path, _to: &Path) -> io::Result<RenameMode> {
     unsupported("exclusive rename")
@@ -24,6 +28,10 @@ pub fn rename_excl(_from: &Path, _to: &Path) -> io::Result<RenameMode> {
 pub fn full_sync(f: &File) -> io::Result<FlushLevel> {
     f.sync_all()?;
     Ok(FlushLevel::OsOnly)
+}
+/// The OS-level flush without a drive barrier (here: the same as `full_sync`).
+pub fn os_sync(f: &File) -> io::Result<()> {
+    f.sync_all()
 }
 /// `fsync` on the folder.
 pub fn sync_dir(dir: &Path) -> io::Result<FlushLevel> {
@@ -39,6 +47,10 @@ pub fn residency(_path: &Path) -> io::Result<Residency> {
 }
 /// Not yet.
 pub fn evict(_path: &Path) -> io::Result<Residency> {
+    unsupported("cache eviction")
+}
+/// Not yet.
+pub fn evict_open(_f: &File) -> io::Result<Residency> {
     unsupported("cache eviction")
 }
 /// Holes are not detected yet: the whole file is data.

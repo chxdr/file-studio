@@ -1,20 +1,24 @@
-//! `safe-transfer`: verified, crash-proof copies from the terminal and from
-//! scripts. Milestone 1: single files (`copy`, `plan`), plus `compare` and
-//! `volumes`. Jobs, `resume`, `move` and folders come in M2–M3.
+//! `safe-transfer`: verified, crash-proof, resumable copies from the
+//! terminal and from scripts.
 //!
-//! Exit codes: 0 = every file copied and verified; 1 = some files failed or
-//! were skipped (each is listed); 2 = nothing could start (bad arguments).
+//! Every `copy` is a job with a journal on this Mac
+//! (`~/Library/Application Support/Safe Transfer/` unless `--journal-dir`
+//! says otherwise), so an interrupted copy can be resumed with
+//! `safe-transfer resume <job>`.
+//!
+//! Exit codes: 0 = every file copied and verified; 1 = some files failed,
+//! were skipped or are waiting (each is listed); 2 = nothing could start.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand};
 use safe_transfer::{
-    Control, CopyRequest, Failure, FileProgress, FileReport, Options, Outcome, Platform,
-    ProgressSink, Symlinks,
+    Cancel, Engine, EngineConfig, Event, Item, JobId, JobInfo, JobReport, JobSpec, JobState,
+    Options, Platform, Symlinks, human,
 };
 use serde_json::json;
 
@@ -22,39 +26,63 @@ use serde_json::json;
 #[command(
     name = "safe-transfer",
     version,
-    about = "Crash-proof, verified file copies"
+    about = "Crash-proof, verified, resumable file copies"
 )]
 struct Cli {
+    /// Where job journals are kept.
+    #[arg(long, global = true)]
+    journal_dir: Option<PathBuf>,
+    /// One JSON object per line (progress, each file, a summary).
+    #[arg(long, global = true)]
+    json: bool,
+    /// Longest the journal goes without a write, in milliseconds (tests).
+    #[arg(long, global = true, hide = true, default_value_t = 500)]
+    journal_interval_ms: u64,
     #[command(subcommand)]
     cmd: Cmd,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Copy files into a folder. Each file gets its real name only after it
-    /// is flushed to the disk and read back from it with matching hashes.
+    /// Copy files and folders into a folder. Each file gets its real name
+    /// only after it is flushed to the disk and read back from it with
+    /// matching hashes.
     Copy {
-        /// Files to copy (folders come in a later version).
+        /// Files and folders to copy.
         #[arg(required = true, num_args = 1..)]
         sources: Vec<PathBuf>,
         /// The folder to copy into.
         dest: PathBuf,
         #[command(flatten)]
         opts: CopyOpts,
-        /// One JSON object per line (progress, each file, a summary).
-        #[arg(long)]
-        json: bool,
     },
-    /// Show what copying would do (sizes, conflicts, free space). Writes nothing.
+    /// Show what copying would do (counts, sizes, skips, free space). Writes nothing.
     Plan {
-        /// Files to copy.
+        /// Files and folders to copy.
         #[arg(required = true, num_args = 1..)]
         sources: Vec<PathBuf>,
         /// The folder to copy into.
         dest: PathBuf,
-        /// JSON output.
+    },
+    /// List unfinished (and recently finished) jobs.
+    Jobs,
+    /// Continue an interrupted, waiting, paused or cancelled job.
+    Resume {
+        /// The job id.
+        job: String,
+    },
+    /// Cancel a job: its partial files are removed; finished files stay.
+    Cancel {
+        /// The job id.
+        job: String,
+        /// Close the job for good instead of keeping it resumable.
         #[arg(long)]
-        json: bool,
+        close: bool,
+    },
+    /// Show a job's report.
+    Report {
+        /// The job id.
+        job: String,
     },
     /// Compare two files or folders by content, reading from the disk (not memory).
     Compare {
@@ -62,16 +90,9 @@ enum Cmd {
         a: PathBuf,
         /// The second file or folder.
         b: PathBuf,
-        /// JSON output.
-        #[arg(long)]
-        json: bool,
     },
     /// List mounted volumes with the ids Safe Transfer recognises them by.
-    Volumes {
-        /// JSON output.
-        #[arg(long)]
-        json: bool,
-    },
+    Volumes,
 }
 
 #[derive(Args)]
@@ -89,6 +110,9 @@ struct CopyOpts {
     /// Copy byte for byte even on the same APFS volume (no instant clone).
     #[arg(long)]
     no_clone: bool,
+    /// A label for the job ("Smith wedding → CLIENT_A").
+    #[arg(long)]
+    label: Option<String>,
 }
 
 /// Parses "64M", "1G", "4096", "512K".
@@ -106,230 +130,396 @@ fn parse_size(s: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("“{s}” isn't a size like 64M"))
 }
 
-fn human(bytes: u64) -> String {
-    let b = bytes as f64;
-    match bytes {
-        0..1_000 => format!("{bytes} B"),
-        1_000..1_000_000 => format!("{:.1} KB", b / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1} MB", b / 1e6),
-        _ => format!("{:.2} GB", b / 1e9),
-    }
-}
-
-/// Prints progress: a status line on stderr, or JSON lines on stdout.
-struct Printer {
-    json: bool,
-    name: Mutex<String>,
-}
-
-impl ProgressSink for Printer {
-    fn progress(&self, p: &FileProgress) {
-        if self.json {
-            println!(
-                "{}",
-                json!({"event": "progress", "file": *self.name.lock().unwrap(),
-                       "phase": p.phase.as_str(), "done": p.done, "total": p.total})
-            );
-        } else {
-            let pct = (p.done * 100).checked_div(p.total).unwrap_or(100);
-            eprint!(
-                "\r\x1b[2K{}  {} {pct}%",
-                self.name.lock().unwrap(),
-                p.phase.as_str()
-            );
-            let _ = std::io::stderr().flush();
-        }
-    }
-}
-
-fn file_json(r: &FileReport) -> serde_json::Value {
-    json!({
-        "event": "file_done",
-        "source": r.source, "dest": r.dest, "outcome": r.outcome.as_str(),
-        "bytes": r.bytes,
-        "xxh3_128": matches!(r.outcome, Outcome::Verified | Outcome::VerifiedFromMemory)
-            .then(|| r.hashes.file_hex()),
-        "chunks": r.hashes.chunks.len(), "source_reread": r.source_reread,
-        "flush": format!("{:?}", r.flush_level), "rename": format!("{:?}", r.rename),
-        "retries": r.retries,
-        "metadata_lost": r.metadata_lost.iter().map(|m| m.describe()).collect::<Vec<_>>(),
-        "copy_ms": r.copy_time.as_millis() as u64, "flush_ms": r.flush_time.as_millis() as u64,
-        "verify_ms": r.verify_time.as_millis() as u64, "reread_ms": r.reread_time.as_millis() as u64,
+fn journal_dir(cli: &Option<PathBuf>) -> PathBuf {
+    cli.clone().unwrap_or_else(|| {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Safe Transfer")
     })
 }
 
-fn fail_json(src: &Path, f: &Failure) -> serde_json::Value {
-    json!({"event": "file_failed", "source": src, "reason": f.to_string(),
-           "partial_left": f.partial_left})
+/// Prints events: status lines on stderr, or JSON lines on stdout.
+struct Printer {
+    json: bool,
+    last: Mutex<Instant>,
 }
 
-fn do_copy(sources: &[PathBuf], dest: &Path, o: &CopyOpts, json_out: bool) -> ExitCode {
-    if !dest.is_dir() {
-        eprintln!("safe-transfer: {} is not a folder", dest.display());
-        return ExitCode::from(2);
-    }
-    #[allow(unused_mut)]
-    let mut opts = Options {
-        chunk_size: o.chunk,
-        reread_source: o.reread_source,
-        symlinks: if o.follow_symlinks {
-            Symlinks::Follow
-        } else {
-            Symlinks::CopyLink
-        },
-        clone_same_volume: !o.no_clone,
-        ..Options::default()
-    };
-    #[cfg(feature = "fault-injection")]
-    if let Some(h) = safe_transfer::fault::SpecHook::from_env() {
-        opts.faults = Some(std::sync::Arc::new(h));
-    }
-    let platform = Platform::native();
-    let ctl = Control::new();
-    let printer = Printer {
-        json: json_out,
-        name: Mutex::new(String::new()),
-    };
-    let started = Instant::now();
-    let (mut ok, mut failed, mut bytes) = (0u32, 0u32, 0u64);
-    for src in sources {
-        *printer.name.lock().unwrap() = src
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let req = match CopyRequest::into_dir(src, dest) {
-            Ok(r) => r,
-            Err(e) => {
-                failed += 1;
-                eprintln!("✗ {}: {e}", src.display());
-                continue;
-            }
-        };
-        match safe_transfer::copy_file(&platform, &req, &opts, &ctl, &printer) {
-            Ok(r) => {
-                ok += 1;
-                bytes += r.bytes;
-                if json_out {
-                    println!("{}", file_json(&r));
-                } else {
-                    eprint!("\r\x1b[2K");
-                    let mut line = format!(
-                        "✓ {}  {}  {}",
-                        r.dest.display(),
-                        human(r.bytes),
-                        r.outcome.as_str()
+impl Printer {
+    fn on(&self, e: Event) {
+        match e {
+            Event::Progress(p) => {
+                let mut last = self.last.lock().unwrap();
+                if last.elapsed() < Duration::from_millis(100) {
+                    return;
+                }
+                *last = Instant::now();
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "progress", "job": p.job.as_str(), "phase": p.phase.as_str(),
+                               "file": p.file, "done": p.done, "total": p.total,
+                               "files_done": p.files_done, "files_total": p.files_total,
+                               "bytes_per_sec": p.bytes_per_sec, "eta_secs": p.eta_secs})
                     );
-                    if r.source_reread {
-                        line.push_str(", original read twice");
-                    }
-                    if r.flush_level == safe_transfer::FlushLevel::OsOnly {
-                        line.push_str(", disk only confirmed an OS-level flush");
-                    }
-                    println!("{line}");
-                    for m in &r.metadata_lost {
-                        println!("    couldn't keep: {}", m.describe());
-                    }
-                }
-            }
-            Err(f) => {
-                failed += 1;
-                if json_out {
-                    println!("{}", fail_json(src, &f));
                 } else {
-                    eprint!("\r\x1b[2K");
-                    println!("✗ {}: {f}", src.display());
-                    if let Some(p) = &f.partial_left {
-                        println!("    a hidden partial file was left at {}", p.display());
+                    let pct = (p.done * 100).checked_div(p.total).unwrap_or(100);
+                    let eta = p
+                        .eta_secs
+                        .map(|s| format!(", {s} s left"))
+                        .unwrap_or_default();
+                    eprint!(
+                        "\r\x1b[2K{}/{} files  {pct}%  {}/s{eta}  {} {}",
+                        p.files_done,
+                        p.files_total,
+                        human(p.bytes_per_sec),
+                        p.phase.as_str(),
+                        p.file.map(|f| f.display().to_string()).unwrap_or_default()
+                    );
+                    let _ = std::io::stderr().flush();
+                }
+            }
+            Event::FileDone { path, report, .. } => {
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "file_done", "path": path, "outcome": report.outcome.as_str(),
+                               "bytes": report.bytes, "xxh3_128": (!report.hashes.chunks.is_empty()).then(|| report.hashes.file_hex()),
+                               "chunks": report.hashes.chunks.len(), "chunks_reused": report.chunks_reused,
+                               "source_reread": report.source_reread, "flush": format!("{:?}", report.flush_level),
+                               "metadata_lost": report.metadata_lost.iter().map(|m| m.describe()).collect::<Vec<_>>()})
+                    );
+                }
+            }
+            Event::FileNotCopied {
+                path,
+                failed,
+                reason,
+                ..
+            } => {
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "file_not_copied", "path": path, "failed": failed, "reason": reason})
+                    );
+                } else {
+                    eprintln!(
+                        "\r\x1b[2K{} {}: {reason}",
+                        if failed { "✗" } else { "–" },
+                        path.display()
+                    );
+                }
+            }
+            Event::JobState { job, state } => {
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "state", "job": job.as_str(), "state": state.as_str()})
+                    );
+                }
+            }
+            Event::WaitingForSource { missing, .. } => {
+                for m in missing {
+                    if self.json {
+                        println!(
+                            "{}",
+                            json!({"event": "waiting_for_source", "volume": m.volume, "uuid": m.uuid, "files": m.files})
+                        );
+                    } else {
+                        eprintln!(
+                            "\r\x1b[2K{} files are waiting for the disk “{}” to be connected",
+                            m.files.len(),
+                            m.volume
+                        );
                     }
                 }
             }
+            Event::WaitingForDestination { volume, .. } => {
+                if self.json {
+                    println!(
+                        "{}",
+                        json!({"event": "waiting_for_destination", "volume": volume})
+                    );
+                } else {
+                    eprintln!(
+                        "\r\x1b[2KThe destination “{volume}” was disconnected. Connect it and run safe-transfer resume."
+                    );
+                }
+            }
+            Event::ResumeAvailable { .. } | Event::JobFinished { .. } => {}
         }
     }
-    let secs = started.elapsed().as_secs_f64();
+}
+
+fn open_engine(cli: &Cli, printer: Arc<Printer>) -> Result<Engine, ExitCode> {
+    #[allow(unused_mut)]
+    let mut cfg = EngineConfig::new(journal_dir(&cli.journal_dir));
+    cfg.journal_interval = Duration::from_millis(cli.journal_interval_ms);
+    #[cfg(feature = "fault-injection")]
+    {
+        cfg.faults = safe_transfer::fault::SpecHook::from_env()
+            .map(|h| Arc::new(h) as Arc<dyn safe_transfer::fault::FaultHook>);
+    }
+    let sink = move |e: Event| printer.on(e);
+    Engine::open(cfg, Platform::native(), Arc::new(sink)).map_err(|e| {
+        eprintln!("safe-transfer: {e}");
+        ExitCode::from(2)
+    })
+}
+
+fn report_json(r: &JobReport, info: &JobInfo) -> serde_json::Value {
+    let mut v = serde_json::to_value(r).unwrap_or_default();
+    v["event"] = json!("summary");
+    v["state"] = json!(info.state.as_str());
+    v
+}
+
+fn print_report(json_out: bool, r: &JobReport, info: &JobInfo) {
     if json_out {
+        println!("{}", report_json(r, info));
+        return;
+    }
+    eprint!("\r\x1b[2K");
+    let verified = r.copied_verified + r.verified_from_memory;
+    println!(
+        "{verified} copied and checked, {} cloned, {} links, {} folders — {} in {:.1} s ({})",
+        r.cloned,
+        r.links,
+        r.folders,
+        human(r.bytes),
+        r.seconds,
+        info.state.as_str()
+    );
+    if r.resumed > 0 {
         println!(
-            "{}",
-            json!({"event": "summary", "copied": ok, "failed": failed, "bytes": bytes, "seconds": secs})
-        );
-    } else {
-        println!(
-            "{ok} copied and checked, {failed} failed — {} in {secs:.1} s",
-            human(bytes)
+            "  {} continued from an interrupted copy ({} chunks reused)",
+            r.resumed, r.chunks_reused
         );
     }
-    if failed == 0 {
+    if r.source_reread > 0 {
+        println!(
+            "  {} originals read twice, both reads agreed",
+            r.source_reread
+        );
+    }
+    if r.verified_from_memory > 0 {
+        println!(
+            "  {} checked partly from memory (the cache couldn't be emptied)",
+            r.verified_from_memory
+        );
+    }
+    if r.os_flush_only > 0 {
+        println!(
+            "  {} on a disk that only confirmed an OS-level flush",
+            r.os_flush_only
+        );
+    }
+    for n in &r.restarted {
+        println!("  restarted {}: {}", n.path.display(), n.reason);
+    }
+    for n in &r.skipped {
+        println!("  skipped {}: {}", n.path.display(), n.reason);
+    }
+    for n in &r.failed {
+        println!("  ✗ {}: {}", n.path.display(), n.reason);
+    }
+    for n in &r.metadata_lost {
+        println!("  couldn't keep for {}: {}", n.path.display(), n.reason);
+    }
+}
+
+fn exit_for(r: &JobReport, info: &JobInfo) -> ExitCode {
+    if info.state == JobState::Finished && r.failed.is_empty() && r.skipped.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
 }
 
-fn do_plan(sources: &[PathBuf], dest: &Path, json_out: bool) -> ExitCode {
-    let platform = Platform::native();
-    let mut bad = false;
-    let mut need = 0u64;
-    let mut free = None;
-    for src in sources {
-        let r = CopyRequest::into_dir(src, dest).and_then(|r| safe_transfer::plan(&platform, &r));
-        match r {
-            Ok(p) => {
-                need += p.need;
-                free = Some(p.dest_volume.free);
+/// Runs `id` to the end (or until it waits) and prints its report.
+fn run_job(engine: &Engine, id: JobId, json_out: bool) -> ExitCode {
+    if let Some(info) = engine.job(id).filter(|i| i.state.is_final()) {
+        let r = engine.report(id).unwrap_or_default();
+        print_report(json_out, &r, &info);
+        return exit_for(&r, &info);
+    }
+    if let Err(e) = engine.resume(id) {
+        eprintln!("safe-transfer: {e}");
+        return ExitCode::from(2);
+    }
+    let Some(info) = engine.wait(id, Duration::from_secs(365 * 86_400)) else {
+        return ExitCode::from(2);
+    };
+    let r = engine.report(id).unwrap_or_default();
+    print_report(json_out, &r, &info);
+    exit_for(&r, &info)
+}
+
+fn items(sources: &[PathBuf]) -> Vec<Item> {
+    sources.iter().cloned().map(Item::Path).collect()
+}
+
+fn find_job(engine: &Engine, s: &str) -> Result<JobId, ExitCode> {
+    JobId::parse(s)
+        .filter(|id| engine.job(*id).is_some())
+        .ok_or_else(|| {
+            eprintln!("safe-transfer: there is no job {s}");
+            ExitCode::from(2)
+        })
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let printer = Arc::new(Printer {
+        json: cli.json,
+        last: Mutex::new(Instant::now() - Duration::from_secs(1)),
+    });
+    let json_out = cli.json;
+    match &cli.cmd {
+        Cmd::Compare { a, b } => return do_compare(a, b, json_out),
+        Cmd::Volumes => return do_volumes(json_out),
+        _ => {}
+    }
+    let engine = match open_engine(&cli, printer) {
+        Ok(e) => e,
+        Err(c) => return c,
+    };
+    match &cli.cmd {
+        Cmd::Copy {
+            sources,
+            dest,
+            opts,
+        } => {
+            let mut spec = JobSpec::new(items(sources), dest);
+            spec.options = Options {
+                chunk_size: opts.chunk,
+                reread_source: opts.reread_source,
+                symlinks: if opts.follow_symlinks {
+                    Symlinks::Follow
+                } else {
+                    Symlinks::CopyLink
+                },
+                clone_same_volume: !opts.no_clone,
+                ..Options::default()
+            };
+            if let Some(l) = &opts.label {
+                spec.label = l.clone();
+            }
+            let id = match engine.create(spec) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("safe-transfer: {e}");
+                    return ExitCode::from(2);
+                }
+            };
+            if json_out {
+                println!("{}", json!({"event": "job_created", "job": id.as_str()}));
+            } else {
+                eprintln!("job {id}");
+            }
+            let _ = std::io::stdout().flush();
+            run_job(&engine, id, json_out)
+        }
+        Cmd::Plan { sources, dest } => {
+            let spec = JobSpec::new(items(sources), dest);
+            match engine.plan(&spec) {
+                Ok(p) => {
+                    if json_out {
+                        println!(
+                            "{}",
+                            json!({"files": p.files, "folders": p.folders, "links": p.links, "bytes": p.bytes,
+                                   "need": p.need, "margin": p.margin, "free": p.free, "fits": p.fits,
+                                   "skipped": p.skipped, "dest_fs": p.dest_volume.fs_type})
+                        );
+                    } else {
+                        println!(
+                            "{} files, {} folders, {} links, {}",
+                            p.files,
+                            p.folders,
+                            p.links,
+                            human(p.bytes)
+                        );
+                        for n in &p.skipped {
+                            println!("  would skip {}: {}", n.path.display(), n.reason);
+                        }
+                        println!(
+                            "needs {} (plus a {} safety margin); {} free — {}",
+                            human(p.need),
+                            human(p.margin),
+                            human(p.free),
+                            if p.fits { "fits" } else { "won't fit" }
+                        );
+                    }
+                    if p.fits && p.skipped.is_empty() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    }
+                }
+                Err(e) => {
+                    eprintln!("safe-transfer: {e}");
+                    ExitCode::from(2)
+                }
+            }
+        }
+        Cmd::Jobs => {
+            for j in engine.jobs() {
                 if json_out {
                     println!(
                         "{}",
-                        json!({"source": src, "bytes": p.bytes, "need": p.need, "conflict": p.conflict,
-                               "same_volume": p.same_volume, "link": p.is_link, "icloud_placeholder": p.dataless,
-                               "dest_fs": p.dest_volume.fs_type})
+                        json!({"job": j.id.as_str(), "label": j.label, "state": j.state.as_str(),
+                               "dest": j.dest, "dest_volume": j.dest_volume, "files_total": j.files_total,
+                               "files_done": j.files_done, "files_failed": j.files_failed,
+                               "files_skipped": j.files_skipped, "bytes_total": j.bytes_total,
+                               "bytes_done": j.bytes_done})
                     );
                 } else {
-                    let mut notes = Vec::new();
-                    if p.conflict {
-                        notes.push("already exists");
-                    }
-                    if p.dataless {
-                        notes.push("iCloud placeholder, would be skipped");
-                    }
-                    if p.same_volume && p.dest_volume.fs_type == "apfs" {
-                        notes.push("instant clone");
-                    }
                     println!(
-                        "{}  {}  {}",
-                        src.display(),
-                        human(p.bytes),
-                        notes.join(", ")
+                        "{}  {:<24} {}/{} files  {} left  {}",
+                        j.id,
+                        j.state.as_str(),
+                        j.files_done,
+                        j.files_total,
+                        human(j.bytes_total - j.bytes_done),
+                        j.label
                     );
                 }
-                bad |= p.conflict;
             }
-            Err(e) => {
-                bad = true;
-                println!("✗ {}: {}", src.display(), safe_transfer::describe(&e));
+            for d in engine.damaged() {
+                eprintln!("damaged journal (left alone): {}", d.display());
             }
+            ExitCode::SUCCESS
         }
-    }
-    if let Some(free) = free {
-        let fits = safe_transfer::space::fits(need, free);
-        bad |= !fits;
-        if json_out {
-            println!(
-                "{}",
-                json!({"need": need, "margin": safe_transfer::space::margin(need), "free": free, "fits": fits})
-            );
-        } else {
-            println!(
-                "needs {} (plus a {} safety margin); {} free — {}",
-                human(need),
-                human(safe_transfer::space::margin(need)),
-                human(free),
-                if fits { "fits" } else { "won't fit" }
-            );
-        }
-    }
-    if bad {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
+        Cmd::Resume { job } => match find_job(&engine, job) {
+            Ok(id) => run_job(&engine, id, json_out),
+            Err(c) => c,
+        },
+        Cmd::Cancel { job, close } => match find_job(&engine, job) {
+            Ok(id) => {
+                let how = if *close {
+                    Cancel::Close
+                } else {
+                    Cancel::KeepResumable
+                };
+                match engine.cancel(id, how) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("safe-transfer: {e}");
+                        ExitCode::from(2)
+                    }
+                }
+            }
+            Err(c) => c,
+        },
+        Cmd::Report { job } => match find_job(&engine, job) {
+            Ok(id) => {
+                let info = engine.job(id).expect("found above");
+                let r = engine.report(id).unwrap_or_default();
+                print_report(json_out, &r, &info);
+                exit_for(&r, &info)
+            }
+            Err(c) => c,
+        },
+        Cmd::Compare { .. } | Cmd::Volumes => unreachable!("handled above"),
     }
 }
 
@@ -396,24 +586,6 @@ fn do_volumes(json_out: bool) -> ExitCode {
             eprintln!("safe-transfer: {}", safe_transfer::describe(&e));
             ExitCode::from(2)
         }
-    }
-}
-
-fn main() -> ExitCode {
-    match Cli::parse().cmd {
-        Cmd::Copy {
-            sources,
-            dest,
-            opts,
-            json,
-        } => do_copy(&sources, &dest, &opts, json),
-        Cmd::Plan {
-            sources,
-            dest,
-            json,
-        } => do_plan(&sources, &dest, json),
-        Cmd::Compare { a, b, json } => do_compare(&a, &b, json),
-        Cmd::Volumes { json } => do_volumes(json),
     }
 }
 

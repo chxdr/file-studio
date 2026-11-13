@@ -935,6 +935,8 @@ dependencies = [
  "libc",
  "objc2",
  "objc2-foundation",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "unicode-normalization",
@@ -946,6 +948,7 @@ name = "safe-transfer-cli"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "dirs",
  "safe-transfer",
  "serde_json",
  "tempfile",

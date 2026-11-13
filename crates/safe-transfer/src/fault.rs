@@ -1,4 +1,4 @@
-//! Named stop points for crash and yank tests (proposal §11.2). Only built
+//! Named stop points for crash and yank tests (proposal §11.2, §4.7). Only built
 //! with the `fault-injection` feature; release builds have none of this.
 //!
 //! A hook decides what happens at each point: carry on, fail the file,
@@ -39,6 +39,21 @@ pub enum FaultPoint {
     BeforeRename,
     /// After the rename, before the folder is flushed.
     AfterRename,
+    /// A group of small files is written; before its one drive flush.
+    BeforeGroupBarrier,
+    /// After a group's drive flush, before any of it is checked or renamed.
+    AfterGroupBarrier,
+    /// Before renaming file `index` (0-based) of a group.
+    MidGroupRename {
+        /// Position in the group.
+        index: u64,
+    },
+    /// A group is renamed; before the folder flush that makes it durable.
+    BeforeFolderBarrier,
+    /// Half of a journal file's temporary copy is written.
+    MidJournalWrite,
+    /// A journal file's temporary copy is flushed; before it replaces a slot.
+    BeforeJournalRename,
 }
 
 impl FaultPoint {
@@ -53,6 +68,12 @@ impl FaultPoint {
             FaultPoint::BeforeReread => "before_reread",
             FaultPoint::BeforeRename => "before_rename",
             FaultPoint::AfterRename => "after_rename",
+            FaultPoint::BeforeGroupBarrier => "before_group_barrier",
+            FaultPoint::AfterGroupBarrier => "after_group_barrier",
+            FaultPoint::MidGroupRename { .. } => "mid_group_rename",
+            FaultPoint::BeforeFolderBarrier => "before_folder_barrier",
+            FaultPoint::MidJournalWrite => "mid_journal_write",
+            FaultPoint::BeforeJournalRename => "before_journal_rename",
         }
     }
 
@@ -60,6 +81,7 @@ impl FaultPoint {
     pub fn offset(&self) -> u64 {
         match self {
             FaultPoint::MidChunk { offset } | FaultPoint::MidVerify { offset } => *offset,
+            FaultPoint::MidGroupRename { index } => *index,
             _ => 0,
         }
     }
@@ -83,20 +105,26 @@ pub enum FaultAction {
     Abort,
 }
 
-/// A hook built from a spec such as `pause@mid_verify:10485760` or
-/// `fail@before_rename`: the action fires the first time the named point
-/// is reached at or past the offset.
+/// A hook built from a spec such as `pause@mid_verify:10485760`,
+/// `fail@before_rename` or `pause@mid_journal_write#10`: the action fires
+/// the first time (or the `#N`th time) the named point is reached at or
+/// past the offset.
 #[derive(Debug)]
 pub struct SpecHook {
     action: FaultAction,
     point: String,
     offset: u64,
-    fired: std::sync::atomic::AtomicBool,
+    nth: u32,
+    hits: std::sync::atomic::AtomicU32,
 }
 
 impl SpecHook {
-    /// Parses `<fail|pause|abort>@<point>[:<offset>]`.
+    /// Parses `<fail|pause|abort>@<point>[:<offset>][#<n>]`.
     pub fn parse(spec: &str) -> Option<SpecHook> {
+        let (spec, nth) = match spec.split_once('#') {
+            Some((s, n)) => (s, n.parse().ok().filter(|n| *n >= 1)?),
+            None => (spec, 1),
+        };
         let (act, rest) = spec.split_once('@')?;
         let action = match act {
             "fail" => FaultAction::Fail,
@@ -112,7 +140,8 @@ impl SpecHook {
             action,
             point: point.to_string(),
             offset,
-            fired: Default::default(),
+            nth,
+            hits: Default::default(),
         })
     }
 
@@ -128,7 +157,7 @@ impl FaultHook for SpecHook {
         if point.name() != self.point || point.offset() < self.offset {
             return Ok(());
         }
-        if self.fired.swap(true, Ordering::AcqRel) {
+        if self.hits.fetch_add(1, Ordering::AcqRel) + 1 != self.nth {
             return Ok(());
         }
         match self.action {
@@ -160,6 +189,12 @@ mod tests {
         assert!(h.at(FaultPoint::MidChunk { offset: 128 }, p).is_err());
         assert!(h.at(FaultPoint::MidChunk { offset: 256 }, p).is_ok());
         assert!(SpecHook::parse("explode@mid_chunk").is_none());
+        let third = SpecHook::parse("fail@mid_journal_write#3").unwrap();
+        assert!(third.at(FaultPoint::MidJournalWrite, p).is_ok());
+        assert!(third.at(FaultPoint::MidJournalWrite, p).is_ok());
+        assert!(third.at(FaultPoint::MidJournalWrite, p).is_err());
+        assert!(third.at(FaultPoint::MidJournalWrite, p).is_ok());
+        assert!(SpecHook::parse("fail@mid_journal_write#0").is_none());
         assert!(SpecHook::parse("fail@mid_chunk:x").is_none());
         assert_eq!(
             SpecHook::parse("pause@before_rename").unwrap().action,

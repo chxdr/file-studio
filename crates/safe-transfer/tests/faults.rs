@@ -304,3 +304,293 @@ fn the_yank_harness_loses_unflushed_writes() {
         "nothing was lost: this harness can't detect missing flushes"
     );
 }
+
+// ───────────── M2: jobs through the engine, yanked at every point ─────────────
+
+use safe_transfer::{Engine, EngineConfig, Event, Item, JobSpec, JobState};
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// Yanks an image the `nth` time `point` is reached at or past `offset`.
+#[derive(Debug)]
+struct YankAt {
+    point: &'static str,
+    offset: u64,
+    nth: u32,
+    hits: AtomicU32,
+    img: PathBuf,
+    mount: Mutex<PathBuf>,
+}
+
+impl YankAt {
+    fn new(point: &'static str, offset: u64, nth: u32, img: &Image) -> Arc<YankAt> {
+        Arc::new(YankAt {
+            point,
+            offset,
+            nth,
+            hits: AtomicU32::new(0),
+            img: img.img.clone(),
+            mount: Mutex::new(img.mount.clone()),
+        })
+    }
+    fn fired(&self) -> bool {
+        self.hits.load(Ordering::Acquire) >= self.nth
+    }
+}
+
+impl FaultHook for YankAt {
+    fn at(&self, point: FaultPoint, _p: &Path) -> io::Result<()> {
+        if point.name() == self.point
+            && point.offset() >= self.offset
+            && self.hits.fetch_add(1, Ordering::AcqRel) + 1 == self.nth
+        {
+            yank(&self.img, &self.mount.lock().unwrap());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default, Clone)]
+struct Events(Arc<Mutex<Vec<Event>>>);
+impl Events {
+    fn sink(&self) -> Arc<dyn safe_transfer::EventSink> {
+        let me = self.0.clone();
+        Arc::new(move |e: Event| me.lock().unwrap().push(e))
+    }
+    fn has(&self, f: impl Fn(&Event) -> bool) -> bool {
+        self.0.lock().unwrap().iter().any(f)
+    }
+}
+
+/// 40 sidecars (grouped), two 3 MiB raws and a 9 MiB clip (per chunk).
+fn shoot(root: &Path) -> PathBuf {
+    let top = root.join("shoot");
+    let d = top.join("100MSDCF");
+    std::fs::create_dir_all(&d).unwrap();
+    for i in 0..40 {
+        std::fs::write(
+            d.join(format!("DSC{i:05}.XMP")),
+            bytes(700 + i * 113, i as u64),
+        )
+        .unwrap();
+    }
+    std::fs::write(d.join("DSC09001.ARW"), bytes(3 << 20, 41)).unwrap();
+    std::fs::write(d.join("DSC09002.ARW"), bytes(3 << 20, 42)).unwrap();
+    std::fs::write(top.join("clip.MP4"), bytes(9 << 20, 43)).unwrap();
+    top
+}
+
+fn job_engine(journal: &Path, hook: Arc<dyn FaultHook>, ev: &Events) -> Engine {
+    let mut cfg = EngineConfig::new(journal);
+    cfg.journal_interval = Duration::ZERO;
+    cfg.faults = Some(hook);
+    Engine::open(cfg, Platform::native(), ev.sink()).unwrap()
+}
+
+fn job_spec(src: &Path, dest: &Path) -> JobSpec {
+    let mut s = JobSpec::new(vec![Item::Path(src.to_path_buf())], dest);
+    s.options = Options {
+        chunk_size: 1 << 20,
+        ..no_clone()
+    };
+    s
+}
+
+/// Every file under `dest` with a real name equals its original under `src`.
+fn real_names_are_complete(src: &Path, dest: &Path, what: &str) {
+    fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dest, &mut files);
+    for f in files {
+        let rel = f.strip_prefix(dest).unwrap();
+        let name = rel.file_name().unwrap().to_string_lossy();
+        if name.ends_with(".st-partial") || name.starts_with("._") {
+            continue;
+        }
+        let got = std::fs::read(&f).unwrap();
+        let want = std::fs::read(src.join(rel)).unwrap();
+        assert!(
+            got == want,
+            "{what}: {rel:?} has its real name but isn't complete ({} of {} bytes)",
+            got.len(),
+            want.len()
+        );
+    }
+}
+
+fn no_partials_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(no_partials_under(&p));
+        } else if p.to_string_lossy().contains(".st-partial") {
+            out.push(p);
+        }
+    }
+    out
+}
+
+fn job_yank_suite(fs: &str) {
+    let s = tempfile::tempdir().unwrap();
+    let src = shoot(s.path());
+    let img = Image::new(fs, 256);
+    for (point, offset, nth) in [
+        ("mid_chunk", 5 << 20, 1),
+        ("after_flush", 0, 3),
+        ("mid_verify", 2 << 20, 1),
+        ("before_rename", 0, 43),
+        ("after_rename", 0, 43),
+        ("before_group_barrier", 0, 1),
+        ("after_group_barrier", 0, 1),
+        ("mid_group_rename", 5, 1),
+        ("before_folder_barrier", 0, 1),
+    ] {
+        let what = format!("{fs} {point}#{nth}");
+        let dest = img.mount.join(point);
+        std::fs::create_dir(&dest).unwrap();
+        let j = tempfile::tempdir().unwrap();
+        let hook = YankAt::new(point, offset, nth, &img);
+        let ev = Events::default();
+        let e = job_engine(j.path(), hook.clone(), &ev);
+        let id = e.create(job_spec(&src, &dest)).unwrap();
+        e.start(id).unwrap();
+        let info = e.wait(id, Duration::from_secs(300)).unwrap();
+        assert!(hook.fired(), "{what}: the point was never reached");
+        assert_eq!(info.state, JobState::WaitingForDestination, "{what}");
+        img.put_back();
+        real_names_are_complete(&src, &dest.join("shoot"), &what);
+        e.volumes_changed();
+        assert!(
+            ev.has(|e| matches!(e, Event::ResumeAvailable { .. })),
+            "{what}: no resume offer"
+        );
+        e.resume(id).unwrap();
+        let info = e.wait(id, Duration::from_secs(300)).unwrap();
+        assert_eq!(info.state, JobState::Finished, "{what}");
+        let r = e.report(id).unwrap();
+        assert!(r.failed.is_empty() && r.skipped.is_empty(), "{what}: {r:?}");
+        let diffs = safe_transfer::compare::compare(&Platform::native(), &src, &dest.join("shoot"))
+            .unwrap();
+        assert!(diffs.is_empty(), "{what}: {diffs:?}");
+        assert!(
+            no_partials_under(&dest).is_empty(),
+            "{what}: {:?}",
+            no_partials_under(&dest)
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn jobs_survive_an_exfat_card_pulled_at_every_point() {
+    job_yank_suite("ExFAT");
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn jobs_survive_an_apfs_drive_pulled_at_every_point() {
+    job_yank_suite("APFS");
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn a_card_back_under_another_mount_point_is_recognised_by_uuid() {
+    let s = tempfile::tempdir().unwrap();
+    let src = shoot(s.path());
+    let img = Image::new("ExFAT", 128);
+    let j = tempfile::tempdir().unwrap();
+    let hook = YankAt::new("mid_group_rename", 3, 1, &img);
+    let ev = Events::default();
+    let e = job_engine(j.path(), hook.clone(), &ev);
+    let id = e.create(job_spec(&src, &img.mount)).unwrap();
+    e.start(id).unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(300)).unwrap().state,
+        JobState::WaitingForDestination
+    );
+    let elsewhere = img.mount.with_file_name("Untitled 1");
+    img.put_back_at(&elsewhere);
+    e.volumes_changed();
+    e.resume(id).unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(300)).unwrap().state,
+        JobState::Finished
+    );
+    let diffs =
+        safe_transfer::compare::compare(&Platform::native(), &src, &elsewhere.join("shoot"))
+            .unwrap();
+    assert!(diffs.is_empty(), "{diffs:?}");
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn a_pulled_source_card_makes_files_wait_then_resume() {
+    let card = Image::new("ExFAT", 128);
+    let src = shoot(&card.mount);
+    let (d, j) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let hook = YankAt::new("mid_chunk", 1 << 20, 1, &card);
+    let ev = Events::default();
+    let e = job_engine(j.path(), hook.clone(), &ev);
+    let id = e.create(job_spec(&src, d.path())).unwrap();
+    e.start(id).unwrap();
+    let info = e.wait(id, Duration::from_secs(300)).unwrap();
+    assert_eq!(info.state, JobState::WaitingForSource);
+    assert_eq!(info.missing.len(), 1, "{:?}", info.missing);
+    assert_eq!(info.missing[0].volume, "mnt");
+    assert!(!info.missing[0].files.is_empty());
+    assert!(ev.has(|e| matches!(e, Event::WaitingForSource { .. })));
+    card.put_back();
+    e.volumes_changed();
+    assert!(ev.has(|e| matches!(e, Event::ResumeAvailable { .. })));
+    e.resume(id).unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(300)).unwrap().state,
+        JobState::Finished
+    );
+    let diffs = safe_transfer::compare::compare(&Platform::native(), &src, &d.path().join("shoot"))
+        .unwrap();
+    assert!(diffs.is_empty(), "{diffs:?}");
+}
+
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn an_original_changed_while_interrupted_is_copied_again_and_reported() {
+    let s = tempfile::tempdir().unwrap();
+    let src = shoot(s.path());
+    let img = Image::new("APFS", 128);
+    let j = tempfile::tempdir().unwrap();
+    let hook = YankAt::new("mid_chunk", 5 << 20, 1, &img);
+    let ev = Events::default();
+    let e = job_engine(j.path(), hook.clone(), &ev);
+    let id = e.create(job_spec(&src, &img.mount)).unwrap();
+    e.start(id).unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(300)).unwrap().state,
+        JobState::WaitingForDestination
+    );
+    img.put_back();
+    // The clip is edited while the card is out.
+    std::fs::write(src.join("clip.MP4"), bytes(10 << 20, 99)).unwrap();
+    e.resume(id).unwrap();
+    assert_eq!(
+        e.wait(id, Duration::from_secs(300)).unwrap().state,
+        JobState::Finished
+    );
+    let r = e.report(id).unwrap();
+    assert_eq!(r.restarted.len(), 1, "{r:?}");
+    assert!(r.restarted[0].reason.contains("changed"), "{r:?}");
+    let diffs =
+        safe_transfer::compare::compare(&Platform::native(), &src, &img.mount.join("shoot"))
+            .unwrap();
+    assert!(diffs.is_empty(), "{diffs:?}");
+}

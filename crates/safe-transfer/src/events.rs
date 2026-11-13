@@ -186,6 +186,8 @@ pub struct FileReport {
     pub metadata_lost: Vec<MetaLoss>,
     /// Retries after a read-back mismatch that was the copy's fault.
     pub retries: u32,
+    /// Chunks kept from an earlier, interrupted attempt.
+    pub chunks_reused: u32,
     /// Time spent writing.
     pub copy_time: Duration,
     /// Time spent flushing.

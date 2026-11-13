@@ -1057,6 +1057,66 @@ The user approved every recommendation, and added the opt-in re-read mode.
 | 6g | Two destinations from one read | **Later (v2)**, with Import Studio |
 | 6h | Workers on removable media | **One copying while the previous file is checked**; four for small files; M5 measures |
 
+## 15. M2 status (2026-11-13)
+
+M2 is built in `crates/safe-transfer`: multi-file jobs, the journal, resume, the small-file group commit, and the yank and `kill -9` suites. The CLI gained `copy` for folders, `jobs`, `resume`, `cancel` and `report`.
+
+**What exists:**
+- **`Engine`**: `open`, `plan`, `create`, `start`, `pause`, `resume`, `cancel(KeepResumable | Close)`, `job`, `jobs`, `report`, `wait`, `volumes_changed` and `damaged`. Events are `JobState`, `Progress`, `FileDone`, `FileNotCopied`, `WaitingForSource`, `WaitingForDestination`, `ResumeAvailable` and `JobFinished`.
+- **Planning** (stat only):
+  - folders are expanded with symlinks copied as links (followed links get a loop guard)
+  - the job's own partials and the AppleDouble `._` companions on exFAT and FAT sources are skipped
+  - existing files are skipped ("already exists; nothing was replaced"), which is the only conflict choice until M3
+  - names that clash within the job on a case-insensitive disk are skipped
+  - iCloud placeholders are skipped
+  - copying a folder into itself is refused
+  - a job that won't fit is refused up front, with the numbers
+- **The journal** follows §3 exactly. Paths are stored canonically (`/private/var/…`), so a card that comes back under another mount point is found by UUID and its paths are moved there.
+- **Resume** follows §6:
+  - a partial's chunks are re-hashed and the matching run kept
+  - an original that changed is copied again and reported under `restarted`
+  - a file already at its real name counts only if its content is identical (this covers a rename that landed just before the journal caught up)
+  - a missing source card makes files `WaitingForSource`
+  - a pulled destination makes the job `WaitingForDestination`, keeping its partials for resume
+- **Group commit** follows §4.7: per-file `fsync`, one `F_FULLFSYNC` per group, then check and rename each file, then one folder flush. The journal now commits the same way: each save `fsync`s every file it writes, renames them, then does one `F_FULLFSYNC` on the folder.
+
+**Found while building:**
+1. **Rust's `File::sync_all()` is `F_FULLFSYNC` on macOS, not `fsync(2)`.** The first group-commit build used it for the "cheap" per-file flush, so every file still paid a full drive barrier: 5,000 files on the APFS image took 57–64 s. `sys::os_sync` now calls `fsync(2)` directly. `fstudio-ops` uses `sync_all` only as a fallback after `F_FULLFSYNC` fails (`sys/mod.rs:220`), which is harmless, but anyone writing a cheap flush should know this.
+2. **One 4 MiB write can complete several small chunks.** Only the last chunk was logged. That is harmless with 64 MB chunks, but it stopped chunk reuse in the 1 MiB-chunk tests. All completed chunks are now logged in order, and the `kill -9` test checks reuse: 9 of 9 chunks kept after a kill mid-verify or just before the big file's rename, and some kept after a kill mid-chunk.
+3. **A journal behind the disk made resume call a finished file "already exists".** Nothing was lost, but the report was wrong. Resume now compares content instead (point 3 of "Resume" above).
+4. **Small-file overheads:** a 4 MiB buffer was allocated per file, progress events walked every file, and the journal flushed each file it wrote. All three are fixed.
+
+**Tests:** all pass, and the disk-image ones ran in one batch of about 32 yanks.
+
+| Suite | What it covers |
+|---|---|
+| `src` unit tests (35) | journal encode/decode against every truncation and bit flip, A/B slots, backups, leftover temp files, segment records, removal of job folders, volume matching by UUID, path remapping, chunk hashing, partial names, space |
+| `tests/copy.rs` (18) | the single-file pipeline (M1) |
+| `tests/jobs.rs` (10) | folder jobs and reports, one drive flush per group (fewer than 40 flushes for 600 files, against at least 600), skip-never-replace, `Exact` items, refusal when it won't fit, copy-into-itself, cancel then resume, pause and resume, reopening the engine, a damaged journal left alone |
+| `safe-transfer-cli` `kill -9` | 15 stop points (every per-file point, every group point, both journal points), each followed by `resume`: the real names are complete right after the kill, the resumed job finishes identical to the originals, and no partials are left |
+| `tests/faults.rs`, ignored | helper-kill yanks of APFS and exFAT images at all 9 file and group points, each followed by `ResumeAvailable`, resume and an identical tree; a card back under another mount point; a pulled source card (`WaitingForSource`, then resume); an original changed while the card was out (`restarted`); the M1 single-file suites; the negative control |
+
+**Small-file benchmark** (`spikes/safe-transfer/bench_m2.sh`; release build; 5,000 files of 1–64 KiB, 166 MB, every file verified).
+
+These were measured while the Mac was in use (load average 5–7, with DxO PhotoLab and other apps running), so treat them as upper bounds. Run the script on an idle Mac for the gate.
+
+| Destination | Group commit (3 runs) | Flush per file (1,000 files) | Gain |
+|---|---|---|---|
+| Internal SSD | 2.06 / 2.06 / 2.46 s | 7.8 ms/file → ≈ 39 s for 5,000 | ≈ 17× |
+| APFS disk image | **2.42 / 2.83 / 2.94 s** | 16.8 ms/file → ≈ 84 s | ≈ 30× |
+| exFAT disk image | 22.7 / 23.1 / 23.7 s | 16.2 ms/file → ≈ 81 s | ≈ 3.5× |
+
+- **The APFS gate (2.4 s or less)** was met only at the best run (2.42 s), and the median is 2.83 s. A profile shows the time in work that has to happen: reading every file back from the image, the group and journal flushes, and renames. The §4.7 probe's floor for the same work was 1.8 s on an idle machine. The gate needs re-measuring on an idle Mac before it is called passed or failed.
+- **exFAT is 1.7–1.8× the unflushed probe (13.5 s), against a target of 1.25×.** The flushes aren't the cost: the probe showed a group barrier adds about 5 % there. The cost is that macOS's exFAT driver runs in user space (FSKit), so every metadata call is a round trip. Each file needs several: the metadata copy, the check, the check-then-rename and the metadata check. Fewer calls per file (skipping the xattr copy when there are none, skipping ACL work on exFAT, reusing descriptors) helped less than the run-to-run noise. It is still 3.5× faster than a flush per file. Real cards come in M5.
+
+**Left for M3 and later:**
+- conflict choices (Replace, Keep Both, Ask, Skip if identical) and moves
+- folder dates and metadata (folders get the time they were made)
+- the AppleDouble placement decision on exFAT
+- `volumeAvailableCapacityForImportantUsage` instead of `statfs` for free space
+- real `flock` on Linux (the stub doesn't lock)
+- parallel workers per volume (M2 runs one file pipeline per job)
+
 ---
 
 ## Appendix: reproduce the measurements

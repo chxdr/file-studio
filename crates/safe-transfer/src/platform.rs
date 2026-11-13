@@ -68,6 +68,12 @@ pub trait Flush: Send + Sync {
     fn flush_file(&self, f: &File) -> io::Result<FlushLevel>;
     /// The same for a folder, so a rename inside it survives a power cut.
     fn flush_dir(&self, dir: &Path) -> io::Result<FlushLevel>;
+    /// Sends the file's data and attributes to the drive without a drive
+    /// barrier (`fsync(2)`); a group of these is followed by one
+    /// [`Flush::flush_file`]. Defaults to a full flush.
+    fn os_flush(&self, f: &File) -> io::Result<()> {
+        self.flush_file(f).map(|_| ())
+    }
 }
 
 /// Reads and writes that don't go through, or stay in, the OS cache.
@@ -78,6 +84,10 @@ pub trait Uncached: Send + Sync {
     fn evict(&self, path: &Path) -> io::Result<Residency>;
     /// How many of the file's pages are cached, without changing anything.
     fn residency(&self, path: &Path) -> io::Result<Residency>;
+    /// [`Uncached::evict`] through an open descriptor of `path`.
+    fn evict_open(&self, _f: &File, path: &Path) -> io::Result<Residency> {
+        self.evict(path)
+    }
 }
 
 /// Puts a file in place without ever replacing something.
@@ -197,6 +207,9 @@ impl Flush for Native {
     fn flush_dir(&self, dir: &Path) -> io::Result<FlushLevel> {
         sys::sync_dir(dir)
     }
+    fn os_flush(&self, f: &File) -> io::Result<()> {
+        sys::os_sync(f)
+    }
 }
 
 impl Uncached for Native {
@@ -208,6 +221,9 @@ impl Uncached for Native {
     }
     fn residency(&self, path: &Path) -> io::Result<Residency> {
         sys::residency(path)
+    }
+    fn evict_open(&self, f: &File, _path: &Path) -> io::Result<Residency> {
+        sys::evict_open(f)
     }
 }
 

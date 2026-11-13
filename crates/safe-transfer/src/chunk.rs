@@ -46,6 +46,7 @@ pub fn chunk_count(len: u64, chunk_size: u64) -> u64 {
 }
 
 /// Feeds bytes in order and cuts them into chunk hashes.
+#[derive(Clone)]
 pub struct ChunkHasher {
     chunk_size: u64,
     in_chunk: u64,
@@ -84,6 +85,11 @@ impl ChunkHasher {
     /// Chunks completed so far.
     pub fn chunks_done(&self) -> usize {
         self.done.chunks.len()
+    }
+
+    /// The hashes of the chunks completed so far.
+    pub fn chunks(&self) -> &[u64] {
+        &self.done.chunks
     }
 
     /// Feeds bytes. Returns how many chunks this call completed.
