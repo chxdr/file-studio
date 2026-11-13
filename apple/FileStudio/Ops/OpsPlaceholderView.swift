@@ -85,7 +85,9 @@ struct OpsRing: View {
             Text(text).font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                 .frame(minWidth: 13, minHeight: 13)
                 .background(Capsule().fill(color))
-                .offset(x: 4, y: -3)
+                // Inside the ring's 28 pt box: the toolbar clips anything
+                // drawn above its item.
+                .offset(x: 4, y: 0)
         }
     }
 }
