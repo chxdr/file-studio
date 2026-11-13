@@ -622,6 +622,34 @@ impl<'a> Runner<'a> {
         }
     }
 
+    /// A finished file's partial `._` companion (exFAT and FAT keep extended
+    /// attributes in `._name`). macOS renames a file and its companion in
+    /// two steps, so a card pulled between them leaves the copy under its
+    /// real name and the companion under the partial's. That companion holds
+    /// the copy's extended attributes: it becomes the real file's when the
+    /// real file has none, and is removed otherwise. Nothing else is touched.
+    fn settle_companion(&self, owner: &PartialOwner, dest: &Path) {
+        let partial = owner.path();
+        let (Some(pn), Some(dn)) = (partial.file_name(), dest.file_name()) else {
+            return;
+        };
+        let theirs = partial.with_file_name(format!("._{}", pn.to_string_lossy()));
+        if !std::fs::symlink_metadata(&theirs).is_ok_and(|m| m.is_file()) {
+            return;
+        }
+        let real = dest.with_file_name(format!("._{}", dn.to_string_lossy()));
+        let adopt = crate::job::no_native_xattrs(&self.job.m.dest.volume.fs)
+            && std::fs::symlink_metadata(&partial).is_err()
+            && std::fs::symlink_metadata(&real).is_err();
+        if adopt && self.p().rename.rename_exclusive(&theirs, &real).is_ok() {
+            if let Some(dir) = dest.parent() {
+                let _ = self.p().flush.flush_dir(dir);
+            }
+            return;
+        }
+        let _ = remove::remove_partial(self.p(), &partial, owner);
+    }
+
     /// Whether an error means a disk went away (pulled, powered off) rather
     /// than something wrong with one file, and which disk.
     ///
@@ -1269,6 +1297,7 @@ impl<'a> Runner<'a> {
         if std::fs::symlink_metadata(&req.dest).is_ok() {
             if rec.st == FileSt::Placed {
                 // Renamed before the interruption; only ACLs and flags were left.
+                self.settle_companion(&owner, &req.dest);
                 let _ = p.meta.apply_security(&req.source, &req.dest);
                 self.job.update(idx, |r| {
                     r.st = FileSt::Done;
@@ -1284,6 +1313,8 @@ impl<'a> Runner<'a> {
             if (!rec.existed || rec.replaced_trash.is_some()) && self.same_content(req, e, &rec) {
                 if partial_there {
                     let _ = remove::remove_partial(p, &partial, &owner);
+                } else {
+                    self.settle_companion(&owner, &req.dest);
                 }
                 self.job.update(idx, |r| {
                     r.st = FileSt::Done;
@@ -1302,23 +1333,17 @@ impl<'a> Runner<'a> {
             }
             match self.decision(idx, false) {
                 Decision::Skip => {
-                    if partial_there {
-                        let _ = remove::remove_partial(p, &partial, &owner);
-                    }
+                    let _ = remove::remove_partial(p, &partial, &owner);
                     self.skip(idx, "already exists; nothing was replaced");
                     return Next::Settled;
                 }
                 Decision::SkipIfIdentical if self.identical(&req.source, &req.dest, e) => {
-                    if partial_there {
-                        let _ = remove::remove_partial(p, &partial, &owner);
-                    }
+                    let _ = remove::remove_partial(p, &partial, &owner);
                     self.skip(idx, "already there, identical");
                     return Next::Settled;
                 }
                 Decision::KeepBoth => {
-                    if partial_there {
-                        let _ = remove::remove_partial(p, &partial, &owner);
-                    }
+                    let _ = remove::remove_partial(p, &partial, &owner);
                     let name = self.free_name(&req.dest, false);
                     self.job.update(idx, |r| r.dest_name = Some(name));
                     let req2 = CopyRequest {
@@ -1337,17 +1362,13 @@ impl<'a> Runner<'a> {
                 Decision::Replace if same_object(&req.source, &req.dest) => {
                     // Copying an item onto itself: "replace" would send the
                     // original to the Trash. Never.
-                    if partial_there {
-                        let _ = remove::remove_partial(p, &partial, &owner);
-                    }
+                    let _ = remove::remove_partial(p, &partial, &owner);
                     self.fail(idx, "an item can't replace itself".into());
                     return Next::Settled;
                 }
                 Decision::Replace => replace = true,
                 _ => {
-                    if partial_there {
-                        let _ = remove::remove_partial(p, &partial, &owner);
-                    }
+                    let _ = remove::remove_partial(p, &partial, &owner);
                     self.ask(idx, &req.dest);
                     return Next::Settled;
                 }
@@ -1364,9 +1385,7 @@ impl<'a> Runner<'a> {
             let ino_counts = matches!(src_fs.as_str(), "apfs" | "hfs");
             let now = ident(&smd);
             if now.size != size || now.mtime_ns != mtime || (ino_counts && now.ino != ino) {
-                if partial_there {
-                    let _ = remove::remove_partial(p, &partial, &owner);
-                }
+                let _ = remove::remove_partial(p, &partial, &owner);
                 let why = if now.size != size {
                     format!(
                         "the original changed ({} → {})",
@@ -1394,6 +1413,9 @@ impl<'a> Runner<'a> {
             partial_there = false;
         }
         if !partial_there {
+            // A `._` companion of a partial that is gone would lend its old
+            // extended attributes to the new partial: it goes first.
+            let _ = remove::remove_partial(p, &partial, &owner);
             return Next::Copy {
                 resume: None,
                 replace,

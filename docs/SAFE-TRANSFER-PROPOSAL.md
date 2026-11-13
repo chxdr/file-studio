@@ -1446,6 +1446,16 @@ The default is unchanged: `operations.copy_backend` is `"ops"` until the user si
    - **Every path that can fail a file uses this:** single files, small-file groups, the group and folder flushes, folders, and job-level steps.
    - **Regression test:** `files_in_flight_when_the_card_goes_are_kept_for_resume_never_failed` (yank suite). Three workers; the card is pulled mid-chunk on one file, with a second file held mid-verify and a third mid-chunk, and the dead card kept listed for 5 s. Before the fix all three were failed and the job "finished". Now none is failed, and resume finishes them. Each new signal passes the test on its own.
 
+10. **A `._` companion of a partial could be left on an exFAT card after a resume.**
+    - **Where it showed up:** `jobs_survive_an_exfat_card_pulled_at_every_point` failed about once in ten runs, at mid_group_rename, leaving `._.DSC00028.XMP.<job>-30.st-partial`. It reproduced on main before the in-flight fix too, so it was older than that fix.
+    - **Cause:** macOS renames a file and its `._` AppleDouble companion (its extended attributes) in two steps. A card pulled between them leaves the copy under its real name and the companion under the partial's name.
+    - **What went wrong on resume:** the file was rightly recognised as finished. But its partial was only cleaned up "if the partial is there", and the data partial wasn't. So the companion stayed, and the real file had silently lost its extended attributes.
+    - **Fix:**
+      - a finished file's leftover partial companion becomes the real file's `._` when the real file has none (the second half of the rename);
+      - otherwise it is removed;
+      - every other cleanup in that step now runs whether or not the data partial is there, so a stray companion can't lend old attributes to a new copy.
+    - **Regression test:** `a_card_pulled_between_a_file_and_its_appledouble_rename_leaves_nothing_behind` builds that half-renamed state deterministically, then pulls the card. It failed before the fix, leaving the same kind of file behind. After the fix nothing is left, and every file has its extended attributes. The original test then passed 20 runs in a row.
+
 ### 18.3 Where the backends deliberately differ (tests assert the stricter result on Safe Transfer)
 
 - **The 100 MB free-space margin (§10):** ops' disk-image tests get more room on the Safe Transfer run. The 8 MB full-disk test asserts the up-front refusal instead.
