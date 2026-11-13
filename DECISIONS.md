@@ -182,3 +182,15 @@ The right-click menus have a core model, `context_menu(target, ctx) -> Vec<MenuI
 - **Moving a protected folder needs confirmation from the core, with Cancel as the default.** Protected folders are: the home folder, the standard home folders, the system folders, volume roots, and ancestors of open tabs. The list is a setting; the confirmation itself is always on.
 - **Every move by drag, F6 or cut/paste shows a toast** with Undo.
 - **The drop target is exactly what's highlighted at mouse-up.**
+
+## F-024: CI is the referee (2026-11-13)
+- **GitHub Actions jobs:**
+  - `core-linux` runs on every push (fmt, clippy `-D warnings`, tests).
+  - `core-macos` and `app-macos` run only on PRs and pushes to `main`. The repo is private, and macOS minutes bill at 10×. `app-macos` runs `xcodebuild test` against the XCTest target `apple/FileStudioTests`, with bindings from the same `scripts/build-core-apple.sh` the local build uses.
+  - `licences` (cargo-deny licences and advisories) runs on PRs.
+  - Ignored tests and benchmarks run only in a manual `workflow_dispatch` workflow.
+- **No test is skipped, weakened or quietly retried to go green.** macOS-only tests are `cfg`-gated to macOS, and flaky tests are reported to the user.
+- **Linux temporarily excludes** `fstudio-ops`, `-core`, `-ffi`, `-cli` and `-bench` until they're portable (TODO in `ci.yml`).
+- **cargo-deny fails on unmaintained crates only when they are direct dependencies.** Vulnerabilities and yanked crates always fail. *Pending the user's confirmation.*
+- **No signing or secrets in CI, and no fixture images committed.** Tests build synthetic data in temporary folders.
+- **Branch protection** (required checks on `main`) is for the user to enable. It needs GitHub Pro or Team on a private repo.
