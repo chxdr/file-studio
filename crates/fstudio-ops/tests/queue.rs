@@ -23,16 +23,39 @@ fn big_file(e: &Env, name: &str) -> std::path::PathBuf {
     p
 }
 
-fn wait_bytes(e: &Env, id: OpId, min: u64) {
+/// Waits until op `id` has copied `min` bytes. `at` names the step for the
+/// failure message, which also shows the op's whole status.
+fn wait_bytes_at(e: &Env, id: OpId, min: u64, at: &str) {
     let t = Instant::now();
-    while e.q.status(id).unwrap().bytes_done < min {
-        assert!(t.elapsed() < WAIT, "no progress");
+    println!("{at}: waiting for {min} bytes");
+    loop {
+        let st = e.q.status(id).unwrap();
+        if st.bytes_done >= min {
+            println!("{at}: {} bytes after {:?}", st.bytes_done, t.elapsed());
+            return;
+        }
+        // An op that has ended below `min` can never get there; say so now
+        // rather than after the whole WAIT.
+        assert!(
+            !st.state.is_finished(),
+            "{at}: the op ended at {} of {min} bytes after {:?}: {st:#?}",
+            st.bytes_done,
+            t.elapsed()
+        );
+        assert!(t.elapsed() < WAIT, "{at}: no progress in {WAIT:?}: {st:#?}");
         std::thread::sleep(Duration::from_millis(2));
     }
 }
 
+fn wait_bytes(e: &Env, id: OpId, min: u64) {
+    wait_bytes_at(e, id, min, "wait_bytes");
+}
+
 #[test]
 fn pause_resume_and_cancel() {
+    // Printed only when the test fails: a timeline of the steps.
+    let start = Instant::now();
+    let step = |what: &str| println!("[{:>8.2?}] {what}", start.elapsed());
     let img = Image::new("APFS", 1024);
     let e = env();
     let src = big_file(&e, "big.bin");
@@ -49,21 +72,29 @@ fn pause_resume_and_cancel() {
                 dest_dir: dest.clone(),
             })
             .unwrap();
-        wait_bytes(&e2, id, 8 << 20);
+        let at = format!("pause loop, verify={verify}");
+        step(&at);
+        wait_bytes_at(&e2, id, 8 << 20, &at);
         e2.q.pause(id).unwrap();
+        let paused_at = Instant::now();
         std::thread::sleep(Duration::from_millis(100));
         let a = e2.q.status(id).unwrap();
+        let a_at = paused_at.elapsed();
         std::thread::sleep(Duration::from_millis(300));
         let b = e2.q.status(id).unwrap();
-        assert_eq!(b.state, OpState::Paused);
+        let b_at = paused_at.elapsed();
+        assert_eq!(b.state, OpState::Paused, "{at}: {b:#?}");
         assert_eq!(
             a.bytes_done, b.bytes_done,
-            "verify={verify}: no bytes move while paused"
+            "{at}: no bytes move while paused ({} bytes at {a_at:?} after pause(), {} at {b_at:?}): {b:#?}",
+            a.bytes_done, b.bytes_done
         );
-        assert!(b.bytes_done < BIG as u64);
+        assert!(b.bytes_done < BIG as u64, "{at}: {b:#?}");
         e2.q.resume(id).unwrap();
+        step(&format!("{at}: resumed"));
         let st = e2.q.wait(id, WAIT).unwrap();
-        assert_eq!(st.state, OpState::Completed);
+        step(&format!("{at}: {:?}", st.state));
+        assert_eq!(st.state, OpState::Completed, "{at}: {st:#?}");
         assert_eq!(
             hash_file(&dest.join("big.bin")).unwrap(),
             hash_file(&src).unwrap()
@@ -83,21 +114,24 @@ fn pause_resume_and_cancel() {
                 dest_dir: dest.clone(),
             })
             .unwrap();
-        wait_bytes(&e2, id, 8 << 20);
+        let at = format!("cancel loop, verify={verify}");
+        step(&at);
+        wait_bytes_at(&e2, id, 8 << 20, &at);
         let t = Instant::now();
         e2.q.cancel(id).unwrap();
         let st = e2.q.wait(id, WAIT).unwrap();
         assert!(
             t.elapsed() < Duration::from_secs(2),
-            "cancel took {:?}",
+            "{at}: cancel took {:?}: {st:#?}",
             t.elapsed()
         );
-        assert_eq!(st.state, OpState::Cancelled);
+        assert_eq!(st.state, OpState::Cancelled, "{at}: {st:#?}");
         assert!(!exists(&dest.join("big.bin")));
         assert!(partials(&dest).is_empty(), "verify={verify}");
         assert!(exists(&src));
     }
     // Cancel while paused works too.
+    step("cancel while paused");
     let dest = img.mount.join("cp");
     std::fs::create_dir_all(&dest).unwrap();
     let id =
@@ -106,10 +140,11 @@ fn pause_resume_and_cancel() {
             dest_dir: dest.clone(),
         })
         .unwrap();
-    wait_bytes(&e, id, 8 << 20);
+    wait_bytes_at(&e, id, 8 << 20, "cancel while paused");
     e.q.pause(id).unwrap();
     e.q.cancel(id).unwrap();
-    assert_eq!(e.q.wait(id, WAIT).unwrap().state, OpState::Cancelled);
+    let st = e.q.wait(id, WAIT).unwrap();
+    assert_eq!(st.state, OpState::Cancelled, "cancel while paused: {st:#?}");
     assert!(partials(&dest).is_empty());
 }
 
