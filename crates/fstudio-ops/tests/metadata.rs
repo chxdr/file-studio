@@ -226,3 +226,40 @@ fn cross_volume_move_keeps_metadata_and_removes_source() {
     unlock(&e.p("ref"));
     unlock(&img.mount);
 }
+
+/// A file with the `compressed` flag keeps its data in the resource fork, so
+/// `SEEK_DATA` calls its whole data fork a hole. The verifying copy loop must
+/// still copy the real bytes, not zeros (that copy then "verified" against
+/// the same zeros). `/usr/share/dict/web2` ships compressed with macOS.
+#[test]
+fn compressed_original_is_copied_with_its_real_bytes() {
+    let src = std::path::Path::new("/usr/share/dict/web2");
+    let Ok(md) = std::fs::symlink_metadata(src) else {
+        eprintln!("skipped: no {}", src.display());
+        return;
+    };
+    use std::os::macos::fs::MetadataExt;
+    assert!(
+        md.st_flags() & 0x20 != 0,
+        "the fixture must carry UF_COMPRESSED"
+    );
+    for verify in [false, true] {
+        let e = env_with(OpsConfig {
+            verify,
+            ..Default::default()
+        });
+        std::fs::create_dir_all(e.p("dst")).unwrap();
+        let st = e.run(OpRequest::Copy {
+            sources: vec![src.to_path_buf()],
+            dest_dir: e.p("dst"),
+        });
+        assert_eq!(st.state, OpState::Completed, "verify={verify}: {st:?}");
+        let got = std::fs::read(e.p("dst/web2")).unwrap();
+        let want = std::fs::read(src).unwrap();
+        assert_eq!(got.len(), want.len(), "verify={verify}");
+        assert!(
+            got == want,
+            "verify={verify}: the copy's bytes differ from the original"
+        );
+    }
+}

@@ -1036,15 +1036,11 @@ impl CopyProgress for Tap<'_> {
     }
 }
 
-fn zeros() -> &'static [u8] {
-    static Z: [u8; 1 << 16] = [0; 1 << 16];
-    &Z
-}
-
 /// Our own copy loop, used when verifying: reads the source once with
 /// `F_NOCACHE`, hashes it in flight, writes the partial with `F_NOCACHE`
 /// (so the verify re-read hits the device), and keeps holes
-/// (`SEEK_DATA`/`SEEK_HOLE`). Returns the source's xxh3-128 as hex.
+/// (`SEEK_DATA`/`SEEK_HOLE`) without trusting them: every byte is read and
+/// hashed. Returns the xxh3-128 of the bytes read, as hex.
 fn copy_loop(src: &Path, partial: &Path, tap: &Tap<'_>) -> io::Result<String> {
     let s = File::open(src)?;
     sys::set_nocache(&s);
@@ -1058,44 +1054,50 @@ fn copy_loop(src: &Path, partial: &Path, tap: &Tap<'_>) -> io::Result<String> {
     let mut h = Xxh3::new();
     let mut buf = vec![0u8; CHUNK];
     let mut off = 0u64;
+    // Every byte of the original is read and hashed: what the filesystem
+    // calls a hole is not trusted. A file with the `compressed` flag keeps its
+    // data in the resource fork, and `SEEK_DATA` then calls its whole data
+    // fork a hole, although reading it returns the real bytes. A reported
+    // hole only skips the *write* where the bytes read there are all zeros,
+    // so sparse files stay sparse (F-015) and nothing is ever lost.
+    // The current stretch [off, stretch_end) is a reported hole or data.
+    let (mut stretch_end, mut in_hole) = (0u64, false);
     while off < len {
         tap.check()?;
-        // Where the next data starts; filesystems without hole support say "here".
-        let data = match sys::seek_data(&s, off) {
-            Ok(v) => v.unwrap_or(len).min(len),
-            Err(e) if e.raw_os_error() == Some(libc::EINVAL) => off,
-            Err(e) => return Err(e),
-        };
-        let mut z = data - off;
-        tap.add(z);
-        while z > 0 {
-            let n = z.min(zeros().len() as u64) as usize;
-            h.update(&zeros()[..n]);
-            z -= n as u64;
-        }
-        off = data;
-        if off >= len {
-            break;
-        }
-        let hole = match sys::seek_hole(&s, off) {
-            Ok(v) => v.unwrap_or(len).min(len),
-            Err(e) if e.raw_os_error() == Some(libc::EINVAL) => len,
-            Err(e) => return Err(e),
-        };
-        while off < hole {
-            tap.check()?;
-            let want = ((hole - off) as usize).min(CHUNK);
-            let n = s.read_at(&mut buf[..want], off)?;
-            if n == 0 {
-                return Err(io::Error::other(
-                    "the original got shorter while it was being copied",
-                ));
+        if off >= stretch_end {
+            // Where the next data starts; filesystems without hole support say "here".
+            let data = match sys::seek_data(&s, off) {
+                Ok(v) => v.unwrap_or(len).min(len),
+                Err(e) if e.raw_os_error() == Some(libc::EINVAL) => off,
+                Err(e) => return Err(e),
+            };
+            if data > off {
+                (stretch_end, in_hole) = (data, true);
+            } else {
+                let hole = match sys::seek_hole(&s, off) {
+                    Ok(v) => v.unwrap_or(len).min(len),
+                    Err(e) if e.raw_os_error() == Some(libc::EINVAL) => len,
+                    Err(e) => return Err(e),
+                };
+                (stretch_end, in_hole) = (hole.max(off + 1), false);
             }
-            d.write_all_at(&buf[..n], off)?;
-            h.update(&buf[..n]);
-            off += n as u64;
-            tap.add(n as u64);
         }
+        let want = ((len - off) as usize)
+            .min(CHUNK)
+            .min((stretch_end - off) as usize);
+        let n = s.read_at(&mut buf[..want], off)?;
+        if n == 0 {
+            return Err(io::Error::other(
+                "the original got shorter while it was being copied",
+            ));
+        }
+        let bytes = &buf[..n];
+        if !(in_hole && bytes.iter().all(|&b| b == 0)) {
+            d.write_all_at(bytes, off)?;
+        }
+        h.update(bytes);
+        off += n as u64;
+        tap.add(n as u64);
     }
     d.set_len(len)?;
     Ok(format!("{:032x}", h.digest128()))
