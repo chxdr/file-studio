@@ -928,6 +928,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "safe-transfer"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "objc2",
+ "objc2-foundation",
+ "tempfile",
+ "thiserror",
+ "unicode-normalization",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "safe-transfer-cli"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "safe-transfer",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

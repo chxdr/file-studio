@@ -1,0 +1,27 @@
+[package]
+name = "safe-transfer"
+description = "Crash-proof, verified copy engine: partial file, chunk hashes, full flush, uncached read-back, exclusive rename"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Named stop points in the pipeline for crash and yank tests. Never enabled in release builds.
+fault-injection = []
+
+[dependencies]
+thiserror.workspace = true
+libc.workspace = true
+xxhash-rust.workspace = true
+unicode-normalization.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSString", "NSError", "NSAutoreleasePool"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
