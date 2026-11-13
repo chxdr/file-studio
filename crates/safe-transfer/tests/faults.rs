@@ -168,6 +168,7 @@ fn reread_mode_catches_an_original_that_reads_differently() {
 struct Yank {
     point: &'static str,
     offset: u64,
+    img: PathBuf,
     mount: PathBuf,
     done: std::sync::atomic::AtomicBool,
 }
@@ -177,10 +178,7 @@ impl FaultHook for Yank {
             && point.offset() >= self.offset
             && !self.done.swap(true, Ordering::AcqRel)
         {
-            let _ = std::process::Command::new("hdiutil")
-                .args(["detach", "-force", "-quiet"])
-                .arg(&self.mount)
-                .status();
+            yank(&self.img, &self.mount);
         }
         Ok(())
     }
@@ -204,6 +202,7 @@ fn yank_suite(fs: &str) {
         let hook = Arc::new(Yank {
             point,
             offset,
+            img: img.img.clone(),
             mount: img.mount.clone(),
             done: Default::default(),
         });
@@ -281,5 +280,27 @@ fn an_exfat_card_gets_a_flushed_verified_copy_and_honest_metadata() {
         !names(&img.mount).iter().any(|n| n.starts_with("._.")),
         "{:?}",
         names(&img.mount)
+    );
+}
+
+/// The negative control: the yank harness must lose writes that were never
+/// flushed, or the yank tests above would prove nothing.
+#[test]
+#[ignore = "needs hdiutil; run with --ignored"]
+fn the_yank_harness_loses_unflushed_writes() {
+    let img = Image::new("APFS", 64);
+    let dir = img.mount.join("unflushed");
+    std::fs::create_dir(&dir).unwrap();
+    for i in 0..200 {
+        std::fs::write(dir.join(format!("f{i}")), bytes(10_000, i)).unwrap();
+    }
+    img.pull_out();
+    img.put_back();
+    let intact = (0..200)
+        .filter(|i| std::fs::read(dir.join(format!("f{i}"))).is_ok_and(|b| b == bytes(10_000, *i)))
+        .count();
+    assert!(
+        intact < 200,
+        "nothing was lost: this harness can't detect missing flushes"
     );
 }

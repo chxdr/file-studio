@@ -102,32 +102,74 @@ impl Image {
         im
     }
 
-    /// Pulls the "card" out, as a yank would: `hdiutil detach -force`.
+    /// Pulls the "card" out the way a yank or power cut would: see [`yank`].
     pub fn pull_out(&self) {
-        let _ = Command::new("hdiutil")
-            .args(["detach", "-force", "-quiet"])
-            .arg(&self.mount)
-            .status();
+        yank(&self.img, &self.mount);
     }
 
     /// Puts it back at the same mount point.
     pub fn put_back(&self) {
-        sh(
-            "hdiutil",
-            &[
-                "attach",
-                "-quiet",
-                "-nobrowse",
-                "-mountpoint",
-                self.mount.to_str().unwrap(),
-                self.img.to_str().unwrap(),
-            ],
-        );
+        for attempt in 0..5 {
+            let ok = Command::new("hdiutil")
+                .args(["attach", "-quiet", "-nobrowse", "-mountpoint"])
+                .arg(&self.mount)
+                .arg(&self.img)
+                .status()
+                .is_ok_and(|s| s.success());
+            if ok {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1)));
+        }
+        panic!("couldn't attach {} again", self.img.display());
     }
 }
 
 impl Drop for Image {
     fn drop(&mut self) {
-        self.pull_out();
+        let _ = Command::new("hdiutil")
+            .args(["detach", "-force", "-quiet"])
+            .arg(&self.mount)
+            .status();
     }
+}
+
+/// The `diskimages-helper` process serving `img` (it plays the drive).
+pub fn helper_pid(img: &Path) -> Option<u32> {
+    let want = std::fs::canonicalize(img).ok()?;
+    let out = Command::new("hdiutil").arg("info").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut current = false;
+    for line in text.lines() {
+        if let Some(p) = line.strip_prefix("image-path") {
+            let p = p.trim_start_matches([' ', ':']).trim();
+            current = std::fs::canonicalize(p).is_ok_and(|p| p == want);
+        } else if current && let Some(pid) = line.strip_prefix("process ID") {
+            return pid.trim_start_matches([' ', ':']).trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// A yank: `kill -9` the image's helper, so the "drive" vanishes with
+/// whatever it hadn't been told to flush, then clear the dead mount.
+///
+/// `hdiutil detach -force` alone is **not** a yank: it writes cached data
+/// back first, so even files that were never flushed survive it (measured:
+/// 2,000 of 2,000 unflushed files intact). Killing the helper loses them
+/// (APFS: all 2,000; exFAT: 46–70 missing and one short), so it can tell
+/// flushed from unflushed writes.
+pub fn yank(img: &Path, mount: &Path) {
+    if let Some(pid) = helper_pid(img) {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    let _ = Command::new("hdiutil")
+        .args(["detach", "-force", "-quiet"])
+        .arg(mount)
+        .status();
+    let _ = Command::new("diskutil")
+        .args(["unmount", "force"])
+        .arg(mount)
+        .output();
 }
