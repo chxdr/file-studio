@@ -1,4 +1,4 @@
-//! Mounted-volume queries: `statfs`, `getmntinfo`, `pathconf` and volume capabilities.
+//! Mounted-volume queries: `statfs`, `getfsstat`, `pathconf` and volume capabilities.
 
 use super::cpath;
 use std::io;
@@ -65,22 +65,46 @@ pub fn statfs(path: &Path) -> io::Result<StatFs> {
     }
 }
 
-/// `getmntinfo(MNT_NOWAIT)`: every mounted volume, without waiting for slow network mounts.
+/// Every mounted volume, without waiting for slow network mounts
+/// (`getfsstat(MNT_NOWAIT)` into our own buffer).
+///
+/// Not `getmntinfo`: its buffer is shared by the whole process and is freed
+/// and reallocated when the number of mounts changes, so two threads
+/// listing while a disk comes or goes can corrupt it (a crash, or an empty
+/// or garbled list).
 #[cfg(target_os = "macos")]
 pub fn mounts() -> io::Result<Vec<StatFs>> {
-    let mut p: *mut libc::statfs = std::ptr::null_mut();
-    // SAFETY: getmntinfo stores a pointer to an array it owns (valid until the next call
-    // on this thread); we copy everything out immediately.
-    unsafe {
-        let n = libc::getmntinfo(&mut p, libc::MNT_NOWAIT);
-        if n <= 0 || p.is_null() {
+    for _ in 0..8 {
+        // SAFETY: a null buffer only asks for the number of mounts.
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n < 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(std::slice::from_raw_parts(p, n as usize)
-            .iter()
-            .map(from_statfs)
-            .collect())
+        // Room for a few more, in case disks appear in between.
+        let cap = n as usize + 8;
+        let mut buf: Vec<libc::statfs> = Vec::with_capacity(cap);
+        let Ok(bytes) = libc::c_int::try_from(cap * std::mem::size_of::<libc::statfs>()) else {
+            return Err(io::Error::other("too many mounted volumes"));
+        };
+        // SAFETY: `buf` has room for `cap` entries (`bytes` bytes); getfsstat
+        // writes at most that many and returns how many it wrote, and only
+        // those are marked initialised. The buffer is ours alone.
+        let got = unsafe {
+            let got = libc::getfsstat(buf.as_mut_ptr(), bytes, libc::MNT_NOWAIT);
+            if got >= 0 && (got as usize) <= cap {
+                buf.set_len(got as usize);
+            }
+            got
+        };
+        if got < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // A full buffer may have missed some: list again.
+        if (got as usize) < cap {
+            return Ok(buf.iter().map(from_statfs).collect());
+        }
     }
+    Err(io::Error::other("the list of mounted volumes kept growing"))
 }
 
 /// Minimal fallback: report the volume of `path` through `statvfs`.
@@ -296,4 +320,26 @@ pub fn disk_facts(mount_from: &str) -> Option<DiskFacts> {
 #[cfg(not(target_os = "macos"))]
 pub fn disk_facts(_mount_from: &str) -> Option<DiskFacts> {
     None
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mount_tests {
+    /// Many threads listing at once all see the startup disk (the old
+    /// shared-buffer call could crash or come back empty here).
+    #[test]
+    fn many_threads_can_list_mounts_at_once() {
+        let threads: Vec<_> = (0..16)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..200 {
+                        let m = super::mounts().unwrap();
+                        assert!(!m.is_empty());
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+    }
 }
