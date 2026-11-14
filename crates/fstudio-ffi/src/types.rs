@@ -578,6 +578,10 @@ pub enum FfiShellRequest {
         text: String,
     },
     FocusFilter,
+    /// M3: show the search bar with this text.
+    ShowSearch {
+        text: String,
+    },
     FocusList,
     TextField {
         command: String,
@@ -678,6 +682,7 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::ManageWorkspaces => Self::ManageWorkspaces,
             S::FocusAddressBar { pane, text } => Self::FocusAddressBar { pane: pane.0, text },
             S::FocusFilter => Self::FocusFilter,
+            S::ShowSearch { text } => Self::ShowSearch { text },
             S::FocusList => Self::FocusList,
             S::TextField { command } => Self::TextField { command },
             S::ShowPalette => Self::ShowPalette,
@@ -824,6 +829,11 @@ pub struct FfiRow {
     pub created_text: String,
     /// The extension as on disk; empty for folders.
     pub ext_text: String,
+    // M3 search additions
+    /// The name to draw (the item's own name in a search tab).
+    pub display_name: String,
+    /// The folder the item is in, in a search tab; else empty.
+    pub location_text: String,
 }
 
 impl From<core::RowInfo> for FfiRow {
@@ -848,6 +858,8 @@ impl From<core::RowInfo> for FfiRow {
             created_ns: r.created_ns,
             created_text: r.created_text,
             ext_text: r.ext_text,
+            display_name: r.display_name,
+            location_text: r.location_text,
         }
     }
 }

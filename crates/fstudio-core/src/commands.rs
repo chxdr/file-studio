@@ -122,7 +122,6 @@ pub const LATER_COMMANDS: &[&str] = &[
     "file.folder_size",
     "file.batch_rename",
     "file.make_alias",
-    "search.global",
     "nav.connect_server",
 ];
 
@@ -394,6 +393,7 @@ impl Engine {
             | "terminal.open"
             | "palette.open"
             | "filter.focus"
+            | "search.global"
             | "filter.commit"
             | "app.settings"
             | "app.keyboard_shortcuts"
@@ -765,6 +765,8 @@ impl Engine {
             return Ok(Outcome::none().with_tab(tab));
         }
         let path = t.rename_target(old_name, new_name)?;
+        // In a search tab rows are named by path below the root (M3).
+        let select_name = t.renamed_row_name(old_name, new_name);
         let op = PendingOp {
             req: OpRequest::Rename {
                 path: path.clone(),
@@ -773,7 +775,7 @@ impl Engine {
             items: snapshot(std::slice::from_ref(&path)),
             tab: Some(tab),
             after: After {
-                select: Some((tab, vec![new_name.to_string()])),
+                select: Some((tab, vec![select_name])),
                 ..After::default()
             },
             toast: None,
@@ -1843,6 +1845,14 @@ impl Engine {
 
             // ── filter ──
             "filter.focus" => Outcome::shell(ShellRequest::FocusFilter).with_tab(tid),
+            // M3 search: open the search bar, carrying the filter text over
+            // (⌘F in the filter field turns the filter into a search).
+            "search.global" => {
+                Outcome::shell(ShellRequest::ShowSearch { text: t.filter() }).with_tab(tid)
+            }
+            "filter.clear" if t.filter().is_empty() && t.stop_search() => {
+                Outcome::message("Search stopped").with_tab(tid) // Esc stops a search
+            }
             "filter.clear" => {
                 t.set_filter("");
                 Outcome::shell(ShellRequest::FocusList).with_tab(tid)

@@ -145,6 +145,13 @@ pub struct RowInfo {
     /// The Extension column: the extension as on disk ("png"), empty for
     /// folders and names without one; packages show theirs ("app").
     pub ext_text: String,
+    /// M3 search: the name to draw. Equal to `name` in a folder; in a search
+    /// tab `name` is the path below the search root (the row's identity) and
+    /// this is the item's own name.
+    pub display_name: String,
+    /// M3 search: the folder the item is in (`~/Documents/Work`), empty in a
+    /// folder tab.
+    pub location_text: String,
 }
 
 /// Formatting inputs fixed for one `rows` call.
@@ -254,6 +261,8 @@ pub(crate) fn build_rows(
                 } else {
                     e.extension().to_string()
                 },
+                display_name: e.name.clone(),
+                location_text: String::new(),
             }
         })
         .collect()

@@ -113,6 +113,12 @@ pub enum ShellRequest {
     },
     /// Focus the filter field.
     FocusFilter,
+    /// M3: show the search bar for the outcome's tab and focus it, with
+    /// `text` as the name to search for (the filter text, when there was one).
+    ShowSearch {
+        /// The starting text.
+        text: String,
+    },
     /// Move focus back to the file list.
     FocusList,
     /// Apply a text-editing command to the focused field (address bar,
