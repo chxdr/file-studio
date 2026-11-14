@@ -187,6 +187,7 @@ fn table() -> Vec<B> {
         c("nav.go_trash", "Go to Trash", Navigation, "Open the Trash folder").global(),
         c("nav.connect_server", "Connect to Server…", Navigation, "Connect to a network server").global().s("⌘K"),
         c("nav.show_package_contents", "Show Package Contents", Navigation, "Open a package such as an app as a folder"),
+        c("nav.disk_usage", "Show Disk Usage", Navigation, "See what uses the space in a folder or volume, as a tree and a treemap").global().arg(ArgKind::Path),
         c("nav.mark_set", "Set Mark", Vim, "Remember this folder under a letter").arg(ArgKind::Char).nomenu().nohint().v("m {a-z}"),
         c("nav.mark_jump", "Jump to Mark", Vim, "Go to the folder remembered under a letter").arg(ArgKind::Char).nomenu().nohint().v("' {a-z}"),
         // ── Selection and cursor ──

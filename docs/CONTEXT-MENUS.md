@@ -42,7 +42,7 @@ Status: proposed 2026-11-12, waiting for the user's review.
 The same as a file, with these changes:
 - Open in New Tab and Open in Other Pane move directly under Open.
 - Open in Terminal opens inside the folder.
-- Adds Get Folder Size *(new command, M3)*.
+- Adds Get Folder Size `file.folder_size` and Show Disk Usage `nav.disk_usage` *(M3)*, after Get Info.
 - Packages also get Show Package Contents *(new command: `nav.show_package_contents`)*.
 - Add to Favourites `favourites.add` (⌃⌘T) or Remove from Favourites `favourites.remove` follows Open in Editor, in the Reveal/Terminal group.
 
@@ -91,7 +91,7 @@ The segment's chevron is a separate menu: the folder's subfolders.
 2. Reveal in Finder · Get Info · Copy Path
 3. ───
 4. Remove from Favourites `sidebar.remove` · Rename Favourite… `sidebar.rename` (favourites only; a favourite whose folder has gone is shown dimmed and still offers Remove)
-5. Drives and cards also get Eject and Show Drive Info *(new commands)*
+5. Drives and cards also get Eject and Show Drive Info *(new commands)*, and every volume gets Show Disk Usage `nav.disk_usage` *(M3)*
 
 ## 7. Tab
 1. New Tab `tab.new` · Duplicate Tab `tab.duplicate` · Reopen Closed Tab `tab.reopen_closed`

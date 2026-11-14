@@ -54,6 +54,7 @@ mod settings;
 mod shared;
 mod sys;
 mod tab;
+mod usage;
 mod view;
 mod view_columns;
 mod workspace;
@@ -94,6 +95,10 @@ pub use settings::{
 };
 pub use shared::MIGRATIONS;
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};
+pub use usage::{
+    UsageChange, UsageMove, UsageNodeInfo, UsageObserver, UsageProgress, UsageRowInfo,
+    UsageSizeMode, UsageState, UsageSummary, UsageTile, UsageTypeRow, UsageView,
+};
 pub use view::{SortBy, ViewState};
 pub use view_columns::{
     ColumnId, ColumnSpec, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, sanitize_columns,

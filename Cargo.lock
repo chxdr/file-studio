@@ -414,6 +414,7 @@ dependencies = [
  "fstudio-model",
  "fstudio-ops",
  "fstudio-path",
+ "fstudio-usage",
  "fstudio-view",
  "libc",
  "parking_lot",

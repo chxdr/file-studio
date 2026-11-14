@@ -11,6 +11,7 @@
 
 mod settings;
 mod types;
+mod usage;
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use fstudio_core::{Engine, Tab, TabId};
 
 pub use settings::*;
 pub use types::*;
+pub use usage::*;
 
 uniffi::setup_scaffolding!();
 

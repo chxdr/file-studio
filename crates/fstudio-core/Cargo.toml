@@ -14,6 +14,8 @@ fstudio-view.workspace = true
 fstudio-path.workspace = true
 fstudio-keymap.workspace = true
 fstudio-ops.workspace = true
+# Disk usage (M3); a path dependency until the root lists it.
+fstudio-usage = { path = "../fstudio-usage" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

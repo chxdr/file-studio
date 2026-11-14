@@ -18,6 +18,7 @@ nav.go_root
 nav.go_trash
 nav.connect_server
 nav.show_package_contents
+nav.disk_usage
 nav.mark_set
 nav.mark_jump
 select.all
