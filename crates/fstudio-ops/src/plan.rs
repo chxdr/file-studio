@@ -105,6 +105,66 @@ pub fn validate(req: &OpRequest) -> Result<(), String> {
             names::validate_name(n)?;
         }
     }
+    if let OpRequest::RenameMany { pairs } = req {
+        validate_rename_many(pairs)?;
+    }
+    Ok(())
+}
+
+/// A batch rename must not rename an item and something inside it (paths
+/// are fixed when it is queued, so one would miss the other), and no two
+/// items may get the same name in one folder (case and normalisation folded
+/// as the folder's volume does). Reads each folder's case sensitivity.
+fn validate_rename_many(pairs: &[(PathBuf, String)]) -> Result<(), String> {
+    let resolved = |p: &Path| -> PathBuf {
+        match (
+            p.parent().and_then(|d| std::fs::canonicalize(d).ok()),
+            p.file_name(),
+        ) {
+            (Some(d), Some(n)) => d.join(n),
+            _ => p.to_path_buf(),
+        }
+    };
+    let sources: Vec<PathBuf> = pairs.iter().map(|(p, _)| resolved(p)).collect();
+    for (i, a) in sources.iter().enumerate() {
+        for (j, b) in sources.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            if a == b {
+                return Err(format!(
+                    "“{}” is in the batch twice",
+                    file_name(&pairs[i].0)
+                ));
+            }
+            if is_within(a, b) {
+                return Err(format!(
+                    "“{}” and “{}”, which is inside it, can’t be renamed together; \
+                     rename the folder and its contents separately",
+                    file_name(&pairs[j].0),
+                    file_name(&pairs[i].0)
+                ));
+            }
+        }
+    }
+    let mut cs: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    let mut seen: BTreeMap<(PathBuf, String), &str> = BTreeMap::new();
+    for (src, (_, new)) in sources.iter().zip(pairs) {
+        let dir = src.parent().map(Path::to_path_buf).unwrap_or_default();
+        let sensitive = *cs
+            .entry(dir.clone())
+            .or_insert_with(|| sys::case_sensitive(&dir).unwrap_or(false));
+        if let Some(other) = seen.insert((dir, name_key(new, sensitive)), new) {
+            return Err(format!(
+                "two items would both be named “{other}”{}",
+                if other == new {
+                    String::new()
+                } else {
+                    format!(" (“{new}” is the same name here)")
+                }
+            ));
+        }
+    }
     Ok(())
 }
 

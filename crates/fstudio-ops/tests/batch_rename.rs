@@ -192,10 +192,6 @@ fn taken_names_fail_that_item_only_and_nothing_is_overwritten() {
     assert_eq!(content(&e, "d/keep"), "keep");
     assert_eq!(content(&e, "d/a"), "a");
     assert_eq!(content(&e, "d/bee"), "b");
-    // Two items of the batch asking for the same name: the second fails.
-    let st = e.run(pairs(&e, "d", &[("a", "same"), ("bee", "same")]));
-    assert_eq!(st.state, OpState::CompletedWithErrors);
-    assert_eq!(names(&e.p("d")), ["bee", "keep", "same"]);
     no_temps(&e.p("d"));
 }
 
@@ -387,4 +383,157 @@ fn a_crash_mid_cycle_then_cancel_puts_every_name_back() {
         assert_eq!(got, ["a", "b", "c"], "{needle}");
         assert_eq!(names(&e.p("d")), ["a", "b", "c"], "{needle}");
     }
+}
+
+// ───────────── review fixes: regressions ─────────────
+
+/// Runs `f` for one fault step on sources ending with `needle`.
+struct Hook<F: Fn(&Path) -> std::io::Result<()> + Send + Sync>(FaultStep, String, F);
+
+impl<F: Fn(&Path) -> std::io::Result<()> + Send + Sync> FaultHook for Hook<F> {
+    fn check(&self, step: FaultStep, path: &Path) -> std::io::Result<()> {
+        if step == self.0 && path.to_string_lossy().ends_with(&self.1) {
+            (self.2)(path)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn env_hook(h: impl FaultHook + 'static) -> Env {
+    env_with(OpsConfig {
+        faults: Some(Arc::new(h)),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn a_failed_journal_write_renames_nothing_for_that_item() {
+    let e = env_hook(Hook(FaultStep::JournalWrite, "/d/a".into(), |_: &Path| {
+        Err(std::io::Error::other("disk full"))
+    }));
+    files(&e, "d", &["a", "b", "c"]);
+    let st = e.run(pairs(&e, "d", &[("a", "b"), ("b", "a"), ("c", "cee")]));
+    assert_eq!(st.state, OpState::CompletedWithErrors, "{st:?}");
+    assert!(
+        st.errors
+            .iter()
+            .any(|x| x.message.contains("journal write failed")),
+        "{:?}",
+        st.errors
+    );
+    // The swap couldn't be journaled, so neither half happened.
+    assert_eq!(content(&e, "d/a"), "a");
+    assert_eq!(content(&e, "d/b"), "b");
+    assert_eq!(content(&e, "d/cee"), "c");
+    no_temps(&e.p("d"));
+}
+
+#[test]
+fn a_case_only_rename_that_loses_a_race_is_never_left_hidden() {
+    // Between the two halves of File → file, another app creates "file".
+    let probe = tempfile::tempdir().unwrap();
+    if is_case_sensitive(probe.path()).unwrap() {
+        return;
+    }
+    let e = env_hook(Hook(
+        FaultStep::AfterPark,
+        "/d/File".into(),
+        |src: &Path| std::fs::write(src.with_file_name("file"), "outsider"),
+    ));
+    files(&e, "d", &["File"]);
+    let st = e.run(pairs(&e, "d", &[("File", "file")]));
+    assert_eq!(st.state, OpState::CompletedWithErrors, "{st:?}");
+    no_temps(&e.p("d"));
+    assert_eq!(names(&e.p("d")), ["File 2", "file"]);
+    assert_eq!(content(&e, "d/File 2"), "File");
+    assert_eq!(content(&e, "d/file"), "outsider");
+}
+
+#[test]
+fn a_cycle_whose_home_name_is_taken_meanwhile_gets_a_visible_name() {
+    // a is parked; meanwhile another app creates a new "a", so b can't move
+    // in and a can't go home: a must come back as "a 2", never stay hidden.
+    let e = env_hook(Hook(FaultStep::AfterPark, "/d/a".into(), |src: &Path| {
+        std::fs::write(src, "outsider")
+    }));
+    files(&e, "d", &["a", "b"]);
+    let st = e.run(pairs(&e, "d", &[("a", "b"), ("b", "a")]));
+    assert_eq!(st.state, OpState::CompletedWithErrors, "{st:?}");
+    no_temps(&e.p("d"));
+    assert_eq!(names(&e.p("d")), ["a", "a 2", "b"]);
+    assert_eq!(content(&e, "d/a 2"), "a");
+    assert_eq!(content(&e, "d/a"), "outsider");
+    assert_eq!(content(&e, "d/b"), "b");
+}
+
+#[test]
+fn recovery_never_moves_a_temporary_name_that_isnt_the_item() {
+    let e = env();
+    files(&e, "d", &["a", "b", "c"]);
+    // a is parked, c moved into "a", then a crash before b moves.
+    crash_child(&e, "/d/b");
+    let tmp = e.p("d/.a.fstudio-renaming");
+    assert!(tmp.exists());
+    // Something else now sits under the temporary name.
+    std::fs::remove_file(&tmp).unwrap();
+    write(&tmp, b"stale");
+    let q = reopen(&e);
+    let ops = q.interrupted().unwrap();
+    assert_eq!(ops.len(), 1);
+    q.resume(ops[0].id)
+        .expect("recovery goes on despite the stranger");
+    let st = q.wait(ops[0].id, WAIT).unwrap();
+    assert!(st.state.is_finished(), "{st:?}");
+    assert_eq!(String::from_utf8(read(&tmp)).unwrap(), "stale");
+    // Nothing was moved onto a name with the wrong object: "a" still holds c.
+    assert_eq!(content(&e, "d/a"), "c");
+}
+
+#[test]
+fn a_folder_and_its_contents_cant_be_renamed_together() {
+    let e = env();
+    std::fs::create_dir_all(e.p("d/x")).unwrap();
+    write(&e.p("d/x/a"), b"a");
+    let err =
+        e.q.enqueue(OpRequest::RenameMany {
+            pairs: vec![(e.p("d/x"), "y".into()), (e.p("d/x/a"), "b".into())],
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("inside it"), "{err}");
+    assert!(e.p("d/x/a").exists());
+}
+
+#[test]
+fn duplicate_new_names_are_refused_before_anything_runs() {
+    let e = env();
+    files(&e, "d", &["a", "b"]);
+    let same = e.q.enqueue(pairs(&e, "d", &[("a", "same"), ("b", "same")]));
+    assert!(same.is_err());
+    let twice = e.q.enqueue(pairs(&e, "d", &[("a", "x"), ("a", "y")]));
+    assert!(twice.is_err());
+    if !is_case_sensitive(e.root()).unwrap() {
+        let folded =
+            e.q.enqueue(pairs(&e, "d", &[("a", "Same"), ("b", "same")]))
+                .unwrap_err();
+        assert!(folded.to_string().contains("same name here"), "{folded}");
+        let nfd =
+            e.q.enqueue(pairs(&e, "d", &[("a", "Caf\u{e9}"), ("b", "Cafe\u{301}")]));
+        assert!(nfd.is_err());
+    }
+    assert_eq!(names(&e.p("d")), ["a", "b"]);
+}
+
+#[test]
+fn a_swap_given_through_two_spellings_of_one_folder_still_works() {
+    let e = env();
+    files(&e, "d", &["a", "b"]);
+    let real = std::fs::canonicalize(e.p("d")).unwrap();
+    let st = e.run(OpRequest::RenameMany {
+        pairs: vec![(e.p("d/a"), "b".into()), (real.join("b"), "a".into())],
+    });
+    assert_eq!(st.state, OpState::Completed, "{st:?}");
+    assert_eq!(content(&e, "d/a"), "b");
+    assert_eq!(content(&e, "d/b"), "a");
+    no_temps(&e.p("d"));
 }

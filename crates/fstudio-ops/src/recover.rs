@@ -221,6 +221,17 @@ pub fn sweep_leftovers(journal: &Journal) -> Result<Vec<SweptPartial>> {
                 .as_deref()
                 .is_some_and(|d| partial_path(d, it.id) == p);
         if !ours {
+            // A batch-rename item left under its temporary name (the user's
+            // own item, never removed): put it back under a visible name if
+            // it is still there; keep the record while it can't be.
+            if crate::batch_rename::stranded(&it) {
+                if let Some(at) = crate::batch_rename::rescue_stranded(&it) {
+                    it.partial = None;
+                    it.source = at;
+                    journal.save_item(&it)?;
+                }
+                continue;
+            }
             // Not one of ours by name (a case-only rename's parking name):
             // never removed here; forget it so it isn't looked at again.
             it.partial = None;

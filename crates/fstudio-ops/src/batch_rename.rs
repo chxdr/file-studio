@@ -45,7 +45,11 @@ enum At {
 
 struct Node {
     row: ItemRow,
+    /// The folder as given (paths are built from it).
     dir: PathBuf,
+    /// The folder resolved (`/tmp` and `/private/tmp` are one folder), for
+    /// comparing names across items.
+    slot_dir: PathBuf,
     src_key: String,
     dst_key: String,
     target: PathBuf,
@@ -57,10 +61,17 @@ type Slot = (PathBuf, String);
 
 impl Node {
     fn src_slot(&self) -> Slot {
-        (self.dir.clone(), self.src_key.clone())
+        (self.slot_dir.clone(), self.src_key.clone())
     }
     fn dst_slot(&self) -> Slot {
-        (self.dir.clone(), self.dst_key.clone())
+        (self.slot_dir.clone(), self.dst_key.clone())
+    }
+    /// Whether the item itself (by identity) is under its temporary name.
+    fn at_tmp(&self) -> bool {
+        match (meta::lstat(&self.tmp), self.row.src_ident) {
+            (Ok(md), Some(was)) => meta::ident(&md).same_object(&was),
+            _ => false,
+        }
     }
 }
 
@@ -89,6 +100,7 @@ fn node_of(row: ItemRow, cases: &mut CaseCache) -> Node {
         .clone()
         .unwrap_or_else(|| file_name(&row.source));
     let target = dir.join(&new_name);
+    let slot_dir = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
     let at = match row.state {
         ItemState::Done => At::Done,
         ItemState::Failed | ItemState::Skipped => At::Stopped,
@@ -100,6 +112,7 @@ fn node_of(row: ItemRow, cases: &mut CaseCache) -> Node {
         tmp: renaming_path(&row.source),
         target,
         dir,
+        slot_dir,
         row,
         at,
     }
@@ -148,17 +161,32 @@ impl<'a> Batch<'a> {
         b
     }
 
-    fn save(&mut self, i: usize) {
-        if let Err(e) = self.journal.save_item(&self.nodes[i].row) {
-            // The rename itself is done or not; a journal failure is reported
-            // with the item so it isn't silent.
-            let n = &self.nodes[i];
-            self.errors.push(ItemError {
-                path: n.row.source.clone(),
-                dest: Some(n.target.clone()),
-                message: format!("journal write failed: {e}"),
-                errno: None,
-            });
+    /// Writes the item's journal row. A failure is reported with the item
+    /// (never silent); the caller decides whether it may still touch disk.
+    fn save(&mut self, i: usize) -> bool {
+        let r = match self
+            .faults
+            .as_ref()
+            .map(|f| f.check(FaultStep::JournalWrite, &self.nodes[i].row.source))
+        {
+            Some(Err(e)) => Err(e.to_string()),
+            _ => self
+                .journal
+                .save_item(&self.nodes[i].row)
+                .map_err(|e| e.to_string()),
+        };
+        match r {
+            Ok(()) => true,
+            Err(e) => {
+                let n = &self.nodes[i];
+                self.errors.push(ItemError {
+                    path: n.row.source.clone(),
+                    dest: Some(n.target.clone()),
+                    message: format!("journal write failed: {e}"),
+                    errno: None,
+                });
+                false
+            }
         }
     }
 
@@ -167,7 +195,11 @@ impl<'a> Batch<'a> {
         n.at = At::Stopped;
         n.row.state = ItemState::Failed;
         n.row.error = Some(message.clone());
-        n.row.partial = None;
+        // The journal keeps the temporary name for as long as the item is
+        // really under it, so recovery and the user can find it.
+        if !n.at_tmp() {
+            n.row.partial = None;
+        }
         self.errors.push(ItemError {
             path: n.row.source.clone(),
             dest: Some(n.target.clone()),
@@ -175,7 +207,7 @@ impl<'a> Batch<'a> {
             errno,
         });
         self.holders.insert(self.nodes[i].src_slot(), i);
-        self.save(i);
+        let _ = self.save(i);
     }
 
     fn io_fail(&mut self, i: usize, e: &io::Error) {
@@ -211,24 +243,105 @@ impl<'a> Batch<'a> {
             self.holders.remove(&src);
         }
         self.moved_into.insert(dst, i);
-        self.save(i);
+        let _ = self.save(i);
     }
 
-    /// Journals that `i` is about to move (to its temporary name when `tmp`).
-    fn begin(&mut self, i: usize, tmp: bool) {
+    /// Journals that `i` is about to move (to its temporary name when
+    /// `tmp`), before anything on disk changes. Returns false, with the item
+    /// failed and nothing touched, if it is no longer the item the batch was
+    /// started on or the journal can't be written.
+    fn begin(&mut self, i: usize, tmp: bool) -> bool {
         let n = &mut self.nodes[i];
-        if n.row.src_ident.is_none()
-            && let Ok(md) = meta::lstat(&n.row.source)
-        {
-            n.row.src_ident = Some(meta::ident(&md));
-            n.row.kind = meta::kind_of(&md);
+        let md = match meta::lstat(&n.row.source) {
+            Ok(md) => md,
+            Err(e) => {
+                self.io_fail(i, &e);
+                return false;
+            }
+        };
+        match n.row.src_ident {
+            Some(was) if !meta::ident(&md).same_object(&was) => {
+                let msg = format!(
+                    "“{}” was replaced by another item since the rename started",
+                    file_name(&n.row.source)
+                );
+                self.fail(i, msg, None);
+                return false;
+            }
+            Some(_) => {}
+            None => {
+                n.row.src_ident = Some(meta::ident(&md));
+                n.row.kind = meta::kind_of(&md);
+            }
         }
+        let before = n.row.clone();
         n.row.dest = Some(n.target.clone());
         n.row.state = ItemState::InProgress;
         if tmp {
             n.row.partial = Some(n.tmp.clone());
         }
-        self.save(i);
+        if self.save(i) {
+            return true;
+        }
+        // Journal first: without the record, nothing is renamed.
+        let n = &mut self.nodes[i];
+        n.row = before;
+        n.at = At::Stopped;
+        n.row.state = ItemState::Failed;
+        n.row.error = Some("the journal couldn't be written, so it wasn't renamed".into());
+        let s = n.src_slot();
+        self.holders.insert(s, i);
+        false
+    }
+
+    /// Fault hook for tests.
+    fn fault(&self, step: FaultStep, p: &Path) -> io::Result<()> {
+        match &self.faults {
+            Some(f) => f.check(step, p),
+            None => Ok(()),
+        }
+    }
+
+    /// Gets an item out from under its temporary name after a failure: back
+    /// to its original name, else to a free visible name next to it
+    /// ("name 2"). Returns where it is now, or `None` if it is still under
+    /// the temporary name (the journal then keeps that name). Reports a
+    /// changed name as an error.
+    fn rescue(&mut self, p: usize) -> Option<PathBuf> {
+        let (tmp, source) = (self.nodes[p].tmp.clone(), self.nodes[p].row.source.clone());
+        if sys::rename_excl(&tmp, &source).is_ok() {
+            return Some(source);
+        }
+        let who = file_name(&source);
+        let is_dir = self.nodes[p].row.kind == fstudio_model::EntryKind::Dir;
+        let dir = self.nodes[p].dir.clone();
+        let free = keep_both_names(&who, is_dir)
+            .map(|n| dir.join(n))
+            .take(1000)
+            .find(|c| sys::rename_excl(&tmp, c).is_ok());
+        match free {
+            Some(f) => {
+                self.errors.push(ItemError {
+                    path: source,
+                    dest: Some(f.clone()),
+                    message: format!(
+                        "its name was taken meanwhile, so it is now “{}”",
+                        file_name(&f)
+                    ),
+                    errno: None,
+                });
+                Some(f)
+            }
+            None => {
+                self.errors.push(ItemError {
+                    path: source,
+                    dest: Some(tmp.clone()),
+                    message: format!("it is still under the temporary name “{}”", file_name(&tmp)),
+                    errno: None,
+                });
+                None
+            }
+        }
     }
 
     /// Moves `i` to its new name: from its temporary name if parked, through
@@ -268,20 +381,33 @@ impl<'a> Batch<'a> {
         }
         let case_only = self.nodes[i].src_key == self.nodes[i].dst_key;
         if case_only {
-            self.begin(i, true);
+            if !self.begin(i, true) {
+                return;
+            }
             if let Err(e) = sys::rename_excl(&source, &tmp) {
                 self.io_fail(i, &e);
                 return;
             }
-            if let Err(e) = sys::rename_excl(&tmp, &target) {
-                let _ = sys::rename_excl(&tmp, &source);
+            let second = self
+                .fault(FaultStep::AfterPark, &source)
+                .and_then(|()| sys::rename_excl(&tmp, &target).map(|_| ()));
+            if let Err(e) = second {
+                // Out from under the temporary name before reporting.
+                if let Some(at) = self.rescue(i)
+                    && at != source
+                {
+                    // It has a new visible name; that is where it is now.
+                    self.nodes[i].row.source = at;
+                }
                 self.io_fail(i, &e);
                 return;
             }
             self.mark_done(i);
             return;
         }
-        self.begin(i, false);
+        if !self.begin(i, false) {
+            return;
+        }
         match sys::rename_excl(&source, &target) {
             Ok(_) => self.mark_done(i),
             Err(e) => self.io_fail(i, &e),
@@ -290,10 +416,13 @@ impl<'a> Batch<'a> {
 
     /// Parks `i` under its temporary name, freeing its original name.
     fn park(&mut self, i: usize) -> bool {
-        self.begin(i, true);
+        if !self.begin(i, true) {
+            return false;
+        }
         let (source, tmp) = (self.nodes[i].row.source.clone(), self.nodes[i].tmp.clone());
         match sys::rename_excl(&source, &tmp) {
             Ok(_) => {
+                let _ = self.fault(FaultStep::AfterPark, &source);
                 self.nodes[i].at = At::Parked;
                 let s = self.nodes[i].src_slot();
                 if self.holders.get(&s) == Some(&i) {
@@ -342,7 +471,7 @@ impl<'a> Batch<'a> {
                         n.row.dest = None;
                         let s = n.src_slot();
                         self.holders.insert(s, x);
-                        self.save(x);
+                        let _ = self.save(x);
                     } else {
                         self.fail(
                             x,
@@ -362,44 +491,10 @@ impl<'a> Batch<'a> {
                 }
             }
         }
-        let (tmp, source) = (self.nodes[p].tmp.clone(), self.nodes[p].row.source.clone());
-        let back = match sys::rename_excl(&tmp, &source) {
-            Ok(_) => source.clone(),
-            Err(_) => {
-                // Last resort: a visible free name next to the original.
-                let is_dir = self.nodes[p].row.kind == fstudio_model::EntryKind::Dir;
-                let dir = self.nodes[p].dir.clone();
-                let free = keep_both_names(&who, is_dir)
-                    .map(|n| dir.join(n))
-                    .take(1000)
-                    .find(|c| sys::rename_excl(&tmp, c).is_ok());
-                match free {
-                    Some(f) => {
-                        self.errors.push(ItemError {
-                            path: source.clone(),
-                            dest: Some(f.clone()),
-                            message: format!(
-                                "its name was taken meanwhile, so it is now “{}”",
-                                file_name(&f)
-                            ),
-                            errno: None,
-                        });
-                        f
-                    }
-                    None => {
-                        self.errors.push(ItemError {
-                            path: source.clone(),
-                            dest: Some(tmp.clone()),
-                            message: format!(
-                                "it is still under the temporary name “{}”",
-                                file_name(&tmp)
-                            ),
-                            errno: None,
-                        });
-                        return;
-                    }
-                }
-            }
+        let source = self.nodes[p].row.source.clone();
+        let Some(back) = self.rescue(p) else {
+            // Still under the temporary name: the journal keeps it.
+            return;
         };
         let n = &mut self.nodes[p];
         n.row.partial = None;
@@ -410,9 +505,12 @@ impl<'a> Batch<'a> {
             let s = n.src_slot();
             self.holders.insert(s, p);
         } else {
+            // It has a new visible name: record where it is.
             n.at = At::Stopped;
+            n.row.state = ItemState::Failed;
+            n.row.source = back;
         }
-        self.save(p);
+        let _ = self.save(p);
     }
 
     fn pending(&self) -> impl Iterator<Item = usize> + '_ {
@@ -596,7 +694,9 @@ pub(crate) fn recover(journal: &Journal, op: &OpRow) -> Result<()> {
     let unsettled: Vec<usize> = (0..b.nodes.len())
         .filter(|&i| b.nodes[i].row.state == ItemState::InProgress)
         .collect();
-    let is_parked = |n: &Node| n.row.partial.is_some() && meta::exists(&n.tmp);
+    // Parked means: the journal recorded the temporary name and the very
+    // item (by identity) is under it. Anything else there isn't ours.
+    let is_parked = |n: &Node| n.row.partial.is_some() && n.at_tmp();
     // Items that weren't parked: did their one rename land? The item at the
     // new name must be the very object that was at the old one.
     for &i in &unsettled {
@@ -627,7 +727,7 @@ pub(crate) fn recover(journal: &Journal, op: &OpRow) -> Result<()> {
             n.row.partial = None;
             n.row.state = ItemState::Pending;
             n.row.dest = None;
-            b.save(i);
+            let _ = b.save(i);
         }
     }
     // Parked items: on to the new name if it is free, else back home.
@@ -637,8 +737,19 @@ pub(crate) fn recover(journal: &Journal, op: &OpRow) -> Result<()> {
         }
         let (target, tmp) = (b.nodes[i].target.clone(), b.nodes[i].tmp.clone());
         if !meta::exists(&target) {
-            sys::rename_excl(&tmp, &target)?;
-            b.mark_done(i);
+            match sys::rename_excl(&tmp, &target) {
+                Ok(_) => b.mark_done(i),
+                Err(e) => {
+                    // Report it and go on with the other items; the
+                    // journal still names the temporary name.
+                    b.errors.push(ItemError {
+                        path: b.nodes[i].row.source.clone(),
+                        dest: Some(target.clone()),
+                        message: format!("couldn’t be put back: {}", describe(&e)),
+                        errno: e.raw_os_error(),
+                    });
+                }
+            }
         } else {
             b.nodes[i].at = At::Parked;
             let s = b.nodes[i].src_slot();
@@ -659,6 +770,36 @@ pub(crate) fn recover(journal: &Journal, op: &OpRow) -> Result<()> {
             .join("; ");
         Err(crate::types::OpsError::InvalidRequest(msg))
     }
+}
+
+/// Whether a finished op's item is still under its batch-rename temporary
+/// name: the journal recorded it, and the very item (by identity) is there.
+pub(crate) fn stranded(it: &ItemRow) -> bool {
+    let Some(p) = it.partial.as_deref() else {
+        return false;
+    };
+    let named = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(crate::names::RENAMING_SUFFIX));
+    named
+        && *p == renaming_path(&it.source)
+        && matches!((meta::lstat(p), it.src_ident), (Ok(md), Some(was)) if meta::ident(&md).same_object(&was))
+}
+
+/// Moves a stranded item (see [`stranded`]) back to its original name, else
+/// to a free "name 2" next to it. Returns where it is now.
+pub(crate) fn rescue_stranded(it: &ItemRow) -> Option<PathBuf> {
+    let tmp = it.partial.clone()?;
+    if sys::rename_excl(&tmp, &it.source).is_ok() {
+        return Some(it.source.clone());
+    }
+    let dir = it.source.parent()?.to_path_buf();
+    let is_dir = it.kind == fstudio_model::EntryKind::Dir;
+    keep_both_names(&file_name(&it.source), is_dir)
+        .map(|n| dir.join(n))
+        .take(1000)
+        .find(|c| sys::rename_excl(&tmp, c).is_ok())
 }
 
 /// The name stored in `dir` whose key is `key`.

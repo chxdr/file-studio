@@ -249,6 +249,12 @@ pub enum FaultStep {
     BeforePlace,
     /// After the item is in place, before the source of a move is removed.
     BeforeSourceRemove,
+    /// Batch rename only: before an item's journal row is written (an error
+    /// here is a failed journal write).
+    JournalWrite,
+    /// Batch rename only: right after an item went under its temporary name
+    /// (a cycle member parked, or the first half of a case-only change).
+    AfterPark,
 }
 
 /// Test hook: return an error to make the engine fail at `step` for `path`
