@@ -14,6 +14,7 @@ mod search;
 // ── batch rename (M3) ──
 mod rename;
 mod settings;
+mod system_integration;
 mod types;
 mod usage;
 
@@ -26,6 +27,7 @@ pub use preview::*;
 pub use rename::*;
 pub use search::*;
 pub use settings::*;
+pub use system_integration::*;
 pub use types::*;
 pub use usage::*;
 

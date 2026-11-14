@@ -115,6 +115,7 @@ path.copy_file_url
 path.copy_quoted
 terminal.open
 file.reveal_in_finder
+panel.jump_here
 favourites.add
 favourites.remove
 sidebar.remove

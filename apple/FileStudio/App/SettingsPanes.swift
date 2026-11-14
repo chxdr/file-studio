@@ -12,6 +12,7 @@ struct SettingsGeneralPane: View {
 
     var body: some View {
         Form {
+            SettingsFileExplorerSections(model: model)
             Section("New windows") {
                 Picker("Default layout", selection: a.binding(\.general.dualPaneByDefault)) {
                     Text("One pane").tag(false)
@@ -286,7 +287,7 @@ struct SettingsAdvancedPane: View {
                         Text(Self.dataFolder(model) ?? "None (running on sample data)")
                             .font(.callout.monospaced()).textSelection(.enabled).multilineTextAlignment(.trailing)
                         if let d = Self.dataFolder(model) {
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: d)]) }
+                            Button("Show in Finder") { SystemOpen.revealInFinder([d]) }
                         }
                     }
                 }

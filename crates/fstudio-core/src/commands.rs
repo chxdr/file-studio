@@ -396,6 +396,7 @@ impl Engine {
             | "app.settings"
             | "app.keyboard_shortcuts"
             | "app.power_tour"
+            | "panel.jump_here"
             | "edit.copy"
             | "tags.edit"
             | "sidebar.rename"
@@ -1142,6 +1143,13 @@ impl Engine {
                 }));
             }
             "palette.open" => return Ok(Outcome::shell(ShellRequest::ShowPalette)),
+            "panel.jump_here" => {
+                let t = self.target(inv.tab)?;
+                return Ok(
+                    Outcome::shell(ShellRequest::JumpFilePanel { dir: t.location() })
+                        .with_tab(t.id()),
+                );
+            }
             "nav.quick_open" => return Ok(Outcome::shell(ShellRequest::ShowQuickOpen)),
             "view.toggle_sidebar" => return Ok(Outcome::shell(ShellRequest::ToggleSidebar)),
             "view.toggle_inspector" => return Ok(Outcome::shell(ShellRequest::ToggleInspector)),

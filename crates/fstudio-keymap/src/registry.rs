@@ -301,6 +301,8 @@ fn table() -> Vec<B> {
         c("path.copy_quoted", "Copy Path, Quoted", Path, "Copy the path in single quotes"),
         c("terminal.open", "Open in Terminal", Path, "Open Terminal in this folder").s("⇧⌘R"),
         c("file.reveal_in_finder", "Reveal in Finder", Path, "Show the selection in Finder").s("⌥⌘R"),
+        // Also a system-wide shortcut while Settings › General › Open and Save panels is on.
+        c("panel.jump_here", "Send Open/Save Panel Here", Path, "Make the Open or Save panel in front go to this pane's folder").global().s("⌃⌥⌘G").nomenu(),
         c("favourites.add", "Add to Favourites", Navigation, "Pin the selected folders, or this folder, to the sidebar").s("⌃⌘T").arg(ArgKind::Path),
         c("favourites.remove", "Remove from Favourites", Navigation, "Unpin the selected folders, or this folder, from the sidebar").arg(ArgKind::Path),
         c("sidebar.remove", "Remove from Favourites", Navigation, "Remove a favourite from the sidebar").arg(ArgKind::Path).hidden(),

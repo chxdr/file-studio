@@ -1255,6 +1255,12 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func saveRenamePreset(name: String, steps: [FfiRenameStep]) throws 
     
     /**
+     * Opens folders (`reveal` false) or reveals items (`reveal` true) sent by
+     * another app. Stats each path (quick, but it touches the disk).
+     */
+    func openFromSystem(paths: [String], reveal: Bool) throws  -> FfiOutcome
+    
+    /**
      * Starts a disk-usage scan of a folder or volume (`lstat` only; the
      * scan runs in the background and reports through `observer`).
      */
@@ -2639,6 +2645,21 @@ open func saveRenamePreset(name: String, steps: [FfiRenameStep])throws   {try ru
         FfiConverterSequenceTypeFfiRenameStep.lower(steps),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Opens folders (`reveal` false) or reveals items (`reveal` true) sent by
+     * another app. Stats each path (quick, but it touches the disk).
+     */
+open func openFromSystem(paths: [String], reveal: Bool)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_open_from_system(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(paths),
+        FfiConverterBool.lower(reveal),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -7418,6 +7439,75 @@ public func FfiConverterTypeFfiPaneState_lower(_ value: FfiPaneState) -> RustBuf
 
 
 /**
+ * What Accessibility says about a window or sheet.
+ */
+public struct FfiPanelProbe: Equatable, Hashable {
+    public var role: String
+    public var subrole: String
+    public var identifier: String
+    public var buttons: [String]
+    public var innerRoles: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(role: String, subrole: String, identifier: String, buttons: [String], innerRoles: [String]) {
+        self.role = role
+        self.subrole = subrole
+        self.identifier = identifier
+        self.buttons = buttons
+        self.innerRoles = innerRoles
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPanelProbe: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPanelProbe: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPanelProbe {
+        return
+            try FfiPanelProbe(
+                role: FfiConverterString.read(from: &buf), 
+                subrole: FfiConverterString.read(from: &buf), 
+                identifier: FfiConverterString.read(from: &buf), 
+                buttons: FfiConverterSequenceString.read(from: &buf), 
+                innerRoles: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPanelProbe, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.role, into: &buf)
+        FfiConverterString.write(value.subrole, into: &buf)
+        FfiConverterString.write(value.identifier, into: &buf)
+        FfiConverterSequenceString.write(value.buttons, into: &buf)
+        FfiConverterSequenceString.write(value.innerRoles, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPanelProbe_lift(_ buf: RustBuffer) throws -> FfiPanelProbe {
+    return try FfiConverterTypeFfiPanelProbe.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPanelProbe_lower(_ value: FfiPanelProbe) -> RustBuffer {
+    return FfiConverterTypeFfiPanelProbe.lower(value)
+}
+
+
+/**
  * Parsed address-bar text.
  */
 public struct FfiParsedLocation: Equatable, Hashable {
@@ -8526,6 +8616,71 @@ public func FfiConverterTypeFfiRow_lift(_ buf: RustBuffer) throws -> FfiRow {
 #endif
 public func FfiConverterTypeFfiRow_lower(_ value: FfiRow) -> RustBuffer {
     return FfiConverterTypeFfiRow.lower(value)
+}
+
+
+/**
+ * A rectangle in top-left-origin screen coordinates.
+ */
+public struct FfiScreenRect: Equatable, Hashable {
+    public var x: Double
+    public var y: Double
+    public var w: Double
+    public var h: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(x: Double, y: Double, w: Double, h: Double) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiScreenRect: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiScreenRect: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiScreenRect {
+        return
+            try FfiScreenRect(
+                x: FfiConverterDouble.read(from: &buf), 
+                y: FfiConverterDouble.read(from: &buf), 
+                w: FfiConverterDouble.read(from: &buf), 
+                h: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiScreenRect, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.x, into: &buf)
+        FfiConverterDouble.write(value.y, into: &buf)
+        FfiConverterDouble.write(value.w, into: &buf)
+        FfiConverterDouble.write(value.h, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiScreenRect_lift(_ buf: RustBuffer) throws -> FfiScreenRect {
+    return try FfiConverterTypeFfiScreenRect.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiScreenRect_lower(_ value: FfiScreenRect) -> RustBuffer {
+    return FfiConverterTypeFfiScreenRect.lower(value)
 }
 
 
@@ -10379,6 +10534,95 @@ public func FfiConverterTypeFfiViewState_lift(_ buf: RustBuffer) throws -> FfiVi
 #endif
 public func FfiConverterTypeFfiViewState_lower(_ value: FfiViewState) -> RustBuffer {
     return FfiConverterTypeFfiViewState.lower(value)
+}
+
+
+/**
+ * The default-viewer switch, with text for Settings.
+ */
+public struct FfiViewerStatus: Equatable, Hashable {
+    public var state: FfiViewerState
+    public var headline: String
+    public var detail: String
+    public var canMakeDefault: Bool
+    public var canRestoreFinder: Bool
+    /**
+     * Reveal in Finder must send Finder its own reveal event.
+     */
+    public var revealNeedsFinderEvent: Bool
+    /**
+     * What the switch changes, in plain words.
+     */
+    public var explained: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(state: FfiViewerState, headline: String, detail: String, canMakeDefault: Bool, canRestoreFinder: Bool, 
+        /**
+         * Reveal in Finder must send Finder its own reveal event.
+         */revealNeedsFinderEvent: Bool, 
+        /**
+         * What the switch changes, in plain words.
+         */explained: String) {
+        self.state = state
+        self.headline = headline
+        self.detail = detail
+        self.canMakeDefault = canMakeDefault
+        self.canRestoreFinder = canRestoreFinder
+        self.revealNeedsFinderEvent = revealNeedsFinderEvent
+        self.explained = explained
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiViewerStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiViewerStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiViewerStatus {
+        return
+            try FfiViewerStatus(
+                state: FfiConverterTypeFfiViewerState.read(from: &buf), 
+                headline: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                canMakeDefault: FfiConverterBool.read(from: &buf), 
+                canRestoreFinder: FfiConverterBool.read(from: &buf), 
+                revealNeedsFinderEvent: FfiConverterBool.read(from: &buf), 
+                explained: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiViewerStatus, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiViewerState.write(value.state, into: &buf)
+        FfiConverterString.write(value.headline, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterBool.write(value.canMakeDefault, into: &buf)
+        FfiConverterBool.write(value.canRestoreFinder, into: &buf)
+        FfiConverterBool.write(value.revealNeedsFinderEvent, into: &buf)
+        FfiConverterString.write(value.explained, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerStatus_lift(_ buf: RustBuffer) throws -> FfiViewerStatus {
+    return try FfiConverterTypeFfiViewerStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerStatus_lower(_ value: FfiViewerStatus) -> RustBuffer {
+    return FfiConverterTypeFfiViewerStatus.lower(value)
 }
 
 
@@ -13717,6 +13961,75 @@ public func FfiConverterTypeFfiOrientation_lower(_ value: FfiOrientation) -> Rus
 
 
 /**
+ * An Open or Save panel.
+ */
+
+public enum FfiPanelKind: Equatable, Hashable {
+    
+    case `open`
+    case save
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiPanelKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPanelKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPanelKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPanelKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .`open`
+        
+        case 2: return .save
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiPanelKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .`open`:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .save:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPanelKind_lift(_ buf: RustBuffer) throws -> FfiPanelKind {
+    return try FfiConverterTypeFfiPanelKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPanelKind_lower(_ value: FfiPanelKind) -> RustBuffer {
+    return FfiConverterTypeFfiPanelKind.lower(value)
+}
+
+
+
+/**
  * How Copy Path writes a path.
  */
 
@@ -15027,6 +15340,11 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case editTags(paths: [String]
     )
+    /**
+     * Send the Open/Save panel in front to `dir` (`panel.jump_here`).
+     */
+    case jumpFilePanel(dir: String
+    )
     case openWindow(window: UInt64
     )
     case closeWindow(window: UInt64
@@ -15169,16 +15487,19 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 39: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 40: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 40: return .jumpFilePanel(dir: try FfiConverterString.read(from: &buf)
         )
         
-        case 41: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 41: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 42: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        case 42: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 43: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 43: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 44: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -15392,18 +15713,23 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
-        case let .openWindow(window):
+        case let .jumpFilePanel(dir):
             writeInt(&buf, Int32(40))
-            FfiConverterUInt64.write(window, into: &buf)
+            FfiConverterString.write(dir, into: &buf)
             
         
-        case let .closeWindow(window):
+        case let .openWindow(window):
             writeInt(&buf, Int32(41))
             FfiConverterUInt64.write(window, into: &buf)
             
         
-        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+        case let .closeWindow(window):
             writeInt(&buf, Int32(42))
+            FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(43))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(question, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -15412,7 +15738,7 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .sourceMissing(op,text):
-            writeInt(&buf, Int32(43))
+            writeInt(&buf, Int32(44))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
@@ -16690,6 +17016,89 @@ public func FfiConverterTypeFfiViewMode_lower(_ value: FfiViewMode) -> RustBuffe
 
 
 /**
+ * Who handles "Show in Finder" and folder opens.
+ */
+
+public enum FfiViewerState: Equatable, Hashable {
+    
+    case finder
+    case thisApp
+    case otherCopy
+    case otherApp
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiViewerState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiViewerState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiViewerState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiViewerState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .finder
+        
+        case 2: return .thisApp
+        
+        case 3: return .otherCopy
+        
+        case 4: return .otherApp
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiViewerState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .finder:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .thisApp:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .otherCopy:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .otherApp:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerState_lift(_ buf: RustBuffer) throws -> FfiViewerState {
+    return try FfiConverterTypeFfiViewerState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerState_lower(_ value: FfiViewerState) -> RustBuffer {
+    return FfiConverterTypeFfiViewerState.lower(value)
+}
+
+
+
+/**
  * Vim's modal state.
  */
 
@@ -16935,6 +17344,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -17071,6 +17504,30 @@ fileprivate struct FfiConverterOptionTypeFfiInvocation: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiInvocation.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiKeyChord: FfiConverterRustBuffer {
+    typealias SwiftType = FfiKeyChord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiKeyChord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiKeyChord.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -17335,6 +17792,30 @@ fileprivate struct FfiConverterOptionTypeFfiCommandArg: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiCommandArg.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiPanelKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPanelKind?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPanelKind.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPanelKind.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -18294,6 +18775,95 @@ public func renameTokens() -> [FfiRenameToken]  {
     )
 })
 }
+/**
+ * Is this window or sheet a system Open or Save panel?
+ */
+public func classifyFilePanel(probe: FfiPanelProbe) -> FfiPanelKind?  {
+    return try!  FfiConverterOptionTypeFfiPanelKind.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_classify_file_panel(
+        FfiConverterTypeFfiPanelProbe_lower(probe),uniffiCallStatus
+    )
+})
+}
+/**
+ * Works out the default-viewer state from `NSFileViewer`, the
+ * `public.folder` handler and this app's bundle id.
+ */
+public func fileViewerStatus(fileViewer: String?, folderHandler: String?, ownId: String) -> FfiViewerStatus  {
+    return try!  FfiConverterTypeFfiViewerStatus_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_file_viewer_status(
+        FfiConverterOptionString.lower(fileViewer),
+        FfiConverterOptionString.lower(folderHandler),
+        FfiConverterString.lower(ownId),uniffiCallStatus
+    )
+})
+}
+/**
+ * The system-wide shortcut for a key-cap text (`⌃⌥⌘G`), or `None` when it
+ * can't be one (a sequence, or no ⌘/⌃/⌥).
+ */
+public func globalHotkeyChord(keys: String) -> FfiKeyChord?  {
+    return try!  FfiConverterOptionTypeFfiKeyChord.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_global_hotkey_chord(
+        FfiConverterString.lower(keys),uniffiCallStatus
+    )
+})
+}
+/**
+ * Where the floating "Go to …" button goes for a panel (its top-left
+ * corner, in the same coordinates).
+ */
+public func panelButtonOrigin(panel: FfiScreenRect, buttonW: Double, buttonH: Double, screen: FfiScreenRect) -> FfiScreenRect  {
+    return try!  FfiConverterTypeFfiScreenRect_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_panel_button_origin(
+        FfiConverterTypeFfiScreenRect_lower(panel),
+        FfiConverterDouble.lower(buttonW),
+        FfiConverterDouble.lower(buttonH),
+        FfiConverterTypeFfiScreenRect_lower(screen),uniffiCallStatus
+    )
+})
+}
+/**
+ * The floating button's title for a folder.
+ */
+public func panelButtonTitle(folder: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_panel_button_title(
+        FfiConverterString.lower(folder),uniffiCallStatus
+    )
+})
+}
+/**
+ * What to type into a panel's Go to Folder field for a folder.
+ */
+public func panelJumpText(folder: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_panel_jump_text(
+        FfiConverterString.lower(folder),uniffiCallStatus
+    )
+})
+}
+/**
+ * May the shell send the next keystroke into a panel? `None` means yes;
+ * otherwise why not. `value_matches` is `None` before typing.
+ */
+public func panelKeyRefusal(appInFront: Bool, fieldFocused: Bool, panelOpen: Bool, valueMatches: Bool?) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_panel_key_refusal(
+        FfiConverterBool.lower(appInFront),
+        FfiConverterBool.lower(fieldFocused),
+        FfiConverterBool.lower(panelOpen),
+        FfiConverterOptionBool.lower(valueMatches),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -18323,6 +18893,27 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_rename_tokens() != 52238) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_classify_file_panel() != 25552) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_file_viewer_status() != 45214) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_global_hotkey_chord() != 38) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_panel_button_origin() != 18247) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_panel_button_title() != 35142) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_panel_jump_text() != 47500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_panel_key_refusal() != 20458) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {
@@ -18665,6 +19256,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_save_rename_preset() != 48116) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_open_from_system() != 17870) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_usage_scan() != 14012) {

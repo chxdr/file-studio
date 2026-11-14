@@ -250,7 +250,7 @@ The user also accepted the CI rule change in deny.toml: unmaintained-crate notic
 
 
 ## F-028: Milestone 3 pieces: search, preview, disk usage (2026-11-14)
-Built in parallel sessions and merged after review. Batch rename follows once its review fixes land.
+Built in parallel sessions and merged after review.
 - **Search (`fstudio-search`):**
   - Spotlight is queried by running `mdfind` from Rust, which replaces `Platform::spotlight` in PROPOSAL §4. It needs no unsafe code and no run loop, streams results, is killed on cancel, and works from the CLI and tests. Every Spotlight hit is checked again on disk with the walk's own filters, so a stale index can only make results arrive sooner, never wrong.
   - The walk skips hidden folders (including `UF_HIDDEN` ones), package contents and iCloud placeholder folders by default. "This Mac" also skips `/Volumes` and `/System/Volumes`.
@@ -269,4 +269,15 @@ Built in parallel sessions and merged after review. Batch rename follows once it
   - The view starts in On Disk mode. Show Disk Usage has no default shortcut. Inside the usage window, ⌘ keys are handled before the main menu.
   - Trash from the view goes through the ops queue with Undo. There is no permanent delete there (F-007).
   - Get Folder Size uses the same scanner. Its results stay in memory until a `folder_sizes` table lands in `fstudio-db` (the schema is in the session's hand-over note).
+- **Batch rename (`fstudio-rename`, `OpRequest::RenameMany` in ops):**
+  - The pipeline's steps work on NFC text, and a name the steps don't change keeps its exact bytes. The preview flags collisions within the batch and with files that stay (case-folded per volume), as well as invalid and unchanged names.
+  - Applying is one undoable op. Every rename is exclusive (`RENAME_EXCL`). A cycle parks one item under a hidden temporary name, journaled first: if the journal write fails, the item fails without touching the disk. A parked item's temporary path stays in the journal until the item has really left it, and recovery checks its identity before moving anything.
+  - The ops layer rejects duplicate targets, and also renaming a folder together with something inside it.
+  - ⌃⌘R opens the sheet. Presets live in the database's key-value table (`rename.presets`), not in Settings.
+  - EXIF for CR3 and RAF in rename tokens is still to do. `fstudio-preview` can already read it, so rename should reuse it.
+- **File Studio as the Mac's file explorer** (Settings › General, `integration.*`):
+  - "Make File Studio the Default File Viewer" sets the global `NSFileViewer` to the bundle id of the app it was clicked in. "Show in Finder" from other apps and `open -R` then land in File Studio. Switching back removes the key.
+  - macOS won't hand over plain folder opens (the Dock, `open <folder>`) for any app, so those stay with Finder. A revealed folder opens rather than being selected in its parent.
+  - The Open/Save panel jump is off by default. It needs Accessibility, uses ⌃⌥⌘G, and drives the panel's Go to Folder field. The core decides before every keystroke whether the panel's app and field are still in front, and Return is never pressed otherwise.
+  - The app now has `Info-FileStudio.plist` (`public.folder` viewer, rank Alternate) and an entitlement for sending Apple Events to Finder.
 

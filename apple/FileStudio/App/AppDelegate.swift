@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var volumeWatcher: VolumeWatcher?
     private var controllers: [WindowID: MainWindowController] = [:]
 
+    // File Studio as the default file viewer (Platform/FileViewer.swift).
+    func applicationWillFinishLaunching(_ note: Notification) { SystemOpen.installEarly() }
+    func application(_ app: NSApplication, open urls: [URL]) { SystemOpen.open(urls: urls) }
+
     func applicationDidFinishLaunching(_ note: Notification) {
         model = AppModel(engine: makeEngine())
         PlatformActions.install(model)
@@ -37,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BatchRenameSheet.install(model)  // batch rename (M3)
         OverlayController.shared.install(model)
         UsageWindowController.install(model)   // disk usage (M3, Usage/)
+        SystemOpen.install(model)
+        FilePanelJump.shared.install(model)
         NSApp.activate()
         #if DEBUG
         DebugAutomation.runIfRequested(model)

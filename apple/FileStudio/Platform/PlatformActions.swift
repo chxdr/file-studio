@@ -59,9 +59,8 @@ enum PlatformActions {
         open(paths, with: editor)
     }
 
-    static func reveal(_ paths: [String]) {
-        NSWorkspace.shared.activateFileViewerSelecting(paths.map { URL(fileURLWithPath: $0) })
-    }
+    /// Always Finder, even while File Studio is the default file viewer.
+    static func reveal(_ paths: [String]) { SystemOpen.revealInFinder(paths) }
 
     /// Finder's Get Info window (until File Studio has its own inspector).
     static func getInfo(_ paths: [String]) {

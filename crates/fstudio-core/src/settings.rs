@@ -37,6 +37,8 @@ pub struct Settings {
     pub appearance: AppearanceSettings,
     /// The preview pane (M3).
     pub preview: crate::preview::PreviewSettings,
+    /// Default file viewer and the Open/Save panel jump (`integration.*`).
+    pub integration: crate::system_integration::IntegrationSettings,
 }
 
 /// How much the interface animates, on top of the system's Reduce Motion.

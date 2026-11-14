@@ -264,6 +264,12 @@ pub enum ShellRequest {
         /// The folder or volume.
         path: String,
     },
+    /// Send the Open or Save panel of the app the user was in to `dir`
+    /// (through Accessibility; `panel.jump_here`).
+    JumpFilePanel {
+        /// The active pane's folder.
+        dir: String,
+    },
     /// A window was created; open it.
     OpenWindow {
         /// The new window.
