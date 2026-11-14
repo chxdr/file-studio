@@ -543,6 +543,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstudio-usage"
+version = "0.0.1"
+dependencies = [
+ "fstudio-fs",
+ "libc",
+ "parking_lot",
+ "rayon",
+ "tempfile",
+]
+
+[[package]]
 name = "fstudio-view"
 version = "0.0.1"
 dependencies = [
