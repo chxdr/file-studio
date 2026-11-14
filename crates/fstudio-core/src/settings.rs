@@ -35,6 +35,8 @@ pub struct Settings {
     pub menus: crate::menus::MenuSettings,
     /// Look and motion; the shell reads these (`appearance.*`).
     pub appearance: AppearanceSettings,
+    /// The preview pane (M3).
+    pub preview: crate::preview::PreviewSettings,
 }
 
 /// How much the interface animates, on top of the system's Reduce Motion.
@@ -304,6 +306,7 @@ impl Settings {
             p.frecency_excluded.iter().all(|g| !g.trim().is_empty()),
             "path_bar.frecency_excluded has an empty pattern",
         )?;
+        self.preview.validate()?;
         let o = &self.operations;
         check(
             (1..=16).contains(&o.file_workers),

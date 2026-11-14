@@ -48,6 +48,7 @@ mod listing_handle;
 pub mod menus;
 mod miller;
 mod outcome;
+mod preview;
 mod probe;
 mod protect;
 mod settings;
@@ -86,6 +87,7 @@ pub use menus::{
     MenuSettings, MenuTarget, SidebarItemKind, SystemMenu,
 };
 pub use outcome::{Outcome, ShellRequest, ToastStyle};
+pub use preview::{PreviewService, PreviewSettings};
 pub use probe::{FsCoreProbe, FsDirSource};
 pub use protect::default_protected_folders;
 pub use settings::{
@@ -115,6 +117,10 @@ pub use fstudio_ops::{
 };
 pub use fstudio_path::{
     Cleanup, Completion, CompletionKind, Completions, Crumb, CrumbKind, Location, ParsedLocation,
+};
+pub use fstudio_preview::{
+    CancelToken, Category as PreviewCategory, FolderInfo, PhotoInfo, Preview, PreviewTag, Span,
+    TextLine, TextPreview, TokenClass, VideoInfo,
 };
 
 /// The core's version, for the shells' About box and the CLI.

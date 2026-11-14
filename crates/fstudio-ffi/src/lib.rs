@@ -9,6 +9,7 @@
 
 #![allow(missing_docs)]
 
+mod preview;
 mod settings;
 mod types;
 
@@ -17,6 +18,7 @@ use std::sync::Arc;
 use fstudio_core as core;
 use fstudio_core::{Engine, Tab, TabId};
 
+pub use preview::*;
 pub use settings::*;
 pub use types::*;
 

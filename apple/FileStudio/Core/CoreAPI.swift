@@ -1053,6 +1053,9 @@ public protocol EngineAPI: AnyObject, Sendable {
     func setting(_ key: String) throws -> String
     func setSetting(_ key: String, json: String) throws
 
+    // Preview pane (M3). Types and the protocol live in Preview/PreviewAPI.swift.
+    func makePreviewer() -> PreviewerAPI
+
     // Workspace
     func restoreSession() -> WorkspaceState
     func workspaceState() -> WorkspaceState
