@@ -13,6 +13,7 @@ mod preview;
 mod search;
 mod settings;
 mod types;
+mod usage;
 
 use std::sync::Arc;
 
@@ -23,6 +24,7 @@ pub use preview::*;
 pub use search::*;
 pub use settings::*;
 pub use types::*;
+pub use usage::*;
 
 uniffi::setup_scaffolding!();
 

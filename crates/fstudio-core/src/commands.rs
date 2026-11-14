@@ -119,7 +119,6 @@ pub enum Handling {
 /// Commands that come in a later milestone (M3+).
 pub const LATER_COMMANDS: &[&str] = &[
     "file.compress",
-    "file.folder_size",
     "file.batch_rename",
     "file.make_alias",
     "nav.connect_server",
@@ -362,6 +361,10 @@ impl Engine {
     pub fn handling(id: &str) -> Handling {
         if LATER_COMMANDS.contains(&id) {
             return Handling::Later;
+        }
+        // Disk usage (M3, usage.rs): the view is the shell's to open.
+        if id == "nav.disk_usage" {
+            return Handling::Shell;
         }
         match id {
             "nav.quick_open"
@@ -1114,6 +1117,10 @@ impl Engine {
                 "“{}” comes in a later version",
                 registry::get(id).map(|c| c.title).unwrap_or(id)
             )));
+        }
+        // Disk usage (M3): handled in usage.rs.
+        if matches!(id, "nav.disk_usage" | "file.folder_size") {
+            return self.usage_command(id, inv.arg.as_ref(), inv.tab);
         }
         // Commands that work without any window.
         match id {

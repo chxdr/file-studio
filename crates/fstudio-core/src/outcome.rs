@@ -250,6 +250,12 @@ pub enum ShellRequest {
         /// "212 files wait for “Untitled”. Insert it, then resume the copy."
         text: String,
     },
+    /// Open the disk usage view for the folder or volume at `path`
+    /// (`nav.disk_usage`); scan it with `Engine::usage_scan`.
+    ShowDiskUsage {
+        /// The folder or volume.
+        path: String,
+    },
     /// A window was created; open it.
     OpenWindow {
         /// The new window.

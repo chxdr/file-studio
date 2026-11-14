@@ -1232,6 +1232,18 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
      */
     func workspaces() throws  -> [FfiWorkspaceSummary]
     
+    /**
+     * Starts a disk-usage scan of a folder or volume (`lstat` only; the
+     * scan runs in the background and reports through `observer`).
+     */
+    func usageScan(path: String, observer: FfiUsageObserver) throws  -> FfiUsageView
+    
+    /**
+     * Move to Trash from the usage view, through the ops queue (asks first
+     * when that setting is on; never deletes for good).
+     */
+    func usageTrash(paths: [String]) throws  -> FfiOutcome
+    
 }
 /**
  * The engine: one per process.
@@ -2549,6 +2561,35 @@ open func workspaces()throws  -> [FfiWorkspaceSummary]  {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_workspaces(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Starts a disk-usage scan of a folder or volume (`lstat` only; the
+     * scan runs in the background and reports through `observer`).
+     */
+open func usageScan(path: String, observer: FfiUsageObserver)throws  -> FfiUsageView  {
+    return try  FfiConverterTypeFfiUsageView_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_usage_scan(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterTypeFfiUsageObserver_lower(observer),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Move to Trash from the usage view, through the ops queue (asks first
+     * when that setting is on; never deletes for good).
+     */
+open func usageTrash(paths: [String])throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_usage_trash(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(paths),uniffiCallStatus
     )
 })
 }
@@ -4116,6 +4157,671 @@ public func FfiConverterTypeFfiTabCycle_lift(_ handle: UInt64) throws -> FfiTabC
 #endif
 public func FfiConverterTypeFfiTabCycle_lower(_ value: FfiTabCycle) -> UInt64 {
     return FfiConverterTypeFfiTabCycle.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Receives a scan's news on a background thread; hop to the main thread.
+ */
+public protocol FfiUsageObserver: AnyObject, Sendable {
+    
+    func progress(progress: FfiUsageProgress) 
+    
+    func changed(change: FfiUsageChange) 
+    
+}
+/**
+ * Receives a scan's news on a background thread; hop to the main thread.
+ */
+open class FfiUsageObserverImpl: FfiUsageObserver, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffiusageobserver(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffiusageobserver(handle, $0) }
+    }
+
+    
+
+    
+open func progress(progress: FfiUsageProgress)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageobserver_progress(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiUsageProgress_lower(progress),uniffiCallStatus
+    )
+}
+}
+    
+open func changed(change: FfiUsageChange)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageobserver_changed(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiUsageChange_lower(change),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceFfiUsageObserver {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceFfiUsageObserver = UniffiVTableCallbackInterfaceFfiUsageObserver(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeFfiUsageObserver.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface FfiUsageObserver: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeFfiUsageObserver.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface FfiUsageObserver: handle missing in uniffiClone")
+            }
+        },
+        progress: { (
+            uniffiHandle: UInt64,
+            progress: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeFfiUsageObserver.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.progress(
+                     progress: try FfiConverterTypeFfiUsageProgress_lift(progress)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        changed: { (
+            uniffiHandle: UInt64,
+            change: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeFfiUsageObserver.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.changed(
+                     change: try FfiConverterTypeFfiUsageChange_lift(change)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceFfiUsageObserver> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceFfiUsageObserver>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitFfiUsageObserver() {
+    uniffi_fstudio_ffi_fn_init_callback_vtable_ffiusageobserver(UniffiCallbackInterfaceFfiUsageObserver.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageObserver: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<FfiUsageObserver>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiUsageObserver
+
+    public static func lift(_ handle: UInt64) throws -> FfiUsageObserver {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return FfiUsageObserverImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: FfiUsageObserver) -> UInt64 {
+         if let rustImpl = value as? FfiUsageObserverImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageObserver {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiUsageObserver, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageObserver_lift(_ handle: UInt64) throws -> FfiUsageObserver {
+    return try FfiConverterTypeFfiUsageObserver.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageObserver_lower(_ value: FfiUsageObserver) -> UInt64 {
+    return FfiConverterTypeFfiUsageObserver.lower(value)
+}
+
+
+
+
+
+
+/**
+ * One disk-usage scan and its view state.
+ */
+public protocol FfiUsageViewProtocol: AnyObject, Sendable {
+    
+    func cancel() 
+    
+    func find(path: String)  -> UInt32?
+    
+    func hit(x: Double, y: Double)  -> UInt32?
+    
+    func info(id: UInt32)  -> FfiUsageNodeInfo?
+    
+    /**
+     * The treemap for a view of `width` × `height` points (cached in the
+     * core until the size, zoom, mode or tree changes).
+     */
+    func layout(width: Double, height: Double)  -> [FfiUsageTile]
+    
+    /**
+     * The legend: `id` is the colour slot.
+     */
+    func legend()  -> [FfiUsageLabel]
+    
+    func moveSelection(mv: FfiUsageMove)  -> UInt32?
+    
+    func paths(ids: [UInt32])  -> [String]
+    
+    /**
+     * Rescans one folder in the background.
+     */
+    func refresh(id: UInt32) 
+    
+    func rescan() 
+    
+    func rootPath()  -> String
+    
+    func rowCount()  -> UInt32
+    
+    func rowOf(id: UInt32)  -> UInt32?
+    
+    func rows(start: UInt32, count: UInt32)  -> [FfiUsageRow]
+    
+    func select(id: UInt32?)  -> UInt32?
+    
+    func selected()  -> UInt32?
+    
+    func setExpanded(id: UInt32, `open`: Bool) 
+    
+    func setMode(mode: FfiUsageSizeMode) 
+    
+    func setZoom(id: UInt32) 
+    
+    func summary()  -> FfiUsageSummary
+    
+    /**
+     * After a trash, undo or move: drops what is gone, rescans what came
+     * back. Touches the disk (`lstat` per path).
+     */
+    func syncPaths(paths: [String]) 
+    
+    func types()  -> [FfiUsageTypeRow]
+    
+    func zoom()  -> UInt32
+    
+    func zoomOut()  -> Bool
+    
+    func zoomPath()  -> [FfiUsageLabel]
+    
+}
+/**
+ * One disk-usage scan and its view state.
+ */
+open class FfiUsageView: FfiUsageViewProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffiusageview(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffiusageview(handle, $0) }
+    }
+
+    
+
+    
+open func cancel()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_cancel(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func find(path: String) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_find(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+open func hit(x: Double, y: Double) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_hit(
+            self.uniffiCloneHandle(),
+        FfiConverterDouble.lower(x),
+        FfiConverterDouble.lower(y),uniffiCallStatus
+    )
+})
+}
+    
+open func info(id: UInt32) -> FfiUsageNodeInfo?  {
+    return try!  FfiConverterOptionTypeFfiUsageNodeInfo.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_info(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The treemap for a view of `width` × `height` points (cached in the
+     * core until the size, zoom, mode or tree changes).
+     */
+open func layout(width: Double, height: Double) -> [FfiUsageTile]  {
+    return try!  FfiConverterSequenceTypeFfiUsageTile.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_layout(
+            self.uniffiCloneHandle(),
+        FfiConverterDouble.lower(width),
+        FfiConverterDouble.lower(height),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The legend: `id` is the colour slot.
+     */
+open func legend() -> [FfiUsageLabel]  {
+    return try!  FfiConverterSequenceTypeFfiUsageLabel.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_legend(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func moveSelection(mv: FfiUsageMove) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_move_selection(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiUsageMove_lower(mv),uniffiCallStatus
+    )
+})
+}
+    
+open func paths(ids: [UInt32]) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_paths(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceUInt32.lower(ids),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Rescans one folder in the background.
+     */
+open func refresh(id: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_refresh(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+open func rescan()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_rescan(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+open func rootPath() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_root_path(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func rowCount() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_row_count(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func rowOf(id: UInt32) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_row_of(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+open func rows(start: UInt32, count: UInt32) -> [FfiUsageRow]  {
+    return try!  FfiConverterSequenceTypeFfiUsageRow.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+})
+}
+    
+open func select(id: UInt32?) -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_select(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionUInt32.lower(id),uniffiCallStatus
+    )
+})
+}
+    
+open func selected() -> UInt32?  {
+    return try!  FfiConverterOptionUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_selected(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func setExpanded(id: UInt32, `open`: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_set_expanded(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(id),
+        FfiConverterBool.lower(`open`),uniffiCallStatus
+    )
+}
+}
+    
+open func setMode(mode: FfiUsageSizeMode)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_set_mode(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiUsageSizeMode_lower(mode),uniffiCallStatus
+    )
+}
+}
+    
+open func setZoom(id: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_set_zoom(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+open func summary() -> FfiUsageSummary  {
+    return try!  FfiConverterTypeFfiUsageSummary_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_summary(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * After a trash, undo or move: drops what is gone, rescans what came
+     * back. Touches the disk (`lstat` per path).
+     */
+open func syncPaths(paths: [String])  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_sync_paths(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(paths),uniffiCallStatus
+    )
+}
+}
+    
+open func types() -> [FfiUsageTypeRow]  {
+    return try!  FfiConverterSequenceTypeFfiUsageTypeRow.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_types(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func zoom() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_zoom(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func zoomOut() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_zoom_out(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func zoomPath() -> [FfiUsageLabel]  {
+    return try!  FfiConverterSequenceTypeFfiUsageLabel.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiusageview_zoom_path(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageView: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiUsageView
+
+    public static func lift(_ handle: UInt64) throws -> FfiUsageView {
+        return FfiUsageView(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiUsageView) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageView {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiUsageView, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageView_lift(_ handle: UInt64) throws -> FfiUsageView {
+    return try FfiConverterTypeFfiUsageView.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageView_lower(_ value: FfiUsageView) -> UInt64 {
+    return FfiConverterTypeFfiUsageView.lower(value)
 }
 
 
@@ -8054,6 +8760,621 @@ public func FfiConverterTypeFfiUndoState_lift(_ buf: RustBuffer) throws -> FfiUn
 #endif
 public func FfiConverterTypeFfiUndoState_lower(_ value: FfiUndoState) -> RustBuffer {
     return FfiConverterTypeFfiUndoState.lower(value)
+}
+
+
+/**
+ * A breadcrumb or legend entry.
+ */
+public struct FfiUsageLabel: Equatable, Hashable {
+    public var id: UInt32
+    public var name: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt32, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageLabel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageLabel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageLabel {
+        return
+            try FfiUsageLabel(
+                id: FfiConverterUInt32.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageLabel, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageLabel_lift(_ buf: RustBuffer) throws -> FfiUsageLabel {
+    return try FfiConverterTypeFfiUsageLabel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageLabel_lower(_ value: FfiUsageLabel) -> RustBuffer {
+    return FfiConverterTypeFfiUsageLabel.lower(value)
+}
+
+
+/**
+ * Details of one item (`fstudio_core::UsageNodeInfo`).
+ */
+public struct FfiUsageNodeInfo: Equatable, Hashable {
+    public var id: UInt32
+    public var path: String
+    public var name: String
+    public var kind: FfiRowKind
+    public var allocatedText: String
+    public var logicalText: String
+    public var sizeText: String
+    public var shareText: String
+    public var itemsText: String
+    public var modifiedText: String
+    public var typeText: String
+    public var isFolder: Bool
+    public var isRoot: Bool
+    public var note: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt32, path: String, name: String, kind: FfiRowKind, allocatedText: String, logicalText: String, sizeText: String, shareText: String, itemsText: String, modifiedText: String, typeText: String, isFolder: Bool, isRoot: Bool, note: String) {
+        self.id = id
+        self.path = path
+        self.name = name
+        self.kind = kind
+        self.allocatedText = allocatedText
+        self.logicalText = logicalText
+        self.sizeText = sizeText
+        self.shareText = shareText
+        self.itemsText = itemsText
+        self.modifiedText = modifiedText
+        self.typeText = typeText
+        self.isFolder = isFolder
+        self.isRoot = isRoot
+        self.note = note
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageNodeInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageNodeInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageNodeInfo {
+        return
+            try FfiUsageNodeInfo(
+                id: FfiConverterUInt32.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFfiRowKind.read(from: &buf), 
+                allocatedText: FfiConverterString.read(from: &buf), 
+                logicalText: FfiConverterString.read(from: &buf), 
+                sizeText: FfiConverterString.read(from: &buf), 
+                shareText: FfiConverterString.read(from: &buf), 
+                itemsText: FfiConverterString.read(from: &buf), 
+                modifiedText: FfiConverterString.read(from: &buf), 
+                typeText: FfiConverterString.read(from: &buf), 
+                isFolder: FfiConverterBool.read(from: &buf), 
+                isRoot: FfiConverterBool.read(from: &buf), 
+                note: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageNodeInfo, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeFfiRowKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.allocatedText, into: &buf)
+        FfiConverterString.write(value.logicalText, into: &buf)
+        FfiConverterString.write(value.sizeText, into: &buf)
+        FfiConverterString.write(value.shareText, into: &buf)
+        FfiConverterString.write(value.itemsText, into: &buf)
+        FfiConverterString.write(value.modifiedText, into: &buf)
+        FfiConverterString.write(value.typeText, into: &buf)
+        FfiConverterBool.write(value.isFolder, into: &buf)
+        FfiConverterBool.write(value.isRoot, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageNodeInfo_lift(_ buf: RustBuffer) throws -> FfiUsageNodeInfo {
+    return try FfiConverterTypeFfiUsageNodeInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageNodeInfo_lower(_ value: FfiUsageNodeInfo) -> RustBuffer {
+    return FfiConverterTypeFfiUsageNodeInfo.lower(value)
+}
+
+
+/**
+ * A running scan's progress.
+ */
+public struct FfiUsageProgress: Equatable, Hashable {
+    public var items: UInt64
+    public var folders: UInt64
+    public var allocated: UInt64
+    public var logical: UInt64
+    public var current: String
+    public var elapsedMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(items: UInt64, folders: UInt64, allocated: UInt64, logical: UInt64, current: String, elapsedMs: UInt64) {
+        self.items = items
+        self.folders = folders
+        self.allocated = allocated
+        self.logical = logical
+        self.current = current
+        self.elapsedMs = elapsedMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageProgress: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageProgress {
+        return
+            try FfiUsageProgress(
+                items: FfiConverterUInt64.read(from: &buf), 
+                folders: FfiConverterUInt64.read(from: &buf), 
+                allocated: FfiConverterUInt64.read(from: &buf), 
+                logical: FfiConverterUInt64.read(from: &buf), 
+                current: FfiConverterString.read(from: &buf), 
+                elapsedMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageProgress, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.items, into: &buf)
+        FfiConverterUInt64.write(value.folders, into: &buf)
+        FfiConverterUInt64.write(value.allocated, into: &buf)
+        FfiConverterUInt64.write(value.logical, into: &buf)
+        FfiConverterString.write(value.current, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageProgress_lift(_ buf: RustBuffer) throws -> FfiUsageProgress {
+    return try FfiConverterTypeFfiUsageProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageProgress_lower(_ value: FfiUsageProgress) -> RustBuffer {
+    return FfiConverterTypeFfiUsageProgress.lower(value)
+}
+
+
+/**
+ * One tree-list row (`fstudio_core::UsageRowInfo`).
+ */
+public struct FfiUsageRow: Equatable, Hashable {
+    public var id: UInt32
+    public var depth: UInt16
+    public var name: String
+    public var sizeText: String
+    public var size: UInt64
+    public var fraction: Double
+    public var percentText: String
+    public var itemsText: String
+    public var modifiedText: String
+    public var kind: FfiRowKind
+    public var ext: String
+    public var iconKey: String
+    public var expandable: Bool
+    public var expanded: Bool
+    public var selected: Bool
+    public var inCloud: Bool
+    public var denied: Bool
+    public var otherVolume: Bool
+    public var note: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt32, depth: UInt16, name: String, sizeText: String, size: UInt64, fraction: Double, percentText: String, itemsText: String, modifiedText: String, kind: FfiRowKind, ext: String, iconKey: String, expandable: Bool, expanded: Bool, selected: Bool, inCloud: Bool, denied: Bool, otherVolume: Bool, note: String) {
+        self.id = id
+        self.depth = depth
+        self.name = name
+        self.sizeText = sizeText
+        self.size = size
+        self.fraction = fraction
+        self.percentText = percentText
+        self.itemsText = itemsText
+        self.modifiedText = modifiedText
+        self.kind = kind
+        self.ext = ext
+        self.iconKey = iconKey
+        self.expandable = expandable
+        self.expanded = expanded
+        self.selected = selected
+        self.inCloud = inCloud
+        self.denied = denied
+        self.otherVolume = otherVolume
+        self.note = note
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageRow {
+        return
+            try FfiUsageRow(
+                id: FfiConverterUInt32.read(from: &buf), 
+                depth: FfiConverterUInt16.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                sizeText: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                fraction: FfiConverterDouble.read(from: &buf), 
+                percentText: FfiConverterString.read(from: &buf), 
+                itemsText: FfiConverterString.read(from: &buf), 
+                modifiedText: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFfiRowKind.read(from: &buf), 
+                ext: FfiConverterString.read(from: &buf), 
+                iconKey: FfiConverterString.read(from: &buf), 
+                expandable: FfiConverterBool.read(from: &buf), 
+                expanded: FfiConverterBool.read(from: &buf), 
+                selected: FfiConverterBool.read(from: &buf), 
+                inCloud: FfiConverterBool.read(from: &buf), 
+                denied: FfiConverterBool.read(from: &buf), 
+                otherVolume: FfiConverterBool.read(from: &buf), 
+                note: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageRow, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterUInt16.write(value.depth, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.sizeText, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterDouble.write(value.fraction, into: &buf)
+        FfiConverterString.write(value.percentText, into: &buf)
+        FfiConverterString.write(value.itemsText, into: &buf)
+        FfiConverterString.write(value.modifiedText, into: &buf)
+        FfiConverterTypeFfiRowKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.ext, into: &buf)
+        FfiConverterString.write(value.iconKey, into: &buf)
+        FfiConverterBool.write(value.expandable, into: &buf)
+        FfiConverterBool.write(value.expanded, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+        FfiConverterBool.write(value.inCloud, into: &buf)
+        FfiConverterBool.write(value.denied, into: &buf)
+        FfiConverterBool.write(value.otherVolume, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageRow_lift(_ buf: RustBuffer) throws -> FfiUsageRow {
+    return try FfiConverterTypeFfiUsageRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageRow_lower(_ value: FfiUsageRow) -> RustBuffer {
+    return FfiConverterTypeFfiUsageRow.lower(value)
+}
+
+
+/**
+ * The header and status line.
+ */
+public struct FfiUsageSummary: Equatable, Hashable {
+    public var title: String
+    public var path: String
+    public var state: FfiUsageState
+    public var sizeText: String
+    public var itemsText: String
+    public var mode: FfiUsageSizeMode
+    public var detail: String
+    public var progressText: String
+    public var current: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, path: String, state: FfiUsageState, sizeText: String, itemsText: String, mode: FfiUsageSizeMode, detail: String, progressText: String, current: String) {
+        self.title = title
+        self.path = path
+        self.state = state
+        self.sizeText = sizeText
+        self.itemsText = itemsText
+        self.mode = mode
+        self.detail = detail
+        self.progressText = progressText
+        self.current = current
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageSummary {
+        return
+            try FfiUsageSummary(
+                title: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                state: FfiConverterTypeFfiUsageState.read(from: &buf), 
+                sizeText: FfiConverterString.read(from: &buf), 
+                itemsText: FfiConverterString.read(from: &buf), 
+                mode: FfiConverterTypeFfiUsageSizeMode.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                progressText: FfiConverterString.read(from: &buf), 
+                current: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageSummary, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterTypeFfiUsageState.write(value.state, into: &buf)
+        FfiConverterString.write(value.sizeText, into: &buf)
+        FfiConverterString.write(value.itemsText, into: &buf)
+        FfiConverterTypeFfiUsageSizeMode.write(value.mode, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.progressText, into: &buf)
+        FfiConverterString.write(value.current, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageSummary_lift(_ buf: RustBuffer) throws -> FfiUsageSummary {
+    return try FfiConverterTypeFfiUsageSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageSummary_lower(_ value: FfiUsageSummary) -> RustBuffer {
+    return FfiConverterTypeFfiUsageSummary.lower(value)
+}
+
+
+/**
+ * One treemap rectangle, in view points (origin top-left).
+ */
+public struct FfiUsageTile: Equatable, Hashable {
+    public var id: UInt32
+    public var x: Double
+    public var y: Double
+    public var w: Double
+    public var h: Double
+    public var depth: UInt16
+    public var leaf: Bool
+    /**
+     * 1…12: the top types; 0 other files; 250 iCloud; 251 a folder too
+     * small to split; 255 a folder frame.
+     */
+    public var color: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt32, x: Double, y: Double, w: Double, h: Double, depth: UInt16, leaf: Bool, 
+        /**
+         * 1…12: the top types; 0 other files; 250 iCloud; 251 a folder too
+         * small to split; 255 a folder frame.
+         */color: UInt8) {
+        self.id = id
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.depth = depth
+        self.leaf = leaf
+        self.color = color
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageTile: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageTile: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageTile {
+        return
+            try FfiUsageTile(
+                id: FfiConverterUInt32.read(from: &buf), 
+                x: FfiConverterDouble.read(from: &buf), 
+                y: FfiConverterDouble.read(from: &buf), 
+                w: FfiConverterDouble.read(from: &buf), 
+                h: FfiConverterDouble.read(from: &buf), 
+                depth: FfiConverterUInt16.read(from: &buf), 
+                leaf: FfiConverterBool.read(from: &buf), 
+                color: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageTile, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.id, into: &buf)
+        FfiConverterDouble.write(value.x, into: &buf)
+        FfiConverterDouble.write(value.y, into: &buf)
+        FfiConverterDouble.write(value.w, into: &buf)
+        FfiConverterDouble.write(value.h, into: &buf)
+        FfiConverterUInt16.write(value.depth, into: &buf)
+        FfiConverterBool.write(value.leaf, into: &buf)
+        FfiConverterUInt8.write(value.color, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageTile_lift(_ buf: RustBuffer) throws -> FfiUsageTile {
+    return try FfiConverterTypeFfiUsageTile.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageTile_lower(_ value: FfiUsageTile) -> RustBuffer {
+    return FfiConverterTypeFfiUsageTile.lower(value)
+}
+
+
+/**
+ * One line of the breakdown by type.
+ */
+public struct FfiUsageTypeRow: Equatable, Hashable {
+    public var name: String
+    public var ext: String
+    public var kindText: String
+    public var sizeText: String
+    public var size: UInt64
+    public var countText: String
+    public var fraction: Double
+    public var slot: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, ext: String, kindText: String, sizeText: String, size: UInt64, countText: String, fraction: Double, slot: UInt8) {
+        self.name = name
+        self.ext = ext
+        self.kindText = kindText
+        self.sizeText = sizeText
+        self.size = size
+        self.countText = countText
+        self.fraction = fraction
+        self.slot = slot
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiUsageTypeRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageTypeRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageTypeRow {
+        return
+            try FfiUsageTypeRow(
+                name: FfiConverterString.read(from: &buf), 
+                ext: FfiConverterString.read(from: &buf), 
+                kindText: FfiConverterString.read(from: &buf), 
+                sizeText: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                countText: FfiConverterString.read(from: &buf), 
+                fraction: FfiConverterDouble.read(from: &buf), 
+                slot: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiUsageTypeRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.ext, into: &buf)
+        FfiConverterString.write(value.kindText, into: &buf)
+        FfiConverterString.write(value.sizeText, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterString.write(value.countText, into: &buf)
+        FfiConverterDouble.write(value.fraction, into: &buf)
+        FfiConverterUInt8.write(value.slot, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageTypeRow_lift(_ buf: RustBuffer) throws -> FfiUsageTypeRow {
+    return try FfiConverterTypeFfiUsageTypeRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageTypeRow_lower(_ value: FfiUsageTypeRow) -> RustBuffer {
+    return FfiConverterTypeFfiUsageTypeRow.lower(value)
 }
 
 
@@ -12431,6 +13752,11 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case showDriveInfo(path: String
     )
+    /**
+     * Disk usage (M3): open the usage view for `path`.
+     */
+    case showDiskUsage(path: String
+    )
     case askFavouriteName(path: String, name: String
     )
     case editTags(paths: [String]
@@ -12565,22 +13891,25 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 35: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 36: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 36: return .showDiskUsage(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 37: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 37: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 38: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 38: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 39: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 39: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 40: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        case 40: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 41: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 41: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 42: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -12772,29 +14101,34 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDiskUsage(path):
             writeInt(&buf, Int32(36))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(37))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(37))
+            writeInt(&buf, Int32(38))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(38))
-            FfiConverterUInt64.write(window, into: &buf)
-            
-        
-        case let .closeWindow(window):
             writeInt(&buf, Int32(39))
             FfiConverterUInt64.write(window, into: &buf)
             
         
-        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+        case let .closeWindow(window):
             writeInt(&buf, Int32(40))
+            FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(41))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(question, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -12803,7 +14137,7 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .sourceMissing(op,text):
-            writeInt(&buf, Int32(41))
+            writeInt(&buf, Int32(42))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
@@ -13463,6 +14797,354 @@ public func FfiConverterTypeFfiTokenClass_lift(_ buf: RustBuffer) throws -> FfiT
 #endif
 public func FfiConverterTypeFfiTokenClass_lower(_ value: FfiTokenClass) -> RustBuffer {
     return FfiConverterTypeFfiTokenClass.lower(value)
+}
+
+
+
+/**
+ * What changed in a usage session.
+ */
+
+public enum FfiUsageChange: Equatable, Hashable {
+    
+    case started
+    case finished
+    case treeChanged
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiUsageChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageChange: FfiConverterRustBuffer {
+    typealias SwiftType = FfiUsageChange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageChange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .started
+        
+        case 2: return .finished
+        
+        case 3: return .treeChanged
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiUsageChange, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .started:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .finished:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .treeChanged:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageChange_lift(_ buf: RustBuffer) throws -> FfiUsageChange {
+    return try FfiConverterTypeFfiUsageChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageChange_lower(_ value: FfiUsageChange) -> RustBuffer {
+    return FfiConverterTypeFfiUsageChange.lower(value)
+}
+
+
+
+/**
+ * A key in the tree list.
+ */
+
+public enum FfiUsageMove: Equatable, Hashable {
+    
+    case up
+    case down
+    case home
+    case end
+    case pageUp(rows: UInt32
+    )
+    case pageDown(rows: UInt32
+    )
+    case left
+    case right
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiUsageMove: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageMove: FfiConverterRustBuffer {
+    typealias SwiftType = FfiUsageMove
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageMove {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .up
+        
+        case 2: return .down
+        
+        case 3: return .home
+        
+        case 4: return .end
+        
+        case 5: return .pageUp(rows: try FfiConverterUInt32.read(from: &buf)
+        )
+        
+        case 6: return .pageDown(rows: try FfiConverterUInt32.read(from: &buf)
+        )
+        
+        case 7: return .left
+        
+        case 8: return .right
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiUsageMove, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .up:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .down:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .home:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .end:
+            writeInt(&buf, Int32(4))
+        
+        
+        case let .pageUp(rows):
+            writeInt(&buf, Int32(5))
+            FfiConverterUInt32.write(rows, into: &buf)
+            
+        
+        case let .pageDown(rows):
+            writeInt(&buf, Int32(6))
+            FfiConverterUInt32.write(rows, into: &buf)
+            
+        
+        case .left:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .right:
+            writeInt(&buf, Int32(8))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageMove_lift(_ buf: RustBuffer) throws -> FfiUsageMove {
+    return try FfiConverterTypeFfiUsageMove.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageMove_lower(_ value: FfiUsageMove) -> RustBuffer {
+    return FfiConverterTypeFfiUsageMove.lower(value)
+}
+
+
+
+/**
+ * Size on disk or logical size.
+ */
+
+public enum FfiUsageSizeMode: Equatable, Hashable {
+    
+    case onDisk
+    case logical
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiUsageSizeMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageSizeMode: FfiConverterRustBuffer {
+    typealias SwiftType = FfiUsageSizeMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageSizeMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .onDisk
+        
+        case 2: return .logical
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiUsageSizeMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .onDisk:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .logical:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageSizeMode_lift(_ buf: RustBuffer) throws -> FfiUsageSizeMode {
+    return try FfiConverterTypeFfiUsageSizeMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageSizeMode_lower(_ value: FfiUsageSizeMode) -> RustBuffer {
+    return FfiConverterTypeFfiUsageSizeMode.lower(value)
+}
+
+
+
+/**
+ * Where a scan is.
+ */
+
+public enum FfiUsageState: Equatable, Hashable {
+    
+    case scanning
+    case done
+    case cancelled
+    case failed(message: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiUsageState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiUsageState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiUsageState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiUsageState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .scanning
+        
+        case 2: return .done
+        
+        case 3: return .cancelled
+        
+        case 4: return .failed(message: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiUsageState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .scanning:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .cancelled:
+            writeInt(&buf, Int32(3))
+        
+        
+        case let .failed(message):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(message, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageState_lift(_ buf: RustBuffer) throws -> FfiUsageState {
+    return try FfiConverterTypeFfiUsageState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiUsageState_lower(_ value: FfiUsageState) -> RustBuffer {
+    return FfiConverterTypeFfiUsageState.lower(value)
 }
 
 
@@ -14222,6 +15904,30 @@ fileprivate struct FfiConverterOptionTypeFfiTextPreview: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiUsageNodeInfo: FfiConverterRustBuffer {
+    typealias SwiftType = FfiUsageNodeInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiUsageNodeInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiUsageNodeInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiVideoInfo: FfiConverterRustBuffer {
     typealias SwiftType = FfiVideoInfo?
 
@@ -14868,6 +16574,106 @@ fileprivate struct FfiConverterSequenceTypeFfiTextLine: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiUsageLabel: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUsageLabel]
+
+    public static func write(_ value: [FfiUsageLabel], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiUsageLabel.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiUsageLabel] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiUsageLabel]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiUsageLabel.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiUsageRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUsageRow]
+
+    public static func write(_ value: [FfiUsageRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiUsageRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiUsageRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiUsageRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiUsageRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiUsageTile: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUsageTile]
+
+    public static func write(_ value: [FfiUsageTile], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiUsageTile.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiUsageTile] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiUsageTile]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiUsageTile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiUsageTypeRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUsageTypeRow]
+
+    public static func write(_ value: [FfiUsageTypeRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiUsageTypeRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiUsageTypeRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiUsageTypeRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiUsageTypeRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiVolume: FfiConverterRustBuffer {
     typealias SwiftType = [FfiVolume]
 
@@ -15355,6 +17161,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspaces() != 24606) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_usage_scan() != 14012) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_usage_trash() != 35409) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffieventsink_on_event() != 3498) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15520,6 +17332,87 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffipreviewer_summarize() != 5203) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageobserver_progress() != 58754) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageobserver_changed() != 39312) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_cancel() != 31578) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_find() != 22182) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_hit() != 5733) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_info() != 56737) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_layout() != 61789) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_legend() != 42347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_move_selection() != 22643) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_paths() != 64706) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_refresh() != 17033) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_rescan() != 38426) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_root_path() != 60369) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_row_count() != 32298) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_row_of() != 41978) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_rows() != 40427) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_select() != 51240) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_selected() != 23396) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_set_expanded() != 38715) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_set_mode() != 28967) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_set_zoom() != 62541) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_summary() != 40482) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_sync_paths() != 30252) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_types() != 48213) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_zoom() != 48570) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_zoom_out() != 36453) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiusageview_zoom_path() != 5316) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_constructor_ffiengine_new() != 3887) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -15534,6 +17427,7 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitFfiEventSink()
+    uniffiCallbackInitFfiUsageObserver()
     return InitializationResult.ok
 }()
 

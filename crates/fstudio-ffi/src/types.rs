@@ -623,6 +623,10 @@ pub enum FfiShellRequest {
     ShowDriveInfo {
         path: String,
     },
+    /// Disk usage (M3): open the usage view for `path`.
+    ShowDiskUsage {
+        path: String,
+    },
     AskFavouriteName {
         path: String,
         name: String,
@@ -730,6 +734,7 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::ToggleInspector => Self::ToggleInspector,
             S::Eject { path } => Self::Eject { path },
             S::ShowDriveInfo { path } => Self::ShowDriveInfo { path },
+            S::ShowDiskUsage { path } => Self::ShowDiskUsage { path },
             S::AskFavouriteName { path, name } => Self::AskFavouriteName { path, name },
             S::EditTags { paths } => Self::EditTags { paths },
             S::OpenWindow { window } => Self::OpenWindow { window: window.0 },

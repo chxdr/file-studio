@@ -50,6 +50,7 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             "preview.quick_look",
             "preview.get_info",
             "file.folder_size",
+            "nav.disk_usage",
             SEP,
         ]);
         v
@@ -146,6 +147,7 @@ fn spec(kind: MenuKind) -> Vec<&'static str> {
             "sidebar.rename",
             "drive.eject",
             "drive.info",
+            "nav.disk_usage",
             // Shown only for a disk with interrupted transfers (§6.1).
             "transfer.resume",
             "transfer.resume_all",
@@ -473,6 +475,13 @@ fn sidebar_items_differ_for_favourites_and_volumes() {
     assert_eq!(
         out.shell,
         Some(ShellRequest::ShowDriveInfo { path: "/".into() })
+    );
+    // Show Disk Usage on a volume opens the usage view for it.
+    let usage = find(&vol, "nav.disk_usage").unwrap();
+    let out = h.engine.perform(usage.invocation, Via::Menu).unwrap();
+    assert_eq!(
+        out.shell,
+        Some(ShellRequest::ShowDiskUsage { path: "/".into() })
     );
 }
 

@@ -21,6 +21,7 @@ fstudio-keymap = { path = "crates/fstudio-keymap" }
 fstudio-rename = { path = "crates/fstudio-rename" }
 fstudio-search = { path = "crates/fstudio-search" }
 fstudio-preview = { path = "crates/fstudio-preview" }
+fstudio-usage = { path = "crates/fstudio-usage" }
 fstudio-core = { path = "crates/fstudio-core" }
 thiserror = "2"
 rusqlite = { version = "0.41", features = ["bundled"] }

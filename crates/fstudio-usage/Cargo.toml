@@ -1,0 +1,19 @@
+[package]
+name = "fstudio-usage"
+description = "Disk usage: a fast parallel size scanner, the usage tree, squarified treemap layout and a breakdown by file type"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fstudio-fs.workspace = true
+libc.workspace = true
+rayon.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

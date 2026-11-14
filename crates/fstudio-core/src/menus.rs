@@ -391,6 +391,7 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
                 "preview.quick_look",
                 "preview.get_info",
                 "file.folder_size",
+                "nav.disk_usage",
                 SEPARATOR,
             ]);
             v.extend(FILE_TAIL);
@@ -469,6 +470,7 @@ pub fn default_entries(kind: MenuKind) -> Vec<&'static str> {
             "sidebar.rename",
             "drive.eject",
             "drive.info",
+            "nav.disk_usage",
             "transfer.resume",
             "transfer.resume_all",
         ]),
@@ -937,6 +939,11 @@ impl Engine {
             MenuKind::Folder | MenuKind::Package if id.starts_with("favourites.") => {
                 first.map(CommandArg::Path)
             }
+            MenuKind::Folder | MenuKind::Package
+                if id == "nav.disk_usage" || id == "file.folder_size" =>
+            {
+                first.map(CommandArg::Path)
+            }
             MenuKind::Tab if id.starts_with("path.") || id.starts_with("favourites.") => ctx
                 .tab
                 .as_ref()
@@ -967,6 +974,10 @@ impl Engine {
             }
             "drive.eject" => shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.removable),
             "drive.info" => shown(ctx.sidebar == Some(SidebarItemKind::Volume)),
+            // Disk usage (M3): folders, and volumes in the sidebar.
+            "nav.disk_usage" => shown(
+                ctx.kind != MenuKind::SidebarItem || ctx.sidebar == Some(SidebarItemKind::Volume),
+            ),
             "transfer.resume" => {
                 shown(ctx.sidebar == Some(SidebarItemKind::Volume) && ctx.transfers > 0)
             }
@@ -1122,6 +1133,9 @@ fn explicit_ok(id: &str) -> bool {
             | "drive.eject"
             | "drive.info"
     ) || id.starts_with("path.copy_")
+        // Disk usage (M3) takes the menu's path.
+        || id == "nav.disk_usage"
+        || id == "file.folder_size"
 }
 
 /// Selects exactly these items in the tab, if they aren't already.
