@@ -61,6 +61,14 @@ pub(crate) fn undo_text(req: &OpRequest, label: &str) -> (String, Option<PathBuf
             format!("Renamed “{new_name}” back to {}", quoted(path)),
             parent(path),
         ),
+        // ── batch rename (M3) ──
+        OpRequest::RenameMany { pairs } => (
+            match pairs.as_slice() {
+                [(path, new_name)] => format!("Renamed “{new_name}” back to {}", quoted(path)),
+                _ => format!("Renamed {} items back", pairs.len()),
+            },
+            pairs.first().and_then(|(p, _)| parent(p)),
+        ),
         OpRequest::Copy { sources, dest_dir } => (
             match sources.as_slice() {
                 [one] => format!("Moved the copy of {} to the Trash", quoted(one)),
@@ -93,6 +101,7 @@ pub(crate) fn redo_text(req: &OpRequest, label: &str) -> (String, Option<PathBuf
             paths.first().and_then(|p| parent(p))
         }
         OpRequest::Rename { path, .. } => parent(path),
+        OpRequest::RenameMany { pairs } => pairs.first().and_then(|(p, _)| parent(p)),
         OpRequest::NewFolder { parent: dir, .. } | OpRequest::NewFile { parent: dir, .. } => {
             Some(dir.clone())
         }
@@ -341,6 +350,14 @@ fn words(req: &OpRequest) -> Option<Words> {
             "rename",
             "renamed",
             format!(" to “{new_name}”"),
+        ),
+        // ── batch rename (M3) ──
+        OpRequest::RenameMany { pairs } => w(
+            pairs.iter().map(|(p, _)| p.clone()).collect(),
+            "Renamed",
+            "rename",
+            "renamed",
+            String::new(),
         ),
         OpRequest::NewFolder { parent, name } | OpRequest::NewFile { parent, name } => w(
             vec![parent.join(name)],

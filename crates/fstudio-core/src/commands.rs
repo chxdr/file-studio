@@ -120,7 +120,6 @@ pub enum Handling {
 pub const LATER_COMMANDS: &[&str] = &[
     "file.compress",
     "file.folder_size",
-    "file.batch_rename",
     "file.make_alias",
     "search.global",
     "nav.connect_server",
@@ -1425,6 +1424,15 @@ impl Engine {
                     return Err(CoreError::NotAvailable("nothing is selected".into()));
                 }
                 Outcome::shell(ShellRequest::BeginRename { tab: tid, name }).with_tab(tid)
+            }
+            // ── batch rename (M3) ──
+            "file.batch_rename" => {
+                let paths = Self::need_selection(&t)?;
+                Outcome::shell(ShellRequest::BatchRename {
+                    tab: tid,
+                    paths: strings(&paths),
+                })
+                .with_tab(tid)
             }
             "file.rename_dialog" => {
                 Self::need_selection(&t)?;

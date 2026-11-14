@@ -556,6 +556,11 @@ pub enum FfiShellRequest {
         tab: u64,
         paths: Vec<String>,
     },
+    // ── batch rename (M3) ──
+    BatchRename {
+        tab: u64,
+        paths: Vec<String>,
+    },
     OfferCreateFolder {
         path: String,
         nearest_existing: String,
@@ -662,6 +667,7 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::WriteFilePasteboard { paths } => Self::WriteFilePasteboard { paths },
             S::BeginRename { tab, name } => Self::BeginRename { tab: tab.0, name },
             S::RenameDialog { tab, paths } => Self::RenameDialog { tab: tab.0, paths },
+            S::BatchRename { tab, paths } => Self::BatchRename { tab: tab.0, paths },
             S::OfferCreateFolder {
                 path,
                 nearest_existing,

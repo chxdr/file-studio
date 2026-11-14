@@ -223,7 +223,7 @@ fn table() -> Vec<B> {
         c("file.compress", "Compress", File, "Compress the selection into an archive"),
         c("file.open_with", "Open With…", File, "Choose an app to open the selection"),
         c("file.folder_size", "Get Folder Size", File, "Work out how much space a folder uses"),
-        c("file.batch_rename", "Batch Rename…", File, "Rename several items at once with a pattern"),
+        c("file.batch_rename", "Batch Rename…", File, "Rename several items at once with a pattern").s("⌃⌘R"),
         c("tags.toggle", "Toggle Tag", File, "Add or remove a Finder tag on the selection").arg(ArgKind::Text).nomenu().nohint(),
         c("tags.edit", "Tags…", File, "Edit the Finder tags of the selection"),
         c("file.open_in_editor", "Open in Editor", File, "Open the selection in your editor").s("⌘E"),

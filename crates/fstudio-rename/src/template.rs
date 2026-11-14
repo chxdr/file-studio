@@ -18,6 +18,20 @@
 use crate::date::DateParts;
 use crate::item::{Exif, ItemInfo};
 
+/// The tokens, for the sheet's "Insert Token" menu: `(token, description)`.
+pub const TOKENS: &[(&str, &str)] = &[
+    ("{name}", "Name so far, without extension"),
+    ("{orig}", "Original name, without extension"),
+    ("{ext}", "Original extension"),
+    ("{parent}", "Enclosing folder's name"),
+    ("{n:3}", "Counter, 3 digits (padding:start:step)"),
+    ("{date:%Y-%m-%d}", "Date modified"),
+    ("{created:%Y-%m-%d}", "Date created"),
+    ("{exif.date:%Y-%m-%d}", "Date taken (EXIF)"),
+    ("{exif.camera}", "Camera (EXIF)"),
+    ("{exif.lens}", "Lens (EXIF)"),
+];
+
 /// Which file date a date token reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DateSource {
@@ -364,6 +378,13 @@ mod tests {
         assert!(n.placeholder);
         it.exif = Exif::NotLoaded;
         assert!(render("{exif.lens}", &it, 0).1.exif_pending);
+    }
+
+    #[test]
+    fn every_listed_token_parses() {
+        for (t, _) in TOKENS {
+            Template::parse(t).unwrap();
+        }
     }
 
     #[test]

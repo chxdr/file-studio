@@ -74,6 +74,15 @@ pub enum OpRequest {
         /// Its new name (no `/`).
         new_name: String,
     },
+    /// Batch rename: rename each `(path, new_name)` in its own folder, as one
+    /// op with one undo entry. Swaps and cycles (a→b, b→a) are handled with
+    /// hidden temporary names that never outlive the op, and case-only
+    /// changes work on case-insensitive volumes. Every rename is exclusive;
+    /// a taken name fails that item only. See `batch_rename.rs`.
+    RenameMany {
+        /// `(item, its new name)`; the new name has no `/`.
+        pairs: Vec<(PathBuf, String)>,
+    },
     /// Copy each path next to itself as "name copy", "name copy 2"… (as Finder does).
     Duplicate {
         /// The items to duplicate.
@@ -116,7 +125,7 @@ impl OpRequest {
             OpRequest::DeleteImmediately { .. } => OpKind::DeleteImmediately,
             OpRequest::NewFolder { .. } => OpKind::NewFolder,
             OpRequest::NewFile { .. } => OpKind::NewFile,
-            OpRequest::Rename { .. } => OpKind::Rename,
+            OpRequest::Rename { .. } | OpRequest::RenameMany { .. } => OpKind::Rename,
             OpRequest::Duplicate { .. } => OpKind::Duplicate,
             OpRequest::MoveTo { .. } => OpKind::MoveTo,
             OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => OpKind::Compound,

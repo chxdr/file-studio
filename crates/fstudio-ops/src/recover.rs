@@ -15,6 +15,9 @@ use crate::types::{OpKind, Result};
 
 /// Recovers every unfinished item of `op` and saves the result.
 pub fn recover(journal: &Journal, op: &OpRow) -> Result<()> {
+    if matches!(op.request, crate::types::OpRequest::RenameMany { .. }) {
+        return crate::batch_rename::recover(journal, op);
+    }
     let kind = op.request.kind();
     for mut it in journal.load_items(op.id)? {
         if it.state.is_terminal() {

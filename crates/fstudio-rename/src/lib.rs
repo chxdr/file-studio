@@ -38,4 +38,4 @@ pub use pipeline::{
 };
 pub use preset::{Preset, Presets};
 pub use preview::{Entry, Folder, Preview, Row, Status, Summary, preview};
-pub use template::{RenderNotes, Template};
+pub use template::{RenderNotes, TOKENS, Template};

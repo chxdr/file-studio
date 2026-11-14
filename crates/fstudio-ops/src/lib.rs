@@ -30,6 +30,7 @@
 //! q.wait(id, std::time::Duration::from_secs(60));
 //! ```
 
+mod batch_rename;
 mod engine;
 mod journal;
 mod meta;

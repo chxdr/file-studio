@@ -50,6 +50,8 @@ mod miller;
 mod outcome;
 mod probe;
 mod protect;
+// ── batch rename (M3) ──
+mod rename;
 mod settings;
 mod shared;
 mod sys;
@@ -103,6 +105,13 @@ pub use workspace::{
     WorkspaceState, WorkspaceSummary,
 };
 pub use workspaces::{NewWorkspace, WORKSPACE_ICONS};
+
+// ── batch rename (M3) ──
+pub use fstudio_rename::{
+    CaseKind, ExtChange, Pipeline, PipelineStep, Position, Preset, Step, TOKENS as RENAME_TOKENS,
+    Target, TrimMode,
+};
+pub use rename::{RenameRow, RenameRowStatus, RenameSession, RenameSummary, default_pipeline};
 
 // The types from other crates that appear on this crate's surface.
 pub use fstudio_keymap::{

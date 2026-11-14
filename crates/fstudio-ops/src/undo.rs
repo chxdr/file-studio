@@ -118,6 +118,9 @@ fn replaced(items: &[ItemRow]) -> Result<Vec<(PathBuf, PathBuf)>, String> {
 
 /// The requests that undo `op`, in order. `Err` explains why it can't be undone.
 pub fn inverse(op: &OpRow, items: &[ItemRow]) -> Result<Vec<OpRequest>, String> {
+    if matches!(op.request, OpRequest::RenameMany { .. }) {
+        return crate::batch_rename::inverse(items);
+    }
     let mut out = Vec::new();
     match op.request.kind() {
         OpKind::Copy | OpKind::Duplicate => {

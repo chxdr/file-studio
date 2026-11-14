@@ -130,6 +130,10 @@ fn title_for(req: &OpRequest, origin: Origin) -> String {
             format!("Creating {}", quoted(name))
         }
         OpRequest::Rename { new_name, .. } => format!("Renaming {w} to {}", quoted(new_name)),
+        OpRequest::RenameMany { pairs } => match pairs.as_slice() {
+            [(_, one)] => format!("Renaming {w} to {}", quoted(one)),
+            _ => format!("Renaming {w}"),
+        },
         OpRequest::Duplicate { .. } => format!("Duplicating {w}"),
         OpRequest::MoveTo { .. } => format!("Moving {w} back"),
         OpRequest::Compound { label, .. } => label.clone(),

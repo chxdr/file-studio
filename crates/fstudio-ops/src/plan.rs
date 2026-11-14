@@ -37,6 +37,16 @@ pub fn targets(req: &OpRequest) -> Vec<(PathBuf, Option<PathBuf>, Option<String>
             path.parent().map(Path::to_path_buf),
             Some(new_name.clone()),
         )],
+        OpRequest::RenameMany { pairs } => pairs
+            .iter()
+            .map(|(p, n)| {
+                (
+                    p.clone(),
+                    p.parent().map(Path::to_path_buf),
+                    Some(n.clone()),
+                )
+            })
+            .collect(),
         OpRequest::Compound { .. } | OpRequest::UndoOf { .. } => Vec::new(),
         OpRequest::MoveTo { pairs } => pairs
             .iter()
