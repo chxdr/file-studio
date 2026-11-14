@@ -240,6 +240,27 @@ fn home_relative(p: &Path, home: &Path) -> String {
     }
 }
 
+/// The folder a result is in, as rows show it: home-relative below home
+/// (`~/Documents/Work`), else below the search root's name
+/// (`fixture/Work/2026`), else the full path (This Mac).
+fn location_text(root: &Path, rel: &Path, home: &Path) -> String {
+    let parent = rel
+        .parent()
+        .map(|p| root.join(p))
+        .unwrap_or(root.to_path_buf());
+    if parent.starts_with(home) || root == Path::new("/") {
+        return home_relative(&parent, home);
+    }
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.to_string_lossy().into_owned());
+    match rel.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(p) => format!("{name}/{}", p.to_string_lossy()),
+        None => name,
+    }
+}
+
 // ─────────────── the tab side ───────────────
 
 impl Tab {
@@ -300,7 +321,7 @@ impl Tab {
                 query: q,
                 folder: folder.clone(),
                 root: root.clone(),
-                handle,
+                handle: handle.clone(),
                 summary: None,
                 stopped: false,
                 denied: Vec::new(),
@@ -317,7 +338,7 @@ impl Tab {
             let tab = self.arc();
             std::thread::Builder::new()
                 .name("fstudio-search-tab".into())
-                .spawn(move || tab.search_job(gen_, root, rx))
+                .spawn(move || tab.search_job(gen_, root, handle, rx))
                 .map_err(|e| CoreError::NotAvailable(e.to_string()))?;
         }
         {
@@ -483,7 +504,6 @@ impl Tab {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| r.name.clone());
-            let parent = rel.parent().map(|p| root.join(p)).unwrap_or(root.clone());
             if let Some(mut e) = listing.inner.entry(r.index as usize).cloned() {
                 e.name = leaf.clone();
                 r.icon_key = listing::icon_key(&e);
@@ -494,7 +514,7 @@ impl Tab {
                 r.is_hidden = e.is_hidden();
             }
             r.display_name = leaf;
-            r.location_text = home_relative(&parent, &home);
+            r.location_text = location_text(&root, rel, &home);
         }
     }
 
@@ -504,6 +524,7 @@ impl Tab {
         self: Arc<Self>,
         gen_: u64,
         root: PathBuf,
+        handle: SearchHandle,
         rx: crossbeam_channel::Receiver<SearchEvent>,
     ) {
         let opts = self.st.lock().view.options("");
@@ -518,9 +539,7 @@ impl Tab {
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return,
             };
             if !self.is_current(gen_) {
-                if let Some(s) = self.st.lock().search.as_ref() {
-                    s.cancel();
-                }
+                handle.cancel(); // this job's own search, never a newer one
                 return;
             }
             match ev {
@@ -701,6 +720,18 @@ mod tests {
         let mut v = ["zeta/a10.txt", "a/b2.txt", "m/a2.txt", "a2.txt"];
         v.sort_by(|a, b| c.compare(&k(a), &k(b)));
         assert_eq!(v, ["a2.txt", "m/a2.txt", "zeta/a10.txt", "a/b2.txt"]);
+    }
+
+    #[test]
+    fn location_texts() {
+        let h = Path::new("/Users/me");
+        let t = |root: &str, rel: &str| location_text(Path::new(root), Path::new(rel), h);
+        assert_eq!(t("/Users/me/Docs", "a/b.txt"), "~/Docs/a");
+        assert_eq!(t("/Users/me", "b.txt"), "~");
+        assert_eq!(t("/tmp/fixture", "Work/2026/x.txt"), "fixture/Work/2026");
+        assert_eq!(t("/tmp/fixture", "x.txt"), "fixture");
+        assert_eq!(t("/", "Users/me/x"), "~");
+        assert_eq!(t("/", "Library/x"), "/Library");
     }
 
     #[test]

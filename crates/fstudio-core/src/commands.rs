@@ -761,7 +761,9 @@ impl Engine {
     /// follows the item under its new name.
     pub fn rename_item(&self, tab: TabId, old_name: &str, new_name: &str) -> Result<Outcome> {
         let t = self.target(Some(tab))?;
-        if old_name == new_name {
+        // (A search tab's row name is a path below the root: compare its own name.)
+        let own = std::path::Path::new(old_name).file_name();
+        if old_name == new_name || own == Some(std::ffi::OsStr::new(new_name)) {
             return Ok(Outcome::none().with_tab(tab));
         }
         let path = t.rename_target(old_name, new_name)?;

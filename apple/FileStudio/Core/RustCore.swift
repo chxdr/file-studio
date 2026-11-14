@@ -149,6 +149,7 @@ extension ShellRequest {
         case .manageWorkspaces: self = .manageWorkspaces
         case .focusAddressBar(let p, let t): self = .focusAddressBar(pane: p, text: t)
         case .focusFilter: self = .focusFilter
+        case .showSearch(let text): self = .showSearch(text: text)
         case .focusList: self = .focusList
         case .textField(let c): self = .textField(command: c)
         case .showPalette: self = .showPalette
@@ -224,6 +225,13 @@ func unpackRows(_ data: Data) -> [Row] {
                 out[i].extText = str()
             }
         }
+        // M3 search additions: the second trailer (name to draw, folder).
+        if at < b.count {
+            for i in 0..<n {
+                out[i].displayName = str()
+                out[i].locationText = str()
+            }
+        }
         return out
     }
 }
@@ -244,6 +252,7 @@ extension Row {
                   isHidden: r.isHidden, isDataless: r.isDataless, isPackage: r.isPackage, isSymlink: r.isSymlink,
                   isSelected: r.isSelected, isCursor: r.isCursor, isCutPending: r.isCutPending)
         createdNs = r.createdNs; createdText = r.createdText; extText = r.extText
+        displayName = r.displayName; locationText = r.locationText
     }
 }
 

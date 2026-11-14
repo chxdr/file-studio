@@ -210,6 +210,8 @@ public enum ShellRequest: Equatable, Sendable {
     case manageWorkspaces
     case focusAddressBar(pane: PaneID, text: String)
     case focusFilter
+    /// M3: show the search bar for the outcome's tab, starting with `text`.
+    case showSearch(text: String)
     case focusList
     /// A text-editing command for the focused field (`addressbar.complete_next`…).
     case textField(command: String)
@@ -271,6 +273,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .manageWorkspaces: "manageWorkspaces"
         case .focusAddressBar: "focusAddressBar"
         case .focusFilter: "focusFilter"
+        case .showSearch: "showSearch"
         case .focusList: "focusList"
         case .textField: "textField"
         case .showPalette: "showPalette"
@@ -359,6 +362,14 @@ public struct Row: Equatable, Sendable, Identifiable {
     public var createdText = ""
     /// The Extension column, as on disk; empty for folders.
     public var extText = ""
+    // MARK: M3 search additions
+    /// The name to draw. In a search tab `name` is the path below the search
+    /// root (the row's identity) and this is the item's own name.
+    public var displayName = ""
+    /// The folder the item is in (`~/Documents/Work`), in a search tab.
+    public var locationText = ""
+    /// What the name cell shows.
+    public var shownName: String { displayName.isEmpty ? name : displayName }
 }
 
 public enum ListingState: Equatable, Sendable { case loading, complete, error }

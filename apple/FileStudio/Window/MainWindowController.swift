@@ -313,6 +313,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
             self.window?.makeFirstResponder(self.toolbarController.filterField)
             return true
         })
+        // M3 search: open the pane's search bar.
+        handlers.append(model.registerShellHandler(for: "showSearch") { [weak self] req, ctx in
+            guard let self, ctx.window == nil || ctx.window == self.coreWindowID, let p = self.paneFor(ctx.tab),
+                  case .showSearch(let text) = req else { return false }
+            p.openSearch(text: text)
+            return true
+        })
         handlers.append(model.registerShellHandler(for: "toggleSidebar") { [weak self] _, ctx in
             guard let self, ctx.window == nil || ctx.window == self.coreWindowID else { return false }
             self.split.toggleSidebar(nil)

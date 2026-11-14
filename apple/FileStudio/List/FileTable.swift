@@ -424,7 +424,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
         rv.isCursorRow = r?.isCursor ?? false
         rv.paneActive = active
         if let r {
-            rv.summary = [r.name, r.isDataless ? "in iCloud" : nil, r.kindText, r.kind == .folder ? nil : r.sizeText,
+            rv.summary = [r.shownName, r.locationText.isEmpty ? nil : "in \(r.locationText)", r.isDataless ? "in iCloud" : nil, r.kindText, r.kind == .folder ? nil : r.sizeText,
                           r.modifiedText, r.isSelected ? "selected" : nil].compactMap { $0 }.joined(separator: ", ")
         }
     }
@@ -460,7 +460,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
             switch id {
             case .name:
                 cell.kind = .name
-                cell.configure(text: r.name, icon: icon(r), row: r, onAccent: onAccent)
+                cell.configure(text: r.shownName, icon: icon(r), row: r, onAccent: onAccent, detail: r.locationText)
             case .size:
                 cell.kind = .text(rightAligned: true)
                 cell.configure(text: r.sizeText, row: r, onAccent: onAccent)

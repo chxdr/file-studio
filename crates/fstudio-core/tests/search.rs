@@ -190,3 +190,21 @@ fn refresh_reruns_and_finds_new_items() {
             && names(&t).contains(&"pics/new report.txt".to_string())
     });
 }
+
+#[test]
+fn a_new_search_replaces_a_running_one_without_stopping_itself() {
+    let h = harness();
+    tree(&h);
+    for i in 0..200 {
+        mkdirs(&h.p(&format!("bulk/{i}")));
+        touch(&h.p(&format!("bulk/{i}/report {i}.txt")));
+    }
+    let t = h.window_at("");
+    t.search(req("report")).unwrap();
+    t.search(req("rep")).unwrap();
+    t.search(req("report b")).unwrap();
+    wait_complete(&t);
+    let st = t.search_status().unwrap();
+    assert_eq!(st.state, SearchState::Done, "{}", st.text);
+    assert_eq!(names(&t), ["docs/work/report b.md"]);
+}
