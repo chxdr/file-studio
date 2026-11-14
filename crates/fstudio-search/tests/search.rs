@@ -222,6 +222,9 @@ fn content_filter_reads_text_only() {
     assert_eq!(run(capped), set(&[]));
 }
 
+// Finder tags live in a macOS-only extended attribute; Linux's tmpfs refuses
+// it (EOPNOTSUPP), like the tag tests in fstudio-fs.
+#[cfg(target_os = "macos")]
 #[test]
 fn finder_tags_filter() {
     let d = tree();
