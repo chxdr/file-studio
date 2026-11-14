@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var volumeWatcher: VolumeWatcher?
     private var controllers: [WindowID: MainWindowController] = [:]
 
+    // File Studio as the default file viewer (Platform/FileViewer.swift).
+    func applicationWillFinishLaunching(_ note: Notification) { SystemOpen.installEarly() }
+    func application(_ app: NSApplication, open urls: [URL]) { SystemOpen.open(urls: urls) }
+
     func applicationDidFinishLaunching(_ note: Notification) {
         model = AppModel(engine: makeEngine())
         PlatformActions.install(model)
@@ -35,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ConfirmSheets.install(model)
         WorkspaceSheets.install(model)
         OverlayController.shared.install(model)
+        SystemOpen.install(model)
+        FilePanelJump.shared.install(model)
         NSApp.activate()
         #if DEBUG
         DebugAutomation.runIfRequested(model)

@@ -48,7 +48,14 @@ targets:
         # Liquid Glass icon from Icon Composer (FileStudio/Resources/*.icon).
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
-        INFOPLIST_KEY_NSAppleEventsUsageDescription: "File Studio asks Finder to show Get Info windows."
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "File Studio asks Finder to show Get Info windows, and to reveal items in Finder while File Studio is your default file viewer."
+        # Declares File Studio as a folder viewer (public.folder, rank
+        # Alternate), so Settings › General can make it the default; merged
+        # with the generated Info.plist.
+        INFOPLIST_FILE: Info-FileStudio.plist
+        # Sending Apple Events (Finder's reveal and Get Info) under the
+        # hardened runtime.
+        CODE_SIGN_ENTITLEMENTS: FileStudio.entitlements
         INFOPLIST_KEY_NSRemovableVolumesUsageDescription: "File Studio browses cards and external drives."
         INFOPLIST_KEY_NSNetworkVolumesUsageDescription: "File Studio browses network shares."
         # Rust core (F-004, Import Studio's D-024): read the UniFFI module map

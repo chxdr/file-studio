@@ -626,6 +626,10 @@ pub enum FfiShellRequest {
     EditTags {
         paths: Vec<String>,
     },
+    /// Send the Open/Save panel in front to `dir` (`panel.jump_here`).
+    JumpFilePanel {
+        dir: String,
+    },
     OpenWindow {
         window: u64,
     },
@@ -727,6 +731,7 @@ impl From<core::ShellRequest> for FfiShellRequest {
             S::ShowDriveInfo { path } => Self::ShowDriveInfo { path },
             S::AskFavouriteName { path, name } => Self::AskFavouriteName { path, name },
             S::EditTags { paths } => Self::EditTags { paths },
+            S::JumpFilePanel { dir } => Self::JumpFilePanel { dir },
             S::OpenWindow { window } => Self::OpenWindow { window: window.0 },
             S::CloseWindow { window } => Self::CloseWindow { window: window.0 },
             S::ResumePrompt {

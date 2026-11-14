@@ -696,6 +696,12 @@ impl Engine {
     /// second pane if dual-pane is the default.
     pub fn new_window(&self, path: Option<String>) -> Result<WindowId> {
         let state = self.tab_state_at(path.as_deref())?;
+        self.new_window_with(state)
+    }
+
+    /// Opens a new window whose first tab starts as `state` (an exact
+    /// location, not typed text).
+    pub(crate) fn new_window_with(&self, state: TabState) -> Result<WindowId> {
         let dual = self.settings().general.dual_pane_by_default;
         let t1 = self.make_tab(state.clone());
         let mut panes = vec![PaneRt {
@@ -801,7 +807,12 @@ impl Engine {
         self.insert_tab(pane, state, index.map(|i| i as usize))
     }
 
-    fn insert_tab(&self, pane: PaneId, state: TabState, index: Option<usize>) -> Result<Arc<Tab>> {
+    pub(crate) fn insert_tab(
+        &self,
+        pane: PaneId,
+        state: TabState,
+        index: Option<usize>,
+    ) -> Result<Arc<Tab>> {
         let tab = self.make_tab(state);
         {
             let mut m = self.model.lock();

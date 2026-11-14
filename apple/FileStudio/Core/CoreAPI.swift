@@ -248,6 +248,8 @@ public enum ShellRequest: Equatable, Sendable {
     /// A copy waits for source disks: show `text` with a Show button
     /// (the operations list).
     case sourceMissing(op: OpID, text: String)
+    /// Send the Open/Save panel in front (in another app) to `dir`.
+    case jumpFilePanel(dir: String)
 
     /// A stable name per case, for handler registration (`AppModel.handle(_:)`).
     public var kind: String {
@@ -292,6 +294,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .closeWindow: "closeWindow"
         case .resumePrompt: "resumePrompt"
         case .sourceMissing: "sourceMissing"
+        case .jumpFilePanel: "jumpFilePanel"
         }
     }
 }
@@ -1126,6 +1129,9 @@ public protocol EngineAPI: AnyObject, Sendable {
     /// Drops `sources` onto `destDir`: queues the copy or move the core decides.
     func dropFiles(sources: [String], destDir: String, mods: Mods) throws -> Outcome
     func clipboardPaths() -> [String]
+    /// Opens folders (`reveal` false) or reveals items (`reveal` true) that
+    /// another app sent (default file viewer). Stats each path.
+    func openFromSystem(paths: [String], reveal: Bool) throws -> Outcome
 
     // Context menus
     /// Applies Finder's right-click rule (`row == nil`: empty space).

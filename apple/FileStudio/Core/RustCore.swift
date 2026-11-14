@@ -168,6 +168,7 @@ extension ShellRequest {
         case .editTags(let p): self = .editTags(paths: p)
         case .openWindow(let w): self = .openWindow(w)
         case .closeWindow(let w): self = .closeWindow(w)
+        case .jumpFilePanel(let d): self = .jumpFilePanel(dir: d)
         case .resumePrompt(let op, let q, let d, let dq, let dd):
             self = .resumePrompt(op: op, question: q, detail: d, discardQuestion: dq, discardDetail: dd)
         case .sourceMissing(let op, let t): self = .sourceMissing(op: op, text: t)
@@ -967,6 +968,9 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
         try wrap { Outcome(try ffi.dropFiles(sources: sources, destDir: destDir, mods: mods.ffi)) }
     }
     func clipboardPaths() -> [String] { ffi.clipboardPaths() }
+    func openFromSystem(paths: [String], reveal: Bool) throws -> Outcome {
+        try wrap { Outcome(try ffi.openFromSystem(paths: paths, reveal: reveal)) }
+    }
 
     // Menus
     func menuTarget(tab: TabID, row: UInt32?) throws -> MenuTarget {

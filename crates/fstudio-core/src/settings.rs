@@ -35,6 +35,8 @@ pub struct Settings {
     pub menus: crate::menus::MenuSettings,
     /// Look and motion; the shell reads these (`appearance.*`).
     pub appearance: AppearanceSettings,
+    /// Default file viewer and the Open/Save panel jump (`integration.*`).
+    pub integration: crate::system_integration::IntegrationSettings,
 }
 
 /// How much the interface animates, on top of the system's Reduce Motion.

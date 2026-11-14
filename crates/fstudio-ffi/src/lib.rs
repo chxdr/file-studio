@@ -10,6 +10,7 @@
 #![allow(missing_docs)]
 
 mod settings;
+mod system_integration;
 mod types;
 
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use fstudio_core as core;
 use fstudio_core::{Engine, Tab, TabId};
 
 pub use settings::*;
+pub use system_integration::*;
 pub use types::*;
 
 uniffi::setup_scaffolding!();
