@@ -1,6 +1,6 @@
 [package]
 name = "fstudio-rename"
-description = "Batch rename (milestone 3)"
+description = "Batch rename: the step pipeline, token templates, live preview with problems, EXIF tokens and presets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,18 @@ publish.workspace = true
 
 [dependencies]
 fstudio-model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+rayon.workspace = true
+# MIT OR Apache-2.0
+regex = "1"
+# BSD-2-Clause (EXIF reading for {exif.*} tokens)
+kamadak-exif = "0.6"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
