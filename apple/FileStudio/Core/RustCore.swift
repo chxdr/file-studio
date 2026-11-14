@@ -164,6 +164,7 @@ extension ShellRequest {
         case .toggleInspector: self = .toggleInspector
         case .eject(let p): self = .eject(path: p)
         case .showDriveInfo(let p): self = .showDriveInfo(path: p)
+        case .showDiskUsage(let p): self = .showDiskUsage(path: p)
         case .askFavouriteName(let p, let n): self = .askFavouriteName(path: p, name: n)
         case .editTags(let p): self = .editTags(paths: p)
         case .openWindow(let w): self = .openWindow(w)
@@ -1128,5 +1129,20 @@ extension RustEngine: ListEngineAPI {
     }
     func sortByColumn(tab: TabID, column: ColumnID) throws -> Outcome {
         try wrap { Outcome(try ffi.sortByColumn(tab: tab, column: ColumnSpec(id: column, width: 0).ffi.id)) }
+    }
+}
+
+// MARK: - Disk usage (M3; the view lives in Usage/)
+
+extension RustEngine: UsageEngineAPI {
+    func usageScan(path: String,
+                   progress: @escaping @Sendable (UsageProgress) -> Void,
+                   changed: @escaping @Sendable (UsageChange) -> Void) throws -> UsageViewAPI {
+        let bridge = UsageObserverBridge(progress: progress, changed: changed)
+        return try wrap { RustUsageView(try ffi.usageScan(path: path, observer: bridge)) }
+    }
+
+    func usageTrash(paths: [String]) throws -> Outcome {
+        try wrap { Outcome(try ffi.usageTrash(paths: paths)) }
     }
 }

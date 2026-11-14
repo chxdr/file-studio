@@ -235,6 +235,8 @@ public enum ShellRequest: Equatable, Sendable {
     case toggleInspector
     case eject(path: String)
     case showDriveInfo(path: String)
+    /// Open the disk usage view for a folder or volume (M3, Usage/).
+    case showDiskUsage(path: String)
     /// Ask for a favourite's new name, then `engine.renameFavourite`.
     case askFavouriteName(path: String, name: String)
     case editTags(paths: [String])
@@ -286,6 +288,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .toggleInspector: "toggleInspector"
         case .eject: "eject"
         case .showDriveInfo: "showDriveInfo"
+        case .showDiskUsage: "showDiskUsage"
         case .askFavouriteName: "askFavouriteName"
         case .editTags: "editTags"
         case .openWindow: "openWindow"

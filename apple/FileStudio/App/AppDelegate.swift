@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ConfirmSheets.install(model)
         WorkspaceSheets.install(model)
         OverlayController.shared.install(model)
+        UsageWindowController.install(model)   // disk usage (M3, Usage/)
         NSApp.activate()
         #if DEBUG
         DebugAutomation.runIfRequested(model)
