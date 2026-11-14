@@ -198,6 +198,8 @@ public enum ShellRequest: Equatable, Sendable {
     /// Start editing a row's name in place; commit with `engine.renameItem`.
     case beginRename(tab: TabID, name: String)
     case renameDialog(tab: TabID, paths: [String])
+    /// Show the "Batch Rename N Items…" sheet (M3, Rename/BatchRenameSheet.swift).
+    case batchRename(tab: TabID, paths: [String])
     /// Offer "Create Folder"; on yes call `engine.createFolderAndGo`.
     case offerCreateFolder(path: String, nearestExisting: String)
     /// Ask before trashing `paths`; on yes `engine.confirm(token)`, on no
@@ -267,6 +269,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .writeFilePasteboard: "writeFilePasteboard"
         case .beginRename: "beginRename"
         case .renameDialog: "renameDialog"
+        case .batchRename: "batchRename"
         case .offerCreateFolder: "offerCreateFolder"
         case .confirmTrash: "confirmTrash"
         case .confirmDeleteImmediately: "confirmDeleteImmediately"

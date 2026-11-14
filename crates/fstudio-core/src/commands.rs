@@ -117,12 +117,7 @@ pub enum Handling {
 }
 
 /// Commands that come in a later milestone (M3+).
-pub const LATER_COMMANDS: &[&str] = &[
-    "file.compress",
-    "file.batch_rename",
-    "file.make_alias",
-    "nav.connect_server",
-];
+pub const LATER_COMMANDS: &[&str] = &["file.compress", "file.make_alias", "nav.connect_server"];
 
 const UNTITLED_FOLDER: &str = "untitled folder";
 const UNTITLED_FILE: &str = "untitled";
@@ -1436,6 +1431,15 @@ impl Engine {
                     return Err(CoreError::NotAvailable("nothing is selected".into()));
                 }
                 Outcome::shell(ShellRequest::BeginRename { tab: tid, name }).with_tab(tid)
+            }
+            // ── batch rename (M3) ──
+            "file.batch_rename" => {
+                let paths = Self::need_selection(&t)?;
+                Outcome::shell(ShellRequest::BatchRename {
+                    tab: tid,
+                    paths: strings(&paths),
+                })
+                .with_tab(tid)
             }
             "file.rename_dialog" => {
                 Self::need_selection(&t)?;

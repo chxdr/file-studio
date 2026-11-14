@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ConflictPresenter.shared.install(model)
         ConfirmSheets.install(model)
         WorkspaceSheets.install(model)
+        BatchRenameSheet.install(model)  // batch rename (M3)
         OverlayController.shared.install(model)
         UsageWindowController.install(model)   // disk usage (M3, Usage/)
         NSApp.activate()

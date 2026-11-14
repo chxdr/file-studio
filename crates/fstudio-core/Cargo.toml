@@ -17,6 +17,9 @@ fstudio-ops.workspace = true
 fstudio-preview.workspace = true
 fstudio-search.workspace = true
 fstudio-usage.workspace = true
+# ── batch rename (M3) ──
+fstudio-rename.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

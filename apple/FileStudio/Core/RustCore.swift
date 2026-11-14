@@ -141,6 +141,7 @@ extension ShellRequest {
         case .writeFilePasteboard(let p): self = .writeFilePasteboard(paths: p)
         case .beginRename(let t, let n): self = .beginRename(tab: t, name: n)
         case .renameDialog(let t, let p): self = .renameDialog(tab: t, paths: p)
+        case .batchRename(let t, let p): self = .batchRename(tab: t, paths: p)  // batch rename (M3)
         case .offerCreateFolder(let p, let n): self = .offerCreateFolder(path: p, nearestExisting: n)
         case .confirmTrash(let t, let p): self = .confirmTrash(token: t, paths: p)
         case .confirmDeleteImmediately(let t, let p): self = .confirmDeleteImmediately(token: t, paths: p)
@@ -834,7 +835,8 @@ final class RustTab: TabAPI, @unchecked Sendable {
 // MARK: - Engine
 
 final class RustEngine: EngineAPI, @unchecked Sendable {
-    private let ffi: FfiEngine
+    /// Internal (not private) so feature files can extend `RustEngine` (Rename/RenameRust.swift).
+    let ffi: FfiEngine
     private let sink = SinkBridge()
     let implementationName = "Rust"
 

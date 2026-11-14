@@ -247,3 +247,26 @@ The user tried the installed build and signed off M2 through the checklist. They
 - In edit mode, the address field's outline overlapped the folder icon. While editing, the address bar moves clear of the icon, and the icon centres on it.
 
 The user also accepted the CI rule change in deny.toml: unmaintained-crate notices apply only to crates we depend on directly. M3 (search, preview, rename tools) may start.
+
+
+## F-028: Milestone 3 pieces: search, preview, disk usage (2026-11-14)
+Built in parallel sessions and merged after review. Batch rename follows once its review fixes land.
+- **Search (`fstudio-search`):**
+  - Spotlight is queried by running `mdfind` from Rust, which replaces `Platform::spotlight` in PROPOSAL §4. It needs no unsafe code and no run loop, streams results, is killed on cancel, and works from the CLI and tests. Every Spotlight hit is checked again on disk with the walk's own filters, so a stale index can only make results arrive sooner, never wrong.
+  - The walk skips hidden folders (including `UF_HIDDEN` ones), package contents and iCloud placeholder folders by default. "This Mac" also skips `/Volumes` and `/System/Volumes`.
+  - ⌘F keeps filtering the current folder (F-018). ⌥⌘F opens search. ⌘F pressed again in the filter field turns the filter into a search. Esc stops a running search, and a second Esc closes it.
+  - Search results are a normal tab whose rows carry a display name and their folder. Search tabs aren't saved in the session; after a relaunch the tab shows its folder.
+- **Preview (`fstudio-preview`):**
+  - The inspector became the preview pane, "Show or Hide Preview" (⌥⌘P, with ⌥⌘I kept).
+  - EXIF comes from `kamadak-exif`, plus our own readers for CR3 and RAF. Video facts come from our own MP4/MOV header reader rather than AVFoundation. Syntax spans come from `syntect` in the core; the shell picks the colours.
+  - iCloud placeholders are never read: the pane offers a Download button, and there's no auto-download setting (F-016).
+  - Settings → Previews holds `preview.*`.
+- **Disk usage (`fstudio-usage`):**
+  - A parallel scanner reads folders with `getattrlistbulk` (in `sys`), falling back to `read_dir`.
+  - Hard links are counted once. Symlinks are never followed, and the scan never crosses to another volume. A scan of `/` skips the Data volume's own mount point so firmlinked folders aren't counted twice. Packages are sized but shown as one item.
+  - APFS clones are each counted in full; there's no cheap way to see shared blocks.
+  - iCloud placeholder files count their logical size, and placeholder folders aren't listed (listing may download them).
+  - The view starts in On Disk mode. Show Disk Usage has no default shortcut. Inside the usage window, ⌘ keys are handled before the main menu.
+  - Trash from the view goes through the ops queue with Undo. There is no permanent delete there (F-007).
+  - Get Folder Size uses the same scanner. Its results stay in memory until a `folder_sizes` table lands in `fstudio-db` (the schema is in the session's hand-over note).
+

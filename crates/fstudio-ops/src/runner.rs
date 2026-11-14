@@ -200,6 +200,14 @@ pub fn run(inner: &Inner, op: &OpShared) {
         Ok(None) => return fail_all("the op is missing from the journal".into()),
         Err(e) => return fail_all(format!("journal: {e}")),
     };
+    // A batch rename runs its own ordering (swaps and cycles) and needs no
+    // plan (which would walk every renamed folder's contents).
+    if matches!(row.request, crate::types::OpRequest::RenameMany { .. }) {
+        return match journal.load_items(op.id) {
+            Ok(items) => crate::batch_rename::run(inner, op, items),
+            Err(e) => fail_all(format!("journal: {e}")),
+        };
+    }
     let plan = match row.plan.clone() {
         Some(p) => p,
         None => {

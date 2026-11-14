@@ -70,6 +70,14 @@ pub enum ShellRequest {
         /// The items.
         paths: Vec<String>,
     },
+    /// Show the "Batch Rename N Items…" sheet for `paths` (in list order);
+    /// open its session with `Engine::batch_rename`.
+    BatchRename {
+        /// The tab.
+        tab: TabId,
+        /// The items.
+        paths: Vec<String>,
+    },
     /// Offer "Create Folder" for a path that doesn't exist.
     OfferCreateFolder {
         /// The path that would be created.

@@ -1233,6 +1233,28 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func workspaces() throws  -> [FfiWorkspaceSummary]
     
     /**
+     * Opens a batch-rename session for `paths` (in list order). Reads each
+     * item's metadata and lists each folder once: blocks on disk like a
+     * folder listing.
+     */
+    func batchRename(tab: UInt64?, paths: [String]) throws  -> FfiRenameSession
+    
+    /**
+     * Deletes a preset. Returns whether there was one.
+     */
+    func deleteRenamePreset(name: String) throws  -> Bool
+    
+    /**
+     * The saved presets.
+     */
+    func renamePresets()  -> [FfiRenamePreset]
+    
+    /**
+     * Saves `steps` as the preset `name` (replacing one with that name).
+     */
+    func saveRenamePreset(name: String, steps: [FfiRenameStep]) throws 
+    
+    /**
      * Starts a disk-usage scan of a folder or volume (`lstat` only; the
      * scan runs in the background and reports through `observer`).
      */
@@ -2566,6 +2588,60 @@ open func workspaces()throws  -> [FfiWorkspaceSummary]  {
 }
     
     /**
+     * Opens a batch-rename session for `paths` (in list order). Reads each
+     * item's metadata and lists each folder once: blocks on disk like a
+     * folder listing.
+     */
+open func batchRename(tab: UInt64?, paths: [String])throws  -> FfiRenameSession  {
+    return try  FfiConverterTypeFfiRenameSession_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_batch_rename(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionUInt64.lower(tab),
+        FfiConverterSequenceString.lower(paths),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Deletes a preset. Returns whether there was one.
+     */
+open func deleteRenamePreset(name: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_delete_rename_preset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The saved presets.
+     */
+open func renamePresets() -> [FfiRenamePreset]  {
+    return try!  FfiConverterSequenceTypeFfiRenamePreset.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_rename_presets(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Saves `steps` as the preset `name` (replacing one with that name).
+     */
+open func saveRenamePreset(name: String, steps: [FfiRenameStep])throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_save_rename_preset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(name),
+        FfiConverterSequenceTypeFfiRenameStep.lower(steps),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Starts a disk-usage scan of a folder or volume (`lstat` only; the
      * scan runs in the background and reports through `observer`).
      */
@@ -3323,6 +3399,208 @@ public func FfiConverterTypeFfiPreviewer_lift(_ handle: UInt64) throws -> FfiPre
 #endif
 public func FfiConverterTypeFfiPreviewer_lower(_ value: FfiPreviewer) -> UInt64 {
     return FfiConverterTypeFfiPreviewer.lower(value)
+}
+
+
+
+
+
+
+/**
+ * One open "Batch Rename" sheet. Every call is quick and never touches
+ * the disk (EXIF is read on a background thread).
+ */
+public protocol FfiRenameSessionProtocol: AnyObject, Sendable {
+    
+    /**
+     * Renames every ready row as one undoable operation.
+     */
+    func apply() throws  -> FfiOutcome
+    
+    /**
+     * Rows `start..start+count`.
+     */
+    func rows(start: UInt32, count: UInt32)  -> [FfiRenameRow]
+    
+    /**
+     * Replaces the steps and recomputes the preview (every keystroke).
+     */
+    func setSteps(steps: [FfiRenameStep])  -> FfiRenameSummary
+    
+    /**
+     * The steps now.
+     */
+    func steps()  -> [FfiRenameStep]
+    
+    /**
+     * The counts and state (poll while `exif_loading`).
+     */
+    func summary()  -> FfiRenameSummary
+    
+}
+/**
+ * One open "Batch Rename" sheet. Every call is quick and never touches
+ * the disk (EXIF is read on a background thread).
+ */
+open class FfiRenameSession: FfiRenameSessionProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffirenamesession(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffirenamesession(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Renames every ready row as one undoable operation.
+     */
+open func apply()throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffirenamesession_apply(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Rows `start..start+count`.
+     */
+open func rows(start: UInt32, count: UInt32) -> [FfiRenameRow]  {
+    return try!  FfiConverterSequenceTypeFfiRenameRow.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffirenamesession_rows(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Replaces the steps and recomputes the preview (every keystroke).
+     */
+open func setSteps(steps: [FfiRenameStep]) -> FfiRenameSummary  {
+    return try!  FfiConverterTypeFfiRenameSummary_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffirenamesession_set_steps(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeFfiRenameStep.lower(steps),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The steps now.
+     */
+open func steps() -> [FfiRenameStep]  {
+    return try!  FfiConverterSequenceTypeFfiRenameStep.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffirenamesession_steps(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The counts and state (poll while `exif_loading`).
+     */
+open func summary() -> FfiRenameSummary  {
+    return try!  FfiConverterTypeFfiRenameSummary_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffirenamesession_summary(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameSession: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiRenameSession
+
+    public static func lift(_ handle: UInt64) throws -> FfiRenameSession {
+        return FfiRenameSession(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiRenameSession) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameSession {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiRenameSession, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameSession_lift(_ handle: UInt64) throws -> FfiRenameSession {
+    return try FfiConverterTypeFfiRenameSession.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameSession_lower(_ value: FfiRenameSession) -> UInt64 {
+    return FfiConverterTypeFfiRenameSession.lower(value)
 }
 
 
@@ -7622,6 +7900,467 @@ public func FfiConverterTypeFfiRange_lower(_ value: FfiRange) -> RustBuffer {
 
 
 /**
+ * A saved preset.
+ */
+public struct FfiRenamePreset: Equatable, Hashable {
+    public var name: String
+    public var steps: [FfiRenameStep]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, steps: [FfiRenameStep]) {
+        self.name = name
+        self.steps = steps
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRenamePreset: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenamePreset: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenamePreset {
+        return
+            try FfiRenamePreset(
+                name: FfiConverterString.read(from: &buf), 
+                steps: FfiConverterSequenceTypeFfiRenameStep.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRenamePreset, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterSequenceTypeFfiRenameStep.write(value.steps, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenamePreset_lift(_ buf: RustBuffer) throws -> FfiRenamePreset {
+    return try FfiConverterTypeFfiRenamePreset.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenamePreset_lower(_ value: FfiRenamePreset) -> RustBuffer {
+    return FfiConverterTypeFfiRenamePreset.lower(value)
+}
+
+
+/**
+ * One preview row.
+ */
+public struct FfiRenameRow: Equatable, Hashable {
+    public var index: UInt32
+    public var oldName: String
+    public var newName: String
+    public var status: FfiRenameRowStatus
+    /**
+     * The problem, in words, or empty.
+     */
+    public var message: String
+    /**
+     * A warning that doesn't stop the rename, or empty.
+     */
+    public var warning: String
+    /**
+     * The item's folder, when the batch spans folders; else empty.
+     */
+    public var folder: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(index: UInt32, oldName: String, newName: String, status: FfiRenameRowStatus, 
+        /**
+         * The problem, in words, or empty.
+         */message: String, 
+        /**
+         * A warning that doesn't stop the rename, or empty.
+         */warning: String, 
+        /**
+         * The item's folder, when the batch spans folders; else empty.
+         */folder: String) {
+        self.index = index
+        self.oldName = oldName
+        self.newName = newName
+        self.status = status
+        self.message = message
+        self.warning = warning
+        self.folder = folder
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRenameRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameRow {
+        return
+            try FfiRenameRow(
+                index: FfiConverterUInt32.read(from: &buf), 
+                oldName: FfiConverterString.read(from: &buf), 
+                newName: FfiConverterString.read(from: &buf), 
+                status: FfiConverterTypeFfiRenameRowStatus.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf), 
+                warning: FfiConverterString.read(from: &buf), 
+                folder: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRenameRow, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterString.write(value.oldName, into: &buf)
+        FfiConverterString.write(value.newName, into: &buf)
+        FfiConverterTypeFfiRenameRowStatus.write(value.status, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.warning, into: &buf)
+        FfiConverterString.write(value.folder, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameRow_lift(_ buf: RustBuffer) throws -> FfiRenameRow {
+    return try FfiConverterTypeFfiRenameRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameRow_lower(_ value: FfiRenameRow) -> RustBuffer {
+    return FfiConverterTypeFfiRenameRow.lower(value)
+}
+
+
+/**
+ * One step, flat. Only the fields its `kind` names are used.
+ */
+public struct FfiRenameStep: Equatable, Hashable {
+    public var kind: FfiRenameStepKind
+    public var enabled: Bool
+    public var template: String
+    public var find: String
+    public var replace: String
+    public var regex: Bool
+    public var ignoreCase: Bool
+    public var firstOnly: Bool
+    public var target: FfiRenameTarget
+    public var caseKind: FfiCaseKind
+    public var start: Int64
+    public var step: Int64
+    public var padding: UInt32
+    public var position: FfiRenamePosition
+    public var index: UInt32
+    public var separator: String
+    public var text: String
+    public var trimMode: FfiTrimMode
+    public var count: UInt32
+    public var chars: String
+    public var extChange: FfiExtChange
+    public var ext: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: FfiRenameStepKind, enabled: Bool, template: String, find: String, replace: String, regex: Bool, ignoreCase: Bool, firstOnly: Bool, target: FfiRenameTarget, caseKind: FfiCaseKind, start: Int64, step: Int64, padding: UInt32, position: FfiRenamePosition, index: UInt32, separator: String, text: String, trimMode: FfiTrimMode, count: UInt32, chars: String, extChange: FfiExtChange, ext: String) {
+        self.kind = kind
+        self.enabled = enabled
+        self.template = template
+        self.find = find
+        self.replace = replace
+        self.regex = regex
+        self.ignoreCase = ignoreCase
+        self.firstOnly = firstOnly
+        self.target = target
+        self.caseKind = caseKind
+        self.start = start
+        self.step = step
+        self.padding = padding
+        self.position = position
+        self.index = index
+        self.separator = separator
+        self.text = text
+        self.trimMode = trimMode
+        self.count = count
+        self.chars = chars
+        self.extChange = extChange
+        self.ext = ext
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRenameStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameStep: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameStep {
+        return
+            try FfiRenameStep(
+                kind: FfiConverterTypeFfiRenameStepKind.read(from: &buf), 
+                enabled: FfiConverterBool.read(from: &buf), 
+                template: FfiConverterString.read(from: &buf), 
+                find: FfiConverterString.read(from: &buf), 
+                replace: FfiConverterString.read(from: &buf), 
+                regex: FfiConverterBool.read(from: &buf), 
+                ignoreCase: FfiConverterBool.read(from: &buf), 
+                firstOnly: FfiConverterBool.read(from: &buf), 
+                target: FfiConverterTypeFfiRenameTarget.read(from: &buf), 
+                caseKind: FfiConverterTypeFfiCaseKind.read(from: &buf), 
+                start: FfiConverterInt64.read(from: &buf), 
+                step: FfiConverterInt64.read(from: &buf), 
+                padding: FfiConverterUInt32.read(from: &buf), 
+                position: FfiConverterTypeFfiRenamePosition.read(from: &buf), 
+                index: FfiConverterUInt32.read(from: &buf), 
+                separator: FfiConverterString.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf), 
+                trimMode: FfiConverterTypeFfiTrimMode.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf), 
+                chars: FfiConverterString.read(from: &buf), 
+                extChange: FfiConverterTypeFfiExtChange.read(from: &buf), 
+                ext: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRenameStep, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiRenameStepKind.write(value.kind, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterString.write(value.template, into: &buf)
+        FfiConverterString.write(value.find, into: &buf)
+        FfiConverterString.write(value.replace, into: &buf)
+        FfiConverterBool.write(value.regex, into: &buf)
+        FfiConverterBool.write(value.ignoreCase, into: &buf)
+        FfiConverterBool.write(value.firstOnly, into: &buf)
+        FfiConverterTypeFfiRenameTarget.write(value.target, into: &buf)
+        FfiConverterTypeFfiCaseKind.write(value.caseKind, into: &buf)
+        FfiConverterInt64.write(value.start, into: &buf)
+        FfiConverterInt64.write(value.step, into: &buf)
+        FfiConverterUInt32.write(value.padding, into: &buf)
+        FfiConverterTypeFfiRenamePosition.write(value.position, into: &buf)
+        FfiConverterUInt32.write(value.index, into: &buf)
+        FfiConverterString.write(value.separator, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterTypeFfiTrimMode.write(value.trimMode, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterString.write(value.chars, into: &buf)
+        FfiConverterTypeFfiExtChange.write(value.extChange, into: &buf)
+        FfiConverterString.write(value.ext, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameStep_lift(_ buf: RustBuffer) throws -> FfiRenameStep {
+    return try FfiConverterTypeFfiRenameStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameStep_lower(_ value: FfiRenameStep) -> RustBuffer {
+    return FfiConverterTypeFfiRenameStep.lower(value)
+}
+
+
+/**
+ * The preview's counts and state.
+ */
+public struct FfiRenameSummary: Equatable, Hashable {
+    /**
+     * Reload the visible rows when this changes.
+     */
+    public var version: UInt64
+    public var total: UInt32
+    public var ready: UInt32
+    public var unchanged: UInt32
+    public var problems: UInt32
+    public var warnings: UInt32
+    /**
+     * EXIF is being read: poll `summary()` until it isn't.
+     */
+    public var exifLoading: Bool
+    public var exifDone: UInt32
+    public var exifTotal: UInt32
+    /**
+     * Why the steps can't run, if they can't.
+     */
+    public var error: String?
+    public var errorStep: UInt32?
+    public var manyFolders: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Reload the visible rows when this changes.
+         */version: UInt64, total: UInt32, ready: UInt32, unchanged: UInt32, problems: UInt32, warnings: UInt32, 
+        /**
+         * EXIF is being read: poll `summary()` until it isn't.
+         */exifLoading: Bool, exifDone: UInt32, exifTotal: UInt32, 
+        /**
+         * Why the steps can't run, if they can't.
+         */error: String?, errorStep: UInt32?, manyFolders: Bool) {
+        self.version = version
+        self.total = total
+        self.ready = ready
+        self.unchanged = unchanged
+        self.problems = problems
+        self.warnings = warnings
+        self.exifLoading = exifLoading
+        self.exifDone = exifDone
+        self.exifTotal = exifTotal
+        self.error = error
+        self.errorStep = errorStep
+        self.manyFolders = manyFolders
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRenameSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameSummary {
+        return
+            try FfiRenameSummary(
+                version: FfiConverterUInt64.read(from: &buf), 
+                total: FfiConverterUInt32.read(from: &buf), 
+                ready: FfiConverterUInt32.read(from: &buf), 
+                unchanged: FfiConverterUInt32.read(from: &buf), 
+                problems: FfiConverterUInt32.read(from: &buf), 
+                warnings: FfiConverterUInt32.read(from: &buf), 
+                exifLoading: FfiConverterBool.read(from: &buf), 
+                exifDone: FfiConverterUInt32.read(from: &buf), 
+                exifTotal: FfiConverterUInt32.read(from: &buf), 
+                error: FfiConverterOptionString.read(from: &buf), 
+                errorStep: FfiConverterOptionUInt32.read(from: &buf), 
+                manyFolders: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRenameSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.version, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterUInt32.write(value.ready, into: &buf)
+        FfiConverterUInt32.write(value.unchanged, into: &buf)
+        FfiConverterUInt32.write(value.problems, into: &buf)
+        FfiConverterUInt32.write(value.warnings, into: &buf)
+        FfiConverterBool.write(value.exifLoading, into: &buf)
+        FfiConverterUInt32.write(value.exifDone, into: &buf)
+        FfiConverterUInt32.write(value.exifTotal, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+        FfiConverterOptionUInt32.write(value.errorStep, into: &buf)
+        FfiConverterBool.write(value.manyFolders, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameSummary_lift(_ buf: RustBuffer) throws -> FfiRenameSummary {
+    return try FfiConverterTypeFfiRenameSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameSummary_lower(_ value: FfiRenameSummary) -> RustBuffer {
+    return FfiConverterTypeFfiRenameSummary.lower(value)
+}
+
+
+/**
+ * The template tokens for an "Insert Token" menu: `(token, description)`.
+ */
+public struct FfiRenameToken: Equatable, Hashable {
+    public var token: String
+    public var title: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(token: String, title: String) {
+        self.token = token
+        self.title = title
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiRenameToken: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameToken: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameToken {
+        return
+            try FfiRenameToken(
+                token: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRenameToken, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.token, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameToken_lift(_ buf: RustBuffer) throws -> FfiRenameToken {
+    return try FfiConverterTypeFfiRenameToken.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameToken_lower(_ value: FfiRenameToken) -> RustBuffer {
+    return FfiConverterTypeFfiRenameToken.lower(value)
+}
+
+
+/**
  * One row, ready to draw.
  */
 public struct FfiRow: Equatable, Hashable {
@@ -9976,6 +10715,89 @@ public func FfiConverterTypeFfiWorkspaceSummary_lower(_ value: FfiWorkspaceSumma
 
 
 /**
+ * A case change.
+ */
+
+public enum FfiCaseKind: Equatable, Hashable {
+    
+    case lower
+    case upper
+    case title
+    case sentence
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiCaseKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCaseKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCaseKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCaseKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lower
+        
+        case 2: return .upper
+        
+        case 3: return .title
+        
+        case 4: return .sentence
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiCaseKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lower:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .upper:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .title:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .sentence:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCaseKind_lift(_ buf: RustBuffer) throws -> FfiCaseKind {
+    return try FfiConverterTypeFfiCaseKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCaseKind_lower(_ value: FfiCaseKind) -> RustBuffer {
+    return FfiConverterTypeFfiCaseKind.lower(value)
+}
+
+
+
+/**
  * Why a listing changed.
  */
 
@@ -11307,6 +12129,92 @@ public func FfiConverterTypeFfiEvent_lift(_ buf: RustBuffer) throws -> FfiEvent 
 #endif
 public func FfiConverterTypeFfiEvent_lower(_ value: FfiEvent) -> RustBuffer {
     return FfiConverterTypeFfiEvent.lower(value)
+}
+
+
+
+/**
+ * What happens to the extension.
+ */
+
+public enum FfiExtChange: Equatable, Hashable {
+    
+    case lower
+    case upper
+    /**
+     * Becomes `ext`.
+     */
+    case set
+    case remove
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiExtChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiExtChange: FfiConverterRustBuffer {
+    typealias SwiftType = FfiExtChange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiExtChange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lower
+        
+        case 2: return .upper
+        
+        case 3: return .set
+        
+        case 4: return .remove
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiExtChange, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lower:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .upper:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .set:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .remove:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExtChange_lift(_ buf: RustBuffer) throws -> FfiExtChange {
+    return try FfiConverterTypeFfiExtChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiExtChange_lower(_ value: FfiExtChange) -> RustBuffer {
+    return FfiConverterTypeFfiExtChange.lower(value)
 }
 
 
@@ -13086,6 +13994,362 @@ public func FfiConverterTypeFfiProfile_lower(_ value: FfiProfile) -> RustBuffer 
 
 
 /**
+ * Where inserted text or a counter goes.
+ */
+
+public enum FfiRenamePosition: Equatable, Hashable {
+    
+    case start
+    case end
+    /**
+     * After `index` characters.
+     */
+    case index
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRenamePosition: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenamePosition: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRenamePosition
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenamePosition {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .start
+        
+        case 2: return .end
+        
+        case 3: return .index
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRenamePosition, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .start:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .end:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .index:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenamePosition_lift(_ buf: RustBuffer) throws -> FfiRenamePosition {
+    return try FfiConverterTypeFfiRenamePosition.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenamePosition_lower(_ value: FfiRenamePosition) -> RustBuffer {
+    return FfiConverterTypeFfiRenamePosition.lower(value)
+}
+
+
+
+/**
+ * What happens to one row.
+ */
+
+public enum FfiRenameRowStatus: Equatable, Hashable {
+    
+    case ready
+    case unchanged
+    case problem
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRenameRowStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameRowStatus: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRenameRowStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameRowStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .ready
+        
+        case 2: return .unchanged
+        
+        case 3: return .problem
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRenameRowStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .ready:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .unchanged:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .problem:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameRowStatus_lift(_ buf: RustBuffer) throws -> FfiRenameRowStatus {
+    return try FfiConverterTypeFfiRenameRowStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameRowStatus_lower(_ value: FfiRenameRowStatus) -> RustBuffer {
+    return FfiConverterTypeFfiRenameRowStatus.lower(value)
+}
+
+
+
+/**
+ * Which step a [`FfiRenameStep`] is.
+ */
+
+public enum FfiRenameStepKind: Equatable, Hashable {
+    
+    /**
+     * The name becomes `template`.
+     */
+    case template
+    /**
+     * Find `find`, put `replace`.
+     */
+    case replace
+    /**
+     * Change case (`case_kind`).
+     */
+    case `case`
+    /**
+     * Add a counter (`start`, `step`, `padding`, `position`, `separator`).
+     */
+    case sequence
+    /**
+     * Remove characters (`trim_mode`, `count`, `chars`).
+     */
+    case trim
+    /**
+     * Insert `text` at `position`.
+     */
+    case insert
+    /**
+     * Change the extension (`ext_change`, `ext`).
+     */
+    case `extension`
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRenameStepKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameStepKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRenameStepKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameStepKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .template
+        
+        case 2: return .replace
+        
+        case 3: return .`case`
+        
+        case 4: return .sequence
+        
+        case 5: return .trim
+        
+        case 6: return .insert
+        
+        case 7: return .`extension`
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRenameStepKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .template:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .replace:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .`case`:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .sequence:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .trim:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .insert:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .`extension`:
+            writeInt(&buf, Int32(7))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameStepKind_lift(_ buf: RustBuffer) throws -> FfiRenameStepKind {
+    return try FfiConverterTypeFfiRenameStepKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameStepKind_lower(_ value: FfiRenameStepKind) -> RustBuffer {
+    return FfiConverterTypeFfiRenameStepKind.lower(value)
+}
+
+
+
+/**
+ * Which part of the name a step changes.
+ */
+
+public enum FfiRenameTarget: Equatable, Hashable {
+    
+    case name
+    case `extension`
+    case whole
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiRenameTarget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRenameTarget: FfiConverterRustBuffer {
+    typealias SwiftType = FfiRenameTarget
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRenameTarget {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .name
+        
+        case 2: return .`extension`
+        
+        case 3: return .whole
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiRenameTarget, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .name:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .`extension`:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .whole:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameTarget_lift(_ buf: RustBuffer) throws -> FfiRenameTarget {
+    return try FfiConverterTypeFfiRenameTarget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRenameTarget_lower(_ value: FfiRenameTarget) -> RustBuffer {
+    return FfiConverterTypeFfiRenameTarget.lower(value)
+}
+
+
+
+/**
  * Row height.
  */
 
@@ -13711,6 +14975,8 @@ public enum FfiShellRequest: Equatable, Hashable {
     )
     case renameDialog(tab: UInt64, paths: [String]
     )
+    case batchRename(tab: UInt64, paths: [String]
+    )
     case offerCreateFolder(path: String, nearestExisting: String
     )
     case confirmTrash(token: UInt64, paths: [String]
@@ -13829,87 +15095,90 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         case 11: return .renameDialog(tab: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 12: return .offerCreateFolder(path: try FfiConverterString.read(from: &buf), nearestExisting: try FfiConverterString.read(from: &buf)
+        case 12: return .batchRename(tab: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 13: return .confirmTrash(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
+        case 13: return .offerCreateFolder(path: try FfiConverterString.read(from: &buf), nearestExisting: try FfiConverterString.read(from: &buf)
         )
         
-        case 14: return .confirmDeleteImmediately(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
+        case 14: return .confirmTrash(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 15: return .askPattern(select: try FfiConverterBool.read(from: &buf)
+        case 15: return .confirmDeleteImmediately(token: try FfiConverterUInt64.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 16: return .askWorkspaceName
-        
-        case 17: return .manageWorkspaces
-        
-        case 18: return .focusAddressBar(pane: try FfiConverterUInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 16: return .askPattern(select: try FfiConverterBool.read(from: &buf)
         )
         
-        case 19: return .focusFilter
+        case 17: return .askWorkspaceName
         
-        case 20: return .showSearch(text: try FfiConverterString.read(from: &buf)
+        case 18: return .manageWorkspaces
+        
+        case 19: return .focusAddressBar(pane: try FfiConverterUInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
-        case 21: return .focusList
+        case 20: return .focusFilter
         
-        case 22: return .textField(command: try FfiConverterString.read(from: &buf)
+        case 21: return .showSearch(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 23: return .showPalette
+        case 22: return .focusList
         
-        case 24: return .showQuickOpen
-        
-        case 25: return .showSettings(section: try FfiConverterString.read(from: &buf)
+        case 23: return .textField(command: try FfiConverterString.read(from: &buf)
         )
         
-        case 26: return .confirmMove(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
+        case 24: return .showPalette
+        
+        case 25: return .showQuickOpen
+        
+        case 26: return .showSettings(section: try FfiConverterString.read(from: &buf)
         )
         
-        case 27: return .moved(text: try FfiConverterString.read(from: &buf)
+        case 27: return .confirmMove(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 28: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf), style: try FfiConverterTypeFfiToastStyle.read(from: &buf)
+        case 28: return .moved(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 29: return .showOperations
-        
-        case 30: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
+        case 29: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf), style: try FfiConverterTypeFfiToastStyle.read(from: &buf)
         )
         
-        case 31: return .showPowerTour
+        case 30: return .showOperations
         
-        case 32: return .toggleSidebar
-        
-        case 33: return .toggleInspector
-        
-        case 34: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 31: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
         )
         
-        case 35: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 32: return .showPowerTour
+        
+        case 33: return .toggleSidebar
+        
+        case 34: return .toggleInspector
+        
+        case 35: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 36: return .showDiskUsage(path: try FfiConverterString.read(from: &buf)
+        case 36: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 37: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 37: return .showDiskUsage(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 38: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 38: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 39: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 39: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 40: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 40: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 41: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        case 41: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 42: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 42: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 43: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -13977,76 +15246,82 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
-        case let .offerCreateFolder(path,nearestExisting):
+        case let .batchRename(tab,paths):
             writeInt(&buf, Int32(12))
+            FfiConverterUInt64.write(tab, into: &buf)
+            FfiConverterSequenceString.write(paths, into: &buf)
+            
+        
+        case let .offerCreateFolder(path,nearestExisting):
+            writeInt(&buf, Int32(13))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(nearestExisting, into: &buf)
             
         
         case let .confirmTrash(token,paths):
-            writeInt(&buf, Int32(13))
-            FfiConverterUInt64.write(token, into: &buf)
-            FfiConverterSequenceString.write(paths, into: &buf)
-            
-        
-        case let .confirmDeleteImmediately(token,paths):
             writeInt(&buf, Int32(14))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
-        case let .askPattern(select):
+        case let .confirmDeleteImmediately(token,paths):
             writeInt(&buf, Int32(15))
+            FfiConverterUInt64.write(token, into: &buf)
+            FfiConverterSequenceString.write(paths, into: &buf)
+            
+        
+        case let .askPattern(select):
+            writeInt(&buf, Int32(16))
             FfiConverterBool.write(select, into: &buf)
             
         
         case .askWorkspaceName:
-            writeInt(&buf, Int32(16))
-        
-        
-        case .manageWorkspaces:
             writeInt(&buf, Int32(17))
         
         
-        case let .focusAddressBar(pane,text):
+        case .manageWorkspaces:
             writeInt(&buf, Int32(18))
+        
+        
+        case let .focusAddressBar(pane,text):
+            writeInt(&buf, Int32(19))
             FfiConverterUInt64.write(pane, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
         
         case .focusFilter:
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(20))
         
         
         case let .showSearch(text):
-            writeInt(&buf, Int32(20))
+            writeInt(&buf, Int32(21))
             FfiConverterString.write(text, into: &buf)
             
         
         case .focusList:
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(22))
         
         
         case let .textField(command):
-            writeInt(&buf, Int32(22))
+            writeInt(&buf, Int32(23))
             FfiConverterString.write(command, into: &buf)
             
         
         case .showPalette:
-            writeInt(&buf, Int32(23))
-        
-        
-        case .showQuickOpen:
             writeInt(&buf, Int32(24))
         
         
-        case let .showSettings(section):
+        case .showQuickOpen:
             writeInt(&buf, Int32(25))
+        
+        
+        case let .showSettings(section):
+            writeInt(&buf, Int32(26))
             FfiConverterString.write(section, into: &buf)
             
         
         case let .confirmMove(token,title,detail,paths):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(27))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterString.write(title, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -14054,12 +15329,12 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .moved(text):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(28))
             FfiConverterString.write(text, into: &buf)
             
         
         case let .toast(text,button,command,style):
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(29))
             FfiConverterString.write(text, into: &buf)
             FfiConverterOptionString.write(button, into: &buf)
             FfiConverterOptionString.write(command, into: &buf)
@@ -14067,11 +15342,11 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case .showOperations:
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(30))
         
         
         case let .confirm(token,title,detail,yes,no):
-            writeInt(&buf, Int32(30))
+            writeInt(&buf, Int32(31))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterString.write(title, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -14080,55 +15355,55 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case .showPowerTour:
-            writeInt(&buf, Int32(31))
-        
-        
-        case .toggleSidebar:
             writeInt(&buf, Int32(32))
         
         
-        case .toggleInspector:
+        case .toggleSidebar:
             writeInt(&buf, Int32(33))
         
         
-        case let .eject(path):
+        case .toggleInspector:
             writeInt(&buf, Int32(34))
-            FfiConverterString.write(path, into: &buf)
-            
         
-        case let .showDriveInfo(path):
+        
+        case let .eject(path):
             writeInt(&buf, Int32(35))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .showDiskUsage(path):
+        case let .showDriveInfo(path):
             writeInt(&buf, Int32(36))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDiskUsage(path):
             writeInt(&buf, Int32(37))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(38))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(38))
+            writeInt(&buf, Int32(39))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(39))
-            FfiConverterUInt64.write(window, into: &buf)
-            
-        
-        case let .closeWindow(window):
             writeInt(&buf, Int32(40))
             FfiConverterUInt64.write(window, into: &buf)
             
         
-        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+        case let .closeWindow(window):
             writeInt(&buf, Int32(41))
+            FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(42))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(question, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -14137,7 +15412,7 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .sourceMissing(op,text):
-            writeInt(&buf, Int32(42))
+            writeInt(&buf, Int32(43))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
@@ -14797,6 +16072,98 @@ public func FfiConverterTypeFfiTokenClass_lift(_ buf: RustBuffer) throws -> FfiT
 #endif
 public func FfiConverterTypeFfiTokenClass_lower(_ value: FfiTokenClass) -> RustBuffer {
     return FfiConverterTypeFfiTokenClass.lower(value)
+}
+
+
+
+/**
+ * What Trim removes.
+ */
+
+public enum FfiTrimMode: Equatable, Hashable {
+    
+    case whitespace
+    /**
+     * `count` characters from the start.
+     */
+    case start
+    /**
+     * `count` characters from the end.
+     */
+    case end
+    /**
+     * Any of `chars` at either end.
+     */
+    case characters
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTrimMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTrimMode: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTrimMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTrimMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .whitespace
+        
+        case 2: return .start
+        
+        case 3: return .end
+        
+        case 4: return .characters
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTrimMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .whitespace:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .start:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .end:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .characters:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTrimMode_lift(_ buf: RustBuffer) throws -> FfiTrimMode {
+    return try FfiConverterTypeFfiTrimMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTrimMode_lower(_ value: FfiTrimMode) -> RustBuffer {
+    return FfiConverterTypeFfiTrimMode.lower(value)
 }
 
 
@@ -16449,6 +17816,106 @@ fileprivate struct FfiConverterSequenceTypeFfiRange: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiRenamePreset: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiRenamePreset]
+
+    public static func write(_ value: [FfiRenamePreset], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiRenamePreset.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiRenamePreset] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiRenamePreset]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiRenamePreset.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiRenameRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiRenameRow]
+
+    public static func write(_ value: [FfiRenameRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiRenameRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiRenameRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiRenameRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiRenameRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiRenameStep: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiRenameStep]
+
+    public static func write(_ value: [FfiRenameStep], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiRenameStep.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiRenameStep] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiRenameStep]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiRenameStep.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiRenameToken: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiRenameToken]
+
+    public static func write(_ value: [FfiRenameToken], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiRenameToken.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiRenameToken] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiRenameToken]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiRenameToken.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
     typealias SwiftType = [FfiRow]
 
@@ -16806,6 +18273,27 @@ public func displayName(path: String) -> String  {
     )
 })
 }
+/**
+ * A new step of `kind` with its usual settings.
+ */
+public func renameStepNew(kind: FfiRenameStepKind) -> FfiRenameStep  {
+    return try!  FfiConverterTypeFfiRenameStep_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_rename_step_new(
+        FfiConverterTypeFfiRenameStepKind_lower(kind),uniffiCallStatus
+    )
+})
+}
+/**
+ * Every template token, in menu order.
+ */
+public func renameTokens() -> [FfiRenameToken]  {
+    return try!  FfiConverterSequenceTypeFfiRenameToken.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_rename_tokens(uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -16829,6 +18317,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_display_name() != 52844) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_rename_step_new() != 22027) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_rename_tokens() != 52238) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {
@@ -17161,6 +18655,18 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspaces() != 24606) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_batch_rename() != 8090) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_delete_rename_preset() != 42476) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_rename_presets() != 41922) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_save_rename_preset() != 48116) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_usage_scan() != 14012) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -17330,6 +18836,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffipreviewer_summarize() != 5203) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffirenamesession_apply() != 11468) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffirenamesession_rows() != 22159) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffirenamesession_set_steps() != 34618) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffirenamesession_steps() != 27459) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffirenamesession_summary() != 13678) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiusageobserver_progress() != 58754) {

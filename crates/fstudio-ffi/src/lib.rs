@@ -11,6 +11,8 @@
 
 mod preview;
 mod search;
+// ── batch rename (M3) ──
+mod rename;
 mod settings;
 mod types;
 mod usage;
@@ -21,6 +23,7 @@ use fstudio_core as core;
 use fstudio_core::{Engine, Tab, TabId};
 
 pub use preview::*;
+pub use rename::*;
 pub use search::*;
 pub use settings::*;
 pub use types::*;
@@ -414,7 +417,7 @@ impl FfiListing {
 /// The engine: one per process.
 #[derive(uniffi::Object)]
 pub struct FfiEngine {
-    inner: Arc<Engine>,
+    pub(crate) inner: Arc<Engine>,
 }
 
 fn tab_id(t: u64) -> TabId {
