@@ -10,6 +10,7 @@
 #![allow(missing_docs)]
 
 mod preview;
+mod search;
 mod settings;
 mod types;
 
@@ -19,6 +20,7 @@ use fstudio_core as core;
 use fstudio_core::{Engine, Tab, TabId};
 
 pub use preview::*;
+pub use search::*;
 pub use settings::*;
 pub use types::*;
 
@@ -330,6 +332,13 @@ fn pack_rows(rows: &[core::RowInfo]) -> Vec<u8> {
     for r in rows {
         b.extend_from_slice(&r.created_ns.to_le_bytes());
         for s in [&r.created_text, &r.ext_text] {
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+    }
+    // M3 search additions: the second trailer (the name to draw, the folder).
+    for r in rows {
+        for s in [&r.display_name, &r.location_text] {
             b.extend_from_slice(&(s.len() as u32).to_le_bytes());
             b.extend_from_slice(s.as_bytes());
         }
@@ -1065,6 +1074,8 @@ mod tests {
                     created_ns: 0,
                     created_text: String::new(),
                     ext_text: String::new(),
+                    display_name: String::new(),
+                    location_text: String::new(),
                 }
             })
             .collect();
@@ -1076,6 +1087,15 @@ mod tests {
             };
             r.created_text = s();
             r.ext_text = s();
+        }
+        // M3 search trailer.
+        for r in &mut rows {
+            let mut s = || {
+                let len = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
+                String::from_utf8(take(len).to_vec()).unwrap()
+            };
+            r.display_name = s();
+            r.location_text = s();
         }
         assert_eq!(at, b.len(), "nothing left over");
         rows

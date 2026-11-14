@@ -57,6 +57,8 @@ final class RenameController: NSObject, NSTextFieldDelegate {
         }
         cancel()
         oldName = name
+        // M3 search: a result's row name is its path below the search root; edit its own name.
+        let name = (name as NSString).lastPathComponent
         field.coreTab = table.ownerTab
         field.stringValue = name
         errorLabel.isHidden = true

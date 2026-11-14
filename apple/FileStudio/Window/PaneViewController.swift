@@ -27,6 +27,9 @@ final class PaneViewController: NSViewController {
     private let status: NSHostingView<PaneStatusLine>
     private let outline = PaneOutlineView()
     private var tabBarHeight: NSLayoutConstraint!
+    /// M3 search: the search bar between the header and the list (Search/).
+    let searchBar = SearchBarView()
+    private var searchBarHeight: NSLayoutConstraint!
     private var shownContent: NSView?
     private var shownMode: ViewMode?
     private(set) var tabID: TabID?
@@ -49,7 +52,7 @@ final class PaneViewController: NSViewController {
         root.paneID = paneID
         root.setAccessibilityElement(true)
         root.setAccessibilityRole(.group)
-        for v in [tabBar, header, content, status] as [NSView] {
+        for v in [tabBar, header, searchBar, content, status] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -58,6 +61,12 @@ final class PaneViewController: NSViewController {
         outline.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(outline)
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: 0)
+        searchBarHeight = searchBar.heightAnchor.constraint(equalToConstant: 0)
+        searchBar.onHeightChange = { [weak self] h in self?.searchBarHeight.constant = h }
+        searchBar.onFocusList = { [weak self] in
+            guard let self else { return }
+            self.view.window?.makeFirstResponder(self.focusView)
+        }
         tabBar.sizingOptions = []
         status.sizingOptions = []
         NSLayoutConstraint.activate([
@@ -69,7 +78,11 @@ final class PaneViewController: NSViewController {
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: PaneHeaderView.height),
-            content.topAnchor.constraint(equalTo: header.bottomAnchor),
+            searchBar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            searchBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            searchBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            searchBarHeight,
+            content.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             status.topAnchor.constraint(equalTo: content.bottomAnchor),
@@ -98,6 +111,7 @@ final class PaneViewController: NSViewController {
             state.tab = tm
             shownMode = nil
         }
+        searchBar.show(tm)
         syncContent()
         let showTabs = pane.tabs.count >= 2 || WindowPreferences.tabBarAlways(model)
         let h = showTabs ? PaneTabBar.height : 0
@@ -118,6 +132,12 @@ final class PaneViewController: NSViewController {
         guard let tm = state.tab else { return }
         header.update(tm, volumes: model.volumes)
         syncContent()
+        searchBar.refresh()
+    }
+
+    /// M3: opens the search bar for this pane's tab (⌥⌘F, or ⌘F in the filter field).
+    func openSearch(text: String) {
+        searchBar.open(text: text)
     }
 
     /// Puts the list or the column view in the content area, by view mode.
@@ -165,7 +185,8 @@ final class PaneViewController: NSViewController {
         ["pane": Int(paneID), "tab": tabID.map { Int($0) } ?? -1, "tabBar": !tabBar.isHidden,
          "tabs": pane?.tabs.map { model.tabModel($0.id)?.title ?? $0.title } ?? [],
          "active": state.isActive, "outline": !outline.isHidden, "subtitle": header.subtitle.stringValue,
-         "mode": "\(shownMode.map { "\($0)" } ?? "?")", "frame": NSStringFromRect(view.frame)]
+         "mode": "\(shownMode.map { "\($0)" } ?? "?")", "frame": NSStringFromRect(view.frame),
+         "search": searchBar.debugInfo]
     }
 }
 

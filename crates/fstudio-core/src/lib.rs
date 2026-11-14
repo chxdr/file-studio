@@ -96,6 +96,9 @@ pub use settings::{
 };
 pub use shared::MIGRATIONS;
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};
+// M3 search.
+pub use fstudio_search::{DateField, Kind as SearchKind, NameMode, SearchQuery};
+pub use tab::search::{LeafCollation, SearchRequest, SearchScope, SearchState, SearchStatus};
 pub use view::{SortBy, ViewState};
 pub use view_columns::{
     ColumnId, ColumnSpec, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, default_columns, sanitize_columns,

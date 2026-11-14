@@ -491,6 +491,7 @@ dependencies = [
  "fstudio-ops",
  "fstudio-path",
  "fstudio-preview",
+ "fstudio-search",
  "fstudio-view",
  "libc",
  "parking_lot",
@@ -622,7 +623,15 @@ dependencies = [
 name = "fstudio-search"
 version = "0.0.1"
 dependencies = [
+ "crossbeam-channel",
+ "fstudio-fs",
  "fstudio-model",
+ "fstudio-view",
+ "parking_lot",
+ "regex",
+ "serde",
+ "tempfile",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -993,6 +1002,18 @@ checksum = "60dc65c0ff1a7ae1294b0c67b9f14baf70b644404010370171787bfac1038fc0"
 dependencies = [
  "libredox",
  "thiserror",
+]
+
+[[package]]
+name = "regex"
+version = "1.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

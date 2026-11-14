@@ -392,6 +392,7 @@ pub(crate) struct OpsBridge {
 impl fstudio_ops::EventSink for OpsBridge {
     fn on_event(&self, e: OpEvent) {
         if let OpEvent::OpFinished { report, .. } = &e {
+            crate::tab::search::ops_finished(); // M3: search tabs re-check their results
             // The queue's own event first, then the toast built from it.
             self.hub.emit(CoreEvent::OpFinished {
                 op: report.id,

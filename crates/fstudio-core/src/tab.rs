@@ -28,6 +28,9 @@ use crate::probe::FsCoreProbe;
 use crate::shared::Shared;
 use crate::view::ViewState;
 
+#[path = "tab_search.rs"]
+pub(crate) mod search;
+
 /// How often a still-loading listing republishes its partial rows.
 const PARTIAL_EVERY: Duration = Duration::from_millis(100);
 /// A watcher batch touching more than this share of the folder triggers a re-list.
@@ -194,6 +197,8 @@ struct Inner {
     closed: bool,
     /// The next navigation keeps the current view mode (column view browsing).
     keep_mode: bool,
+    /// M3 search: the tab shows search results (see `tab_search.rs`).
+    search: Option<search::SearchTab>,
 }
 
 /// One tab. Every method is quick and never blocks on disk, except where noted.
@@ -260,6 +265,7 @@ impl Tab {
                 queued: Vec::new(),
                 closed: false,
                 keep_mode: false,
+                search: None,
             }),
         });
         let pending = (!state.selected.is_empty() || state.cursor.is_some())
@@ -322,7 +328,8 @@ impl Tab {
         let l = &st.listing;
         TabState {
             id: self.id,
-            location: to_s(&st.location),
+            // A search tab restores as the folder it searched from.
+            location: to_s(st.search.as_ref().map_or(&st.location, |s| s.folder())),
             back: st.back.iter().map(|p| to_s(p)).collect(),
             forward: st.forward.iter().map(|p| to_s(p)).collect(),
             view: st.view.clone(),
@@ -421,6 +428,9 @@ impl Tab {
 
     /// Goes back in history.
     pub fn back(&self) -> Result<Outcome> {
+        if self.end_search() {
+            return Ok(Outcome::none().with_tab(self.id)); // Back leaves a search
+        }
         let (to, from) = {
             let mut st = self.st.lock();
             let Some(to) = st.back.pop() else {
@@ -471,6 +481,9 @@ impl Tab {
     /// Reads the folder again, keeping the rows on screen until the new
     /// listing is ready, and keeping the selection.
     pub fn refresh(&self) {
+        if self.search_rerun() {
+            return;
+        }
         let loc = self.location_path();
         self.start(loc, Hist::Keep, None, false, true);
     }
@@ -490,6 +503,9 @@ impl Tab {
             let mut st = self.st.lock();
             if st.closed {
                 return;
+            }
+            if let Some(s) = st.search.take() {
+                s.cancel(); // going anywhere ends a search
             }
             let moved = st.location != dir;
             if moved && hist == Hist::Push {
@@ -1272,7 +1288,7 @@ impl Tab {
         };
         let cut = self.shared.cut_names_in(&l.dir);
         let f = RowFormat::now(self.shared.settings.read().view.hour24);
-        listing::build_rows(
+        let mut rows = listing::build_rows(
             &l,
             start,
             count,
@@ -1280,7 +1296,9 @@ impl Tab {
             sel.cursor(),
             &cut,
             &f,
-        )
+        );
+        self.search_rows(&mut rows);
+        rows
     }
 
     /// The rows on screen; page up/down move by this many. Later milestones
@@ -1330,8 +1348,10 @@ impl Tab {
         let path = st.location.join(old_name);
         drop(st);
         // S5: a leftover row's name must still be the name on disk.
+        // (A search tab's row name is a path below the root: compare its last part.)
+        let own = Path::new(old_name).file_name().map(|n| n.to_string_lossy());
         if let Ok(real) = fstudio_fs::on_disk_name(&path)
-            && real != old_name
+            && Some(real.as_str()) != own.as_deref()
         {
             self.refresh();
             return Err(CoreError::NotAvailable(format!(

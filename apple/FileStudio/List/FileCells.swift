@@ -49,6 +49,9 @@ enum CellStyle {
 final class FileCellView: NSView {
     var kind: CellKind = .name { didSet { if kind != oldValue { needsDisplay = true } } }
     private(set) var text = ""
+    /// M3 search: the folder the item is in, drawn after the name in
+    /// secondary text (truncated from the front).
+    private(set) var detail = ""
     private var icon: NSImage?
     private var isDataless = false
     private var isSymlink = false
@@ -70,13 +73,15 @@ final class FileCellView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// Sets what the cell shows for a row.
-    func configure(text: String, icon: NSImage? = nil, row: Row?, onAccent: Bool, chevron: Bool = false) {
+    func configure(text: String, icon: NSImage? = nil, row: Row?, onAccent: Bool, chevron: Bool = false,
+                   detail: String = "") {
         let dimmed = row.map { $0.isHidden || $0.isCutPending } ?? false
         let dataless = row?.isDataless ?? false
         let symlink = row?.isSymlink ?? false
         if text == self.text, icon === self.icon, dimmed == isDimmed, dataless == isDataless, symlink == isSymlink,
-           onAccent == self.onAccent, chevron == showsChevron { return }
+           onAccent == self.onAccent, chevron == showsChevron, detail == self.detail { return }
         self.text = text; self.icon = icon; isDimmed = dimmed; isDataless = dataless; isSymlink = symlink
+        self.detail = detail
         self.onAccent = onAccent; showsChevron = chevron
         needsDisplay = true
     }
@@ -125,6 +130,19 @@ final class FileCellView: NSView {
                 right = r.minX - 4
             }
             let color: NSColor = onAccent ? .alternateSelectedControlTextColor : .labelColor
+            if !detail.isEmpty {
+                // M3 search: "name   ~/Documents/Work", the folder truncated from its front.
+                let avail = max(right - x, 0)
+                let nameW = min(ceil((text as NSString).size(withAttributes: [.font: CellStyle.nameFont]).width) + 4,
+                                avail * 0.62)
+                drawText(NSRect(x: x, y: 0, width: nameW, height: b.height), font: CellStyle.nameFont,
+                         color: color.withAlphaComponent(alpha * color.alphaComponent), para: CellStyle.middle)
+                let dc: NSColor = onAccent ? .alternateSelectedControlTextColor : .secondaryLabelColor
+                drawText(NSRect(x: x + nameW + 8, y: 0, width: max(avail - nameW - 8, 0), height: b.height),
+                         font: CellStyle.secondaryFont, color: dc.withAlphaComponent(alpha * dc.alphaComponent),
+                         para: Self.headTruncating, string: detail)
+                return
+            }
             drawText(NSRect(x: x, y: 0, width: max(right - x, 0), height: b.height), font: CellStyle.nameFont,
                      color: color.withAlphaComponent(alpha * color.alphaComponent), para: CellStyle.middle)
         case .text(let rightAligned):
@@ -135,7 +153,14 @@ final class FileCellView: NSView {
         }
     }
 
-    private func drawText(_ r: NSRect, font: NSFont, color: NSColor, para: NSParagraphStyle) {
+    private static let headTruncating: NSParagraphStyle = {
+        let p = NSMutableParagraphStyle()
+        p.lineBreakMode = .byTruncatingHead
+        return p
+    }()
+
+    private func drawText(_ r: NSRect, font: NSFont, color: NSColor, para: NSParagraphStyle, string: String? = nil) {
+        let text = string ?? self.text
         guard r.width > 4, !text.isEmpty else { return }
         let lineH = ceil(font.ascender - font.descender)
         let rect = NSRect(x: r.minX, y: floor((r.height - lineH) / 2) - 0.5, width: r.width, height: lineH + 1)
@@ -178,7 +203,10 @@ final class FileCellView: NSView {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
-    override func accessibilityValue() -> Any? { isDataless ? text + ", in iCloud" : text }
+    override func accessibilityValue() -> Any? {
+        let t = detail.isEmpty ? text : "\(text), in \(detail)"
+        return isDataless ? t + ", in iCloud" : t
+    }
 }
 
 /// One row: draws the selection from the core (never from NSTableView's own

@@ -310,7 +310,8 @@ fn table() -> Vec<B> {
         c("palette.open", "Command Palette…", Search, "Search every command").global().s("⇧⌘P").v(":"),
         c("filter.focus", "Filter List", Search, "Filter the list as you type").s("⌘F").v("/"),
         c("filter.clear", "Clear Filter", Search, "Clear the filter and keep the selection").also(When::FilterEditing).sw(lf.clone(), "⎋").sw(When::FilterEditing, "⎋").nomenu().nohint(),
-        c("search.global", "Search…", Search, "Search for files").global().s("⌥⌘F"),
+        // M3: ⌘F stays the filter (F-018); ⌘F again in the filter field, or ⌥⌘F anywhere, searches below the folder.
+        c("search.global", "Search…", Search, "Search for files below this folder or on this Mac").global().s("⌥⌘F").sw(When::FilterEditing, "⌘F"),
         // ── Settings ──
         c("app.settings", "Settings…", Settings, "Open Settings").global().s("⌘,"),
         c("app.keyboard_shortcuts", "Keyboard Shortcuts…", Settings, "Open Settings at the shortcut editor").global(),

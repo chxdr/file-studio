@@ -1,6 +1,6 @@
 [package]
 name = "fstudio-search"
-description = "Search (milestone 3)"
+description = "Search: Spotlight plus a parallel filesystem walk, filters, merged results (milestone 3)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,16 @@ publish.workspace = true
 
 [dependencies]
 fstudio-model.workspace = true
+fstudio-fs.workspace = true
+fstudio-view.workspace = true
+unicode-normalization.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+regex = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

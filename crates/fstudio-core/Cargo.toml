@@ -15,6 +15,7 @@ fstudio-path.workspace = true
 fstudio-keymap.workspace = true
 fstudio-ops.workspace = true
 fstudio-preview.workspace = true
+fstudio-search.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

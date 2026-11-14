@@ -3423,6 +3423,27 @@ public protocol FfiTabProtocol: AnyObject, Sendable {
     
     func view()  -> FfiViewState
     
+    /**
+     * Ends the search and shows the folder it started from.
+     */
+    func endSearch()  -> Bool
+    
+    /**
+     * Runs a search in this tab; results stream in as its rows
+     * (`ListingChanged` Partial…, then Sorted). Fails on a bad pattern.
+     */
+    func search(request: FfiSearchRequest) throws 
+    
+    /**
+     * The search's status; `None` for a folder tab.
+     */
+    func searchStatus()  -> FfiSearchStatus?
+    
+    /**
+     * Stops a running search, keeping the results so far.
+     */
+    func stopSearch()  -> Bool
+    
 }
 /**
  * One tab: a location, its history, view state, selection and listing.
@@ -3818,6 +3839,55 @@ open func view() -> FfiViewState  {
     return try!  FfiConverterTypeFfiViewState_lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffitab_view(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Ends the search and shows the folder it started from.
+     */
+open func endSearch() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitab_end_search(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Runs a search in this tab; results stream in as its rows
+     * (`ListingChanged` Partial…, then Sorted). Fails on a bad pattern.
+     */
+open func search(request: FfiSearchRequest)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitab_search(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFfiSearchRequest_lower(request),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The search's status; `None` for a folder tab.
+     */
+open func searchStatus() -> FfiSearchStatus?  {
+    return try!  FfiConverterOptionTypeFfiSearchStatus.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitab_search_status(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Stops a running search, keeping the results so far.
+     */
+open func stopSearch() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffitab_stop_search(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -6880,6 +6950,14 @@ public struct FfiRow: Equatable, Hashable {
      * The extension as on disk; empty for folders.
      */
     public var extText: String
+    /**
+     * The name to draw (the item's own name in a search tab).
+     */
+    public var displayName: String
+    /**
+     * The folder the item is in, in a search tab; else empty.
+     */
+    public var locationText: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6895,7 +6973,13 @@ public struct FfiRow: Equatable, Hashable {
          */createdNs: Int64, createdText: String, 
         /**
          * The extension as on disk; empty for folders.
-         */extText: String) {
+         */extText: String, 
+        /**
+         * The name to draw (the item's own name in a search tab).
+         */displayName: String, 
+        /**
+         * The folder the item is in, in a search tab; else empty.
+         */locationText: String) {
         self.index = index
         self.name = name
         self.kind = kind
@@ -6915,6 +6999,8 @@ public struct FfiRow: Equatable, Hashable {
         self.createdNs = createdNs
         self.createdText = createdText
         self.extText = extText
+        self.displayName = displayName
+        self.locationText = locationText
     }
 
     
@@ -6951,7 +7037,9 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
                 isCutPending: FfiConverterBool.read(from: &buf), 
                 createdNs: FfiConverterInt64.read(from: &buf), 
                 createdText: FfiConverterString.read(from: &buf), 
-                extText: FfiConverterString.read(from: &buf)
+                extText: FfiConverterString.read(from: &buf), 
+                displayName: FfiConverterString.read(from: &buf), 
+                locationText: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -6975,6 +7063,8 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.createdNs, into: &buf)
         FfiConverterString.write(value.createdText, into: &buf)
         FfiConverterString.write(value.extText, into: &buf)
+        FfiConverterString.write(value.displayName, into: &buf)
+        FfiConverterString.write(value.locationText, into: &buf)
     }
 }
 
@@ -7048,6 +7138,242 @@ public func FfiConverterTypeFfiScrollAnchor_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiScrollAnchor_lower(_ value: FfiScrollAnchor) -> RustBuffer {
     return FfiConverterTypeFfiScrollAnchor.lower(value)
+}
+
+
+/**
+ * A search to run. Unset filters are `None` or empty.
+ */
+public struct FfiSearchRequest: Equatable, Hashable {
+    public var scope: FfiSearchScope
+    public var name: String
+    public var nameMode: FfiNameMode
+    public var kinds: [FfiSearchKind]
+    public var minSize: UInt64?
+    public var maxSize: UInt64?
+    public var dateField: FfiDateField
+    /**
+     * ns since the epoch, inclusive.
+     */
+    public var dateFromNs: Int64?
+    public var dateToNs: Int64?
+    public var tags: [String]
+    /**
+     * Text the file must contain (text files only); `None` is off.
+     */
+    public var content: String?
+    public var includeHidden: Bool
+    public var includePackages: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(scope: FfiSearchScope, name: String, nameMode: FfiNameMode, kinds: [FfiSearchKind], minSize: UInt64?, maxSize: UInt64?, dateField: FfiDateField, 
+        /**
+         * ns since the epoch, inclusive.
+         */dateFromNs: Int64?, dateToNs: Int64?, tags: [String], 
+        /**
+         * Text the file must contain (text files only); `None` is off.
+         */content: String?, includeHidden: Bool, includePackages: Bool) {
+        self.scope = scope
+        self.name = name
+        self.nameMode = nameMode
+        self.kinds = kinds
+        self.minSize = minSize
+        self.maxSize = maxSize
+        self.dateField = dateField
+        self.dateFromNs = dateFromNs
+        self.dateToNs = dateToNs
+        self.tags = tags
+        self.content = content
+        self.includeHidden = includeHidden
+        self.includePackages = includePackages
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSearchRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSearchRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSearchRequest {
+        return
+            try FfiSearchRequest(
+                scope: FfiConverterTypeFfiSearchScope.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                nameMode: FfiConverterTypeFfiNameMode.read(from: &buf), 
+                kinds: FfiConverterSequenceTypeFfiSearchKind.read(from: &buf), 
+                minSize: FfiConverterOptionUInt64.read(from: &buf), 
+                maxSize: FfiConverterOptionUInt64.read(from: &buf), 
+                dateField: FfiConverterTypeFfiDateField.read(from: &buf), 
+                dateFromNs: FfiConverterOptionInt64.read(from: &buf), 
+                dateToNs: FfiConverterOptionInt64.read(from: &buf), 
+                tags: FfiConverterSequenceString.read(from: &buf), 
+                content: FfiConverterOptionString.read(from: &buf), 
+                includeHidden: FfiConverterBool.read(from: &buf), 
+                includePackages: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSearchRequest, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiSearchScope.write(value.scope, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeFfiNameMode.write(value.nameMode, into: &buf)
+        FfiConverterSequenceTypeFfiSearchKind.write(value.kinds, into: &buf)
+        FfiConverterOptionUInt64.write(value.minSize, into: &buf)
+        FfiConverterOptionUInt64.write(value.maxSize, into: &buf)
+        FfiConverterTypeFfiDateField.write(value.dateField, into: &buf)
+        FfiConverterOptionInt64.write(value.dateFromNs, into: &buf)
+        FfiConverterOptionInt64.write(value.dateToNs, into: &buf)
+        FfiConverterSequenceString.write(value.tags, into: &buf)
+        FfiConverterOptionString.write(value.content, into: &buf)
+        FfiConverterBool.write(value.includeHidden, into: &buf)
+        FfiConverterBool.write(value.includePackages, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchRequest_lift(_ buf: RustBuffer) throws -> FfiSearchRequest {
+    return try FfiConverterTypeFfiSearchRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchRequest_lower(_ value: FfiSearchRequest) -> RustBuffer {
+    return FfiConverterTypeFfiSearchRequest.lower(value)
+}
+
+
+/**
+ * A search tab's status, for the search bar.
+ */
+public struct FfiSearchStatus: Equatable, Hashable {
+    public var request: FfiSearchRequest
+    /**
+     * The folder the tab showed before (Back returns there).
+     */
+    public var folder: String
+    public var root: String
+    public var state: FfiSearchState
+    public var found: UInt64
+    public var dirsScanned: UInt64
+    /**
+     * The first 200 folders that couldn't be read.
+     */
+    public var denied: [String]
+    public var deniedCount: UInt64
+    public var cloudSkipped: UInt64
+    public var indexUsed: Bool
+    public var indexError: String?
+    public var elapsedMs: UInt64
+    public var firstHitMs: UInt64?
+    /**
+     * The status line, ready to show.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(request: FfiSearchRequest, 
+        /**
+         * The folder the tab showed before (Back returns there).
+         */folder: String, root: String, state: FfiSearchState, found: UInt64, dirsScanned: UInt64, 
+        /**
+         * The first 200 folders that couldn't be read.
+         */denied: [String], deniedCount: UInt64, cloudSkipped: UInt64, indexUsed: Bool, indexError: String?, elapsedMs: UInt64, firstHitMs: UInt64?, 
+        /**
+         * The status line, ready to show.
+         */text: String) {
+        self.request = request
+        self.folder = folder
+        self.root = root
+        self.state = state
+        self.found = found
+        self.dirsScanned = dirsScanned
+        self.denied = denied
+        self.deniedCount = deniedCount
+        self.cloudSkipped = cloudSkipped
+        self.indexUsed = indexUsed
+        self.indexError = indexError
+        self.elapsedMs = elapsedMs
+        self.firstHitMs = firstHitMs
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSearchStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSearchStatus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSearchStatus {
+        return
+            try FfiSearchStatus(
+                request: FfiConverterTypeFfiSearchRequest.read(from: &buf), 
+                folder: FfiConverterString.read(from: &buf), 
+                root: FfiConverterString.read(from: &buf), 
+                state: FfiConverterTypeFfiSearchState.read(from: &buf), 
+                found: FfiConverterUInt64.read(from: &buf), 
+                dirsScanned: FfiConverterUInt64.read(from: &buf), 
+                denied: FfiConverterSequenceString.read(from: &buf), 
+                deniedCount: FfiConverterUInt64.read(from: &buf), 
+                cloudSkipped: FfiConverterUInt64.read(from: &buf), 
+                indexUsed: FfiConverterBool.read(from: &buf), 
+                indexError: FfiConverterOptionString.read(from: &buf), 
+                elapsedMs: FfiConverterUInt64.read(from: &buf), 
+                firstHitMs: FfiConverterOptionUInt64.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSearchStatus, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiSearchRequest.write(value.request, into: &buf)
+        FfiConverterString.write(value.folder, into: &buf)
+        FfiConverterString.write(value.root, into: &buf)
+        FfiConverterTypeFfiSearchState.write(value.state, into: &buf)
+        FfiConverterUInt64.write(value.found, into: &buf)
+        FfiConverterUInt64.write(value.dirsScanned, into: &buf)
+        FfiConverterSequenceString.write(value.denied, into: &buf)
+        FfiConverterUInt64.write(value.deniedCount, into: &buf)
+        FfiConverterUInt64.write(value.cloudSkipped, into: &buf)
+        FfiConverterBool.write(value.indexUsed, into: &buf)
+        FfiConverterOptionString.write(value.indexError, into: &buf)
+        FfiConverterUInt64.write(value.elapsedMs, into: &buf)
+        FfiConverterOptionUInt64.write(value.firstHitMs, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchStatus_lift(_ buf: RustBuffer) throws -> FfiSearchStatus {
+    return try FfiConverterTypeFfiSearchStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchStatus_lower(_ value: FfiSearchStatus) -> RustBuffer {
+    return FfiConverterTypeFfiSearchStatus.lower(value)
 }
 
 
@@ -8993,6 +9319,75 @@ public func FfiConverterTypeFfiCursorMove_lower(_ value: FfiCursorMove) -> RustB
 
 
 /**
+ * Which date the date range filters.
+ */
+
+public enum FfiDateField: Equatable, Hashable {
+    
+    case modified
+    case created
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiDateField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDateField: FfiConverterRustBuffer {
+    typealias SwiftType = FfiDateField
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDateField {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .modified
+        
+        case 2: return .created
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiDateField, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .modified:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .created:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDateField_lift(_ buf: RustBuffer) throws -> FfiDateField {
+    return try FfiConverterTypeFfiDateField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDateField_lower(_ value: FfiDateField) -> RustBuffer {
+    return FfiConverterTypeFfiDateField.lower(value)
+}
+
+
+
+/**
  * What a drop onto a folder does (`Engine::drop_action`).
  */
 
@@ -10572,6 +10967,82 @@ public func FfiConverterTypeFfiMenuTarget_lower(_ value: FfiMenuTarget) -> RustB
 
 
 /**
+ * How the name text is matched (NFC, case-folded).
+ */
+
+public enum FfiNameMode: Equatable, Hashable {
+    
+    case contains
+    case glob
+    case regex
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiNameMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNameMode: FfiConverterRustBuffer {
+    typealias SwiftType = FfiNameMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNameMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .contains
+        
+        case 2: return .glob
+        
+        case 3: return .regex
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiNameMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .contains:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .glob:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .regex:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNameMode_lift(_ buf: RustBuffer) throws -> FfiNameMode {
+    return try FfiConverterTypeFfiNameMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNameMode_lower(_ value: FfiNameMode) -> RustBuffer {
+    return FfiConverterTypeFfiNameMode.lower(value)
+}
+
+
+
+/**
  * What an operation does.
  */
 
@@ -11460,6 +11931,289 @@ public func FfiConverterTypeFfiRowKind_lower(_ value: FfiRowKind) -> RustBuffer 
 
 
 /**
+ * A kind for the kind filter.
+ */
+
+public enum FfiSearchKind: Equatable, Hashable {
+    
+    case folder
+    case application
+    case image
+    case movie
+    case audio
+    case pdf
+    case text
+    case document
+    case archive
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiSearchKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSearchKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSearchKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSearchKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .folder
+        
+        case 2: return .application
+        
+        case 3: return .image
+        
+        case 4: return .movie
+        
+        case 5: return .audio
+        
+        case 6: return .pdf
+        
+        case 7: return .text
+        
+        case 8: return .document
+        
+        case 9: return .archive
+        
+        case 10: return .other
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSearchKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .folder:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .application:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .image:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .movie:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .audio:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .pdf:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .text:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .document:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .archive:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(10))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchKind_lift(_ buf: RustBuffer) throws -> FfiSearchKind {
+    return try FfiConverterTypeFfiSearchKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchKind_lower(_ value: FfiSearchKind) -> RustBuffer {
+    return FfiConverterTypeFfiSearchKind.lower(value)
+}
+
+
+
+/**
+ * Where a search looks.
+ */
+
+public enum FfiSearchScope: Equatable, Hashable {
+    
+    /**
+     * The folder the tab shows, and below.
+     */
+    case thisFolder
+    /**
+     * The whole Mac.
+     */
+    case thisMac
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiSearchScope: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSearchScope: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSearchScope
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSearchScope {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .thisFolder
+        
+        case 2: return .thisMac
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSearchScope, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .thisFolder:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .thisMac:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchScope_lift(_ buf: RustBuffer) throws -> FfiSearchScope {
+    return try FfiConverterTypeFfiSearchScope.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchScope_lower(_ value: FfiSearchScope) -> RustBuffer {
+    return FfiConverterTypeFfiSearchScope.lower(value)
+}
+
+
+
+/**
+ * Where a search is in its life.
+ */
+
+public enum FfiSearchState: Equatable, Hashable {
+    
+    case searching
+    case done
+    case stopped
+    case truncated
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiSearchState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSearchState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSearchState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSearchState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .searching
+        
+        case 2: return .done
+        
+        case 3: return .stopped
+        
+        case 4: return .truncated
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiSearchState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .searching:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .stopped:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .truncated:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchState_lift(_ buf: RustBuffer) throws -> FfiSearchState {
+    return try FfiConverterTypeFfiSearchState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSearchState_lower(_ value: FfiSearchState) -> RustBuffer {
+    return FfiConverterTypeFfiSearchState.lower(value)
+}
+
+
+
+/**
  * A change to the selection.
  */
 
@@ -11649,6 +12403,11 @@ public enum FfiShellRequest: Equatable, Hashable {
     case focusAddressBar(pane: UInt64, text: String
     )
     case focusFilter
+    /**
+     * M3: show the search bar with this text.
+     */
+    case showSearch(text: String
+    )
     case focusList
     case textField(command: String
     )
@@ -11765,60 +12524,63 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         
         case 19: return .focusFilter
         
-        case 20: return .focusList
-        
-        case 21: return .textField(command: try FfiConverterString.read(from: &buf)
+        case 20: return .showSearch(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 22: return .showPalette
+        case 21: return .focusList
         
-        case 23: return .showQuickOpen
-        
-        case 24: return .showSettings(section: try FfiConverterString.read(from: &buf)
+        case 22: return .textField(command: try FfiConverterString.read(from: &buf)
         )
         
-        case 25: return .confirmMove(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
+        case 23: return .showPalette
+        
+        case 24: return .showQuickOpen
+        
+        case 25: return .showSettings(section: try FfiConverterString.read(from: &buf)
         )
         
-        case 26: return .moved(text: try FfiConverterString.read(from: &buf)
+        case 26: return .confirmMove(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 27: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf), style: try FfiConverterTypeFfiToastStyle.read(from: &buf)
+        case 27: return .moved(text: try FfiConverterString.read(from: &buf)
         )
         
-        case 28: return .showOperations
-        
-        case 29: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
+        case 28: return .toast(text: try FfiConverterString.read(from: &buf), button: try FfiConverterOptionString.read(from: &buf), command: try FfiConverterOptionString.read(from: &buf), style: try FfiConverterTypeFfiToastStyle.read(from: &buf)
         )
         
-        case 30: return .showPowerTour
+        case 29: return .showOperations
         
-        case 31: return .toggleSidebar
-        
-        case 32: return .toggleInspector
-        
-        case 33: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 30: return .confirm(token: try FfiConverterUInt64.read(from: &buf), title: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), yes: try FfiConverterString.read(from: &buf), no: try FfiConverterString.read(from: &buf)
         )
         
-        case 34: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 31: return .showPowerTour
+        
+        case 32: return .toggleSidebar
+        
+        case 33: return .toggleInspector
+        
+        case 34: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 35: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 35: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 36: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 36: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 37: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 37: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 38: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 38: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 39: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        case 39: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 40: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 40: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 41: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -11927,30 +12689,35 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             writeInt(&buf, Int32(19))
         
         
-        case .focusList:
+        case let .showSearch(text):
             writeInt(&buf, Int32(20))
+            FfiConverterString.write(text, into: &buf)
+            
+        
+        case .focusList:
+            writeInt(&buf, Int32(21))
         
         
         case let .textField(command):
-            writeInt(&buf, Int32(21))
+            writeInt(&buf, Int32(22))
             FfiConverterString.write(command, into: &buf)
             
         
         case .showPalette:
-            writeInt(&buf, Int32(22))
-        
-        
-        case .showQuickOpen:
             writeInt(&buf, Int32(23))
         
         
-        case let .showSettings(section):
+        case .showQuickOpen:
             writeInt(&buf, Int32(24))
+        
+        
+        case let .showSettings(section):
+            writeInt(&buf, Int32(25))
             FfiConverterString.write(section, into: &buf)
             
         
         case let .confirmMove(token,title,detail,paths):
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(26))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterString.write(title, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -11958,12 +12725,12 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .moved(text):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(27))
             FfiConverterString.write(text, into: &buf)
             
         
         case let .toast(text,button,command,style):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(28))
             FfiConverterString.write(text, into: &buf)
             FfiConverterOptionString.write(button, into: &buf)
             FfiConverterOptionString.write(command, into: &buf)
@@ -11971,11 +12738,11 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case .showOperations:
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(29))
         
         
         case let .confirm(token,title,detail,yes,no):
-            writeInt(&buf, Int32(29))
+            writeInt(&buf, Int32(30))
             FfiConverterUInt64.write(token, into: &buf)
             FfiConverterString.write(title, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -11984,50 +12751,50 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case .showPowerTour:
-            writeInt(&buf, Int32(30))
-        
-        
-        case .toggleSidebar:
             writeInt(&buf, Int32(31))
         
         
-        case .toggleInspector:
+        case .toggleSidebar:
             writeInt(&buf, Int32(32))
         
         
-        case let .eject(path):
+        case .toggleInspector:
             writeInt(&buf, Int32(33))
-            FfiConverterString.write(path, into: &buf)
-            
         
-        case let .showDriveInfo(path):
+        
+        case let .eject(path):
             writeInt(&buf, Int32(34))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDriveInfo(path):
             writeInt(&buf, Int32(35))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(36))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(36))
+            writeInt(&buf, Int32(37))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(37))
-            FfiConverterUInt64.write(window, into: &buf)
-            
-        
-        case let .closeWindow(window):
             writeInt(&buf, Int32(38))
             FfiConverterUInt64.write(window, into: &buf)
             
         
-        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+        case let .closeWindow(window):
             writeInt(&buf, Int32(39))
+            FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(40))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(question, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -12036,7 +12803,7 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .sourceMissing(op,text):
-            writeInt(&buf, Int32(40))
+            writeInt(&buf, Int32(41))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
@@ -13383,6 +14150,30 @@ fileprivate struct FfiConverterOptionTypeFfiScrollAnchor: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiSearchStatus: FfiConverterRustBuffer {
+    typealias SwiftType = FfiSearchStatus?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiSearchStatus.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiSearchStatus.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiTabExtension: FfiConverterRustBuffer {
     typealias SwiftType = FfiTabExtension?
 
@@ -14148,6 +14939,31 @@ fileprivate struct FfiConverterSequenceTypeFfiWorkspaceSummary: FfiConverterRust
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiSearchKind: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiSearchKind]
+
+    public static func write(_ value: [FfiSearchKind], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiSearchKind.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiSearchKind] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiSearchKind]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiSearchKind.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * The core's version.
  */
@@ -14666,6 +15482,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_view() != 24051) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_end_search() != 53806) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_search() != 26465) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_search_status() != 45969) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_stop_search() != 16809) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitabcycle_is_cycling() != 8092) {
