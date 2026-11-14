@@ -8,13 +8,14 @@ import Observation
 import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Hashable {
-    case general, appearance, views, addressBar, operations, shortcuts, menus, advanced
+    case general, appearance, views, addressBar, previews, operations, shortcuts, menus, advanced
     var title: String {
         switch self {
         case .general: "General"
         case .appearance: "Appearance"
         case .views: "Views & Columns"
         case .addressBar: "Address Bar"
+        case .previews: "Previews"
         case .operations: "Operations & Safety"
         case .shortcuts: "Shortcuts"
         case .menus: "Menus"
@@ -27,6 +28,7 @@ enum SettingsTab: String, CaseIterable, Hashable {
         case .appearance: "paintbrush"
         case .views: "list.bullet.rectangle"
         case .addressBar: "location"
+        case .previews: "sidebar.right"
         case .operations: "externaldrive.badge.checkmark"
         case .shortcuts: "keyboard"
         case .menus: "contextualmenu.and.cursorarrow"
@@ -101,7 +103,7 @@ struct SettingsRoot: View {
                             Image(systemName: tab.symbol).font(.system(size: 19)).frame(height: 24)
                             Text(tab.shortTitle).font(.caption)
                         }
-                        .frame(width: 82, height: 54)
+                        .frame(width: 76, height: 54)
                         .foregroundStyle(on ? Color.accentColor : Color.secondary)
                         .background(RoundedRectangle(cornerRadius: 9).fill(on ? Color.accentColor.opacity(0.16) : .clear))
                         .contentShape(Rectangle())
@@ -125,6 +127,7 @@ struct SettingsRoot: View {
         case .appearance: SettingsAppearancePane(model: model)
         case .views: SettingsViewsPane(model: model)
         case .addressBar: SettingsAddressBarPane(model: model)
+        case .previews: SettingsPreviewsPane(model: model)
         case .operations: SettingsOperationsPane(model: model)
         case .shortcuts: SettingsShortcutsPane(model: model)
         case .menus: SettingsMenusPane(model: model)

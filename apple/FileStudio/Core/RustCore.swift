@@ -852,6 +852,7 @@ final class RustEngine: EngineAPI, @unchecked Sendable {
     func updateSettings(_ s: Settings) throws { try wrap { try ffi.updateSettings(s: s.ffi) } }
     func setting(_ key: String) throws -> String { try wrap { try ffi.setting(key: key) } }
     func setSetting(_ key: String, json: String) throws { try wrap { try ffi.setSetting(key: key, value: json) } }
+    func makePreviewer() -> PreviewerAPI { RustPreviewer(engine: ffi) }
 
     // Workspace
     func restoreSession() -> WorkspaceState { WorkspaceState(ffi.restoreSession()) }

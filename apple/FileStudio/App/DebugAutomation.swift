@@ -236,7 +236,7 @@ enum DebugAutomation {
         "f9": NSF9FunctionKey, "f10": NSF10FunctionKey, "f11": NSF11FunctionKey, "f12": NSF12FunctionKey,
     ]
 
-    private static func sendKey(_ spec: String) {
+    static func sendKey(_ spec: String) {
         var parts = spec.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init)
         // "cmd++" style is not supported; "+" itself isn't a key here.
         let name = parts.removeLast()

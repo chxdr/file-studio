@@ -487,6 +487,22 @@ fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
+    typealias FfiType = UInt16
+    typealias SwiftType = UInt16
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt16 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -667,6 +683,162 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
         writeBytes(&buf, value)
     }
 }
+
+
+
+
+/**
+ * A flag the shell sets to stop a preview that has been scrolled past.
+ */
+public protocol FfiCancelTokenProtocol: AnyObject, Sendable {
+    
+    /**
+     * Asks the preview to stop. Any thread.
+     */
+    func cancel() 
+    
+    /**
+     * Has it been cancelled?
+     */
+    func isCancelled()  -> Bool
+    
+}
+/**
+ * A flag the shell sets to stop a preview that has been scrolled past.
+ */
+open class FfiCancelToken: FfiCancelTokenProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_fficanceltoken(self.handle, $0) }
+    }
+    /**
+     * A token that has not fired.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_constructor_fficanceltoken_new(uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_fficanceltoken(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Asks the preview to stop. Any thread.
+     */
+open func cancel()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_fficanceltoken_cancel(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Has it been cancelled?
+     */
+open func isCancelled() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_fficanceltoken_is_cancelled(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCancelToken: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiCancelToken
+
+    public static func lift(_ handle: UInt64) throws -> FfiCancelToken {
+        return FfiCancelToken(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiCancelToken) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCancelToken {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiCancelToken, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCancelToken_lift(_ handle: UInt64) throws -> FfiCancelToken {
+    return try FfiConverterTypeFfiCancelToken.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCancelToken_lower(_ value: FfiCancelToken) -> UInt64 {
+    return FfiConverterTypeFfiCancelToken.lower(value)
+}
+
+
 
 
 
@@ -2935,6 +3107,189 @@ public func FfiConverterTypeFfiListing_lower(_ value: FfiListing) -> UInt64 {
 
 
 /**
+ * Makes previews for the preview pane. One per app; it remembers recent
+ * ones by (path, modification time, size).
+ */
+public protocol FfiPreviewerProtocol: AnyObject, Sendable {
+    
+    /**
+     * The preview if it is already cached and the file is unchanged. Reads
+     * no content, so the main thread may call it.
+     */
+    func cached(path: String)  -> FfiPreview?
+    
+    /**
+     * Forgets every cached preview.
+     */
+    func clear() 
+    
+    /**
+     * The preview of `path`. **Blocks on disk**: call it from a background
+     * queue. `None` when `cancel` fired first or the path can't be read.
+     */
+    func summarize(path: String, cancel: FfiCancelToken)  -> FfiPreview?
+    
+}
+/**
+ * Makes previews for the preview pane. One per app; it remembers recent
+ * ones by (path, modification time, size).
+ */
+open class FfiPreviewer: FfiPreviewerProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_fstudio_ffi_fn_clone_ffipreviewer(self.handle, $0) }
+    }
+    /**
+     * A previewer that reads its limits from the engine's `preview.*` settings.
+     */
+public convenience init(engine: FfiEngine) {
+    let handle =
+        try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_constructor_ffipreviewer_new(
+        FfiConverterTypeFfiEngine_lower(engine),uniffiCallStatus
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_fstudio_ffi_fn_free_ffipreviewer(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The preview if it is already cached and the file is unchanged. Reads
+     * no content, so the main thread may call it.
+     */
+open func cached(path: String) -> FfiPreview?  {
+    return try!  FfiConverterOptionTypeFfiPreview.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffipreviewer_cached(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Forgets every cached preview.
+     */
+open func clear()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffipreviewer_clear(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The preview of `path`. **Blocks on disk**: call it from a background
+     * queue. `None` when `cancel` fired first or the path can't be read.
+     */
+open func summarize(path: String, cancel: FfiCancelToken) -> FfiPreview?  {
+    return try!  FfiConverterOptionTypeFfiPreview.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffipreviewer_summarize(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterTypeFfiCancelToken_lower(cancel),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreviewer: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiPreviewer
+
+    public static func lift(_ handle: UInt64) throws -> FfiPreviewer {
+        return FfiPreviewer(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: FfiPreviewer) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreviewer {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiPreviewer, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewer_lift(_ handle: UInt64) throws -> FfiPreviewer {
+    return try FfiConverterTypeFfiPreviewer.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewer_lower(_ value: FfiPreviewer) -> UInt64 {
+    return FfiConverterTypeFfiPreviewer.lower(value)
+}
+
+
+
+
+
+
+/**
  * One tab: a location, its history, view state, selection and listing.
  */
 public protocol FfiTabProtocol: AnyObject, Sendable {
@@ -4365,6 +4720,67 @@ public func FfiConverterTypeFfiFavourite_lift(_ buf: RustBuffer) throws -> FfiFa
 #endif
 public func FfiConverterTypeFfiFavourite_lower(_ value: FfiFavourite) -> RustBuffer {
     return FfiConverterTypeFfiFavourite.lower(value)
+}
+
+
+/**
+ * What a folder holds.
+ */
+public struct FfiFolderInfo: Equatable, Hashable {
+    public var items: UInt64
+    public var atLeast: Bool
+    public var unreadable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(items: UInt64, atLeast: Bool, unreadable: Bool) {
+        self.items = items
+        self.atLeast = atLeast
+        self.unreadable = unreadable
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiFolderInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiFolderInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiFolderInfo {
+        return
+            try FfiFolderInfo(
+                items: FfiConverterUInt64.read(from: &buf), 
+                atLeast: FfiConverterBool.read(from: &buf), 
+                unreadable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiFolderInfo, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.items, into: &buf)
+        FfiConverterBool.write(value.atLeast, into: &buf)
+        FfiConverterBool.write(value.unreadable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFolderInfo_lift(_ buf: RustBuffer) throws -> FfiFolderInfo {
+    return try FfiConverterTypeFfiFolderInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFolderInfo_lower(_ value: FfiFolderInfo) -> RustBuffer {
+    return FfiConverterTypeFfiFolderInfo.lower(value)
 }
 
 
@@ -6086,6 +6502,293 @@ public func FfiConverterTypeFfiPathBarSettings_lower(_ value: FfiPathBarSettings
 
 
 /**
+ * Camera details, formatted for display.
+ */
+public struct FfiPhotoInfo: Equatable, Hashable {
+    public var dateTaken: String?
+    public var camera: String?
+    public var lens: String?
+    public var focalLength: String?
+    public var aperture: String?
+    public var shutter: String?
+    public var iso: String?
+    public var exposureComp: String?
+    public var dimensions: String?
+    public var width: UInt32?
+    public var height: UInt32?
+    public var orientation: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(dateTaken: String?, camera: String?, lens: String?, focalLength: String?, aperture: String?, shutter: String?, iso: String?, exposureComp: String?, dimensions: String?, width: UInt32?, height: UInt32?, orientation: UInt16?) {
+        self.dateTaken = dateTaken
+        self.camera = camera
+        self.lens = lens
+        self.focalLength = focalLength
+        self.aperture = aperture
+        self.shutter = shutter
+        self.iso = iso
+        self.exposureComp = exposureComp
+        self.dimensions = dimensions
+        self.width = width
+        self.height = height
+        self.orientation = orientation
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhotoInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhotoInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhotoInfo {
+        return
+            try FfiPhotoInfo(
+                dateTaken: FfiConverterOptionString.read(from: &buf), 
+                camera: FfiConverterOptionString.read(from: &buf), 
+                lens: FfiConverterOptionString.read(from: &buf), 
+                focalLength: FfiConverterOptionString.read(from: &buf), 
+                aperture: FfiConverterOptionString.read(from: &buf), 
+                shutter: FfiConverterOptionString.read(from: &buf), 
+                iso: FfiConverterOptionString.read(from: &buf), 
+                exposureComp: FfiConverterOptionString.read(from: &buf), 
+                dimensions: FfiConverterOptionString.read(from: &buf), 
+                width: FfiConverterOptionUInt32.read(from: &buf), 
+                height: FfiConverterOptionUInt32.read(from: &buf), 
+                orientation: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhotoInfo, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.dateTaken, into: &buf)
+        FfiConverterOptionString.write(value.camera, into: &buf)
+        FfiConverterOptionString.write(value.lens, into: &buf)
+        FfiConverterOptionString.write(value.focalLength, into: &buf)
+        FfiConverterOptionString.write(value.aperture, into: &buf)
+        FfiConverterOptionString.write(value.shutter, into: &buf)
+        FfiConverterOptionString.write(value.iso, into: &buf)
+        FfiConverterOptionString.write(value.exposureComp, into: &buf)
+        FfiConverterOptionString.write(value.dimensions, into: &buf)
+        FfiConverterOptionUInt32.write(value.width, into: &buf)
+        FfiConverterOptionUInt32.write(value.height, into: &buf)
+        FfiConverterOptionUInt16.write(value.orientation, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhotoInfo_lift(_ buf: RustBuffer) throws -> FfiPhotoInfo {
+    return try FfiConverterTypeFfiPhotoInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhotoInfo_lower(_ value: FfiPhotoInfo) -> RustBuffer {
+    return FfiConverterTypeFfiPhotoInfo.lower(value)
+}
+
+
+/**
+ * Everything the preview pane shows about one item.
+ */
+public struct FfiPreview: Equatable, Hashable {
+    public var path: String
+    /**
+     * The name exactly as stored.
+     */
+    public var name: String
+    public var category: FfiPreviewCategory
+    public var size: UInt64
+    public var modifiedNs: Int64
+    public var createdNs: Int64?
+    public var accessedNs: Int64?
+    public var isSymlink: Bool
+    /**
+     * An iCloud placeholder: nothing was read; offer Download.
+     */
+    public var dataless: Bool
+    public var tags: [FfiPreviewTag]
+    public var photo: FfiPhotoInfo?
+    public var video: FfiVideoInfo?
+    public var text: FfiTextPreview?
+    public var folder: FfiFolderInfo?
+    /**
+     * Why there is little to show.
+     */
+    public var note: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, 
+        /**
+         * The name exactly as stored.
+         */name: String, category: FfiPreviewCategory, size: UInt64, modifiedNs: Int64, createdNs: Int64?, accessedNs: Int64?, isSymlink: Bool, 
+        /**
+         * An iCloud placeholder: nothing was read; offer Download.
+         */dataless: Bool, tags: [FfiPreviewTag], photo: FfiPhotoInfo?, video: FfiVideoInfo?, text: FfiTextPreview?, folder: FfiFolderInfo?, 
+        /**
+         * Why there is little to show.
+         */note: String?) {
+        self.path = path
+        self.name = name
+        self.category = category
+        self.size = size
+        self.modifiedNs = modifiedNs
+        self.createdNs = createdNs
+        self.accessedNs = accessedNs
+        self.isSymlink = isSymlink
+        self.dataless = dataless
+        self.tags = tags
+        self.photo = photo
+        self.video = video
+        self.text = text
+        self.folder = folder
+        self.note = note
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreview {
+        return
+            try FfiPreview(
+                path: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                category: FfiConverterTypeFfiPreviewCategory.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                modifiedNs: FfiConverterInt64.read(from: &buf), 
+                createdNs: FfiConverterOptionInt64.read(from: &buf), 
+                accessedNs: FfiConverterOptionInt64.read(from: &buf), 
+                isSymlink: FfiConverterBool.read(from: &buf), 
+                dataless: FfiConverterBool.read(from: &buf), 
+                tags: FfiConverterSequenceTypeFfiPreviewTag.read(from: &buf), 
+                photo: FfiConverterOptionTypeFfiPhotoInfo.read(from: &buf), 
+                video: FfiConverterOptionTypeFfiVideoInfo.read(from: &buf), 
+                text: FfiConverterOptionTypeFfiTextPreview.read(from: &buf), 
+                folder: FfiConverterOptionTypeFfiFolderInfo.read(from: &buf), 
+                note: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPreview, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeFfiPreviewCategory.write(value.category, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterInt64.write(value.modifiedNs, into: &buf)
+        FfiConverterOptionInt64.write(value.createdNs, into: &buf)
+        FfiConverterOptionInt64.write(value.accessedNs, into: &buf)
+        FfiConverterBool.write(value.isSymlink, into: &buf)
+        FfiConverterBool.write(value.dataless, into: &buf)
+        FfiConverterSequenceTypeFfiPreviewTag.write(value.tags, into: &buf)
+        FfiConverterOptionTypeFfiPhotoInfo.write(value.photo, into: &buf)
+        FfiConverterOptionTypeFfiVideoInfo.write(value.video, into: &buf)
+        FfiConverterOptionTypeFfiTextPreview.write(value.text, into: &buf)
+        FfiConverterOptionTypeFfiFolderInfo.write(value.folder, into: &buf)
+        FfiConverterOptionString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreview_lift(_ buf: RustBuffer) throws -> FfiPreview {
+    return try FfiConverterTypeFfiPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreview_lower(_ value: FfiPreview) -> RustBuffer {
+    return FfiConverterTypeFfiPreview.lower(value)
+}
+
+
+/**
+ * A Finder tag.
+ */
+public struct FfiPreviewTag: Equatable, Hashable {
+    public var name: String
+    /**
+     * Finder's colour index 0–7.
+     */
+    public var color: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, 
+        /**
+         * Finder's colour index 0–7.
+         */color: UInt8) {
+        self.name = name
+        self.color = color
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPreviewTag: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreviewTag: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreviewTag {
+        return
+            try FfiPreviewTag(
+                name: FfiConverterString.read(from: &buf), 
+                color: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPreviewTag, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterUInt8.write(value.color, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewTag_lift(_ buf: RustBuffer) throws -> FfiPreviewTag {
+    return try FfiConverterTypeFfiPreviewTag.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewTag_lower(_ value: FfiPreviewTag) -> RustBuffer {
+    return FfiConverterTypeFfiPreviewTag.lower(value)
+}
+
+
+/**
  * A byte range to highlight.
  */
 public struct FfiRange: Equatable, Hashable {
@@ -6572,6 +7275,67 @@ public func FfiConverterTypeFfiShortcutRow_lower(_ value: FfiShortcutRow) -> Rus
 
 
 /**
+ * A coloured run in a line, in UTF-16 code units.
+ */
+public struct FfiSpan: Equatable, Hashable {
+    public var start: UInt32
+    public var len: UInt32
+    public var `class`: FfiTokenClass
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(start: UInt32, len: UInt32, `class`: FfiTokenClass) {
+        self.start = start
+        self.len = len
+        self.`class` = `class`
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiSpan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSpan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSpan {
+        return
+            try FfiSpan(
+                start: FfiConverterUInt32.read(from: &buf), 
+                len: FfiConverterUInt32.read(from: &buf), 
+                class: FfiConverterTypeFfiTokenClass.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSpan, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.start, into: &buf)
+        FfiConverterUInt32.write(value.len, into: &buf)
+        FfiConverterTypeFfiTokenClass.write(value.`class`, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSpan_lift(_ buf: RustBuffer) throws -> FfiSpan {
+    return try FfiConverterTypeFfiSpan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSpan_lower(_ value: FfiSpan) -> RustBuffer {
+    return FfiConverterTypeFfiSpan.lower(value)
+}
+
+
+/**
  * What Tab does first.
  */
 public struct FfiTabExtension: Equatable, Hashable {
@@ -6781,6 +7545,136 @@ public func FfiConverterTypeFfiTextEdit_lower(_ value: FfiTextEdit) -> RustBuffe
 
 
 /**
+ * One line of text with its coloured runs.
+ */
+public struct FfiTextLine: Equatable, Hashable {
+    public var text: String
+    public var spans: [FfiSpan]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, spans: [FfiSpan]) {
+        self.text = text
+        self.spans = spans
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTextLine: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTextLine: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTextLine {
+        return
+            try FfiTextLine(
+                text: FfiConverterString.read(from: &buf), 
+                spans: FfiConverterSequenceTypeFfiSpan.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTextLine, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterSequenceTypeFfiSpan.write(value.spans, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextLine_lift(_ buf: RustBuffer) throws -> FfiTextLine {
+    return try FfiConverterTypeFfiTextLine.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextLine_lower(_ value: FfiTextLine) -> RustBuffer {
+    return FfiConverterTypeFfiTextLine.lower(value)
+}
+
+
+/**
+ * The start of a text file.
+ */
+public struct FfiTextPreview: Equatable, Hashable {
+    public var encoding: String
+    public var language: String?
+    public var lineCount: UInt64
+    public var linesExact: Bool
+    public var lines: [FfiTextLine]
+    public var truncated: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(encoding: String, language: String?, lineCount: UInt64, linesExact: Bool, lines: [FfiTextLine], truncated: Bool) {
+        self.encoding = encoding
+        self.language = language
+        self.lineCount = lineCount
+        self.linesExact = linesExact
+        self.lines = lines
+        self.truncated = truncated
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiTextPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTextPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTextPreview {
+        return
+            try FfiTextPreview(
+                encoding: FfiConverterString.read(from: &buf), 
+                language: FfiConverterOptionString.read(from: &buf), 
+                lineCount: FfiConverterUInt64.read(from: &buf), 
+                linesExact: FfiConverterBool.read(from: &buf), 
+                lines: FfiConverterSequenceTypeFfiTextLine.read(from: &buf), 
+                truncated: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTextPreview, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.encoding, into: &buf)
+        FfiConverterOptionString.write(value.language, into: &buf)
+        FfiConverterUInt64.write(value.lineCount, into: &buf)
+        FfiConverterBool.write(value.linesExact, into: &buf)
+        FfiConverterSequenceTypeFfiTextLine.write(value.lines, into: &buf)
+        FfiConverterBool.write(value.truncated, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextPreview_lift(_ buf: RustBuffer) throws -> FfiTextPreview {
+    return try FfiConverterTypeFfiTextPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextPreview_lower(_ value: FfiTextPreview) -> RustBuffer {
+    return FfiConverterTypeFfiTextPreview.lower(value)
+}
+
+
+/**
  * Edit-menu undo/redo labels.
  */
 public struct FfiUndoState: Equatable, Hashable {
@@ -6834,6 +7728,87 @@ public func FfiConverterTypeFfiUndoState_lift(_ buf: RustBuffer) throws -> FfiUn
 #endif
 public func FfiConverterTypeFfiUndoState_lower(_ value: FfiUndoState) -> RustBuffer {
     return FfiConverterTypeFfiUndoState.lower(value)
+}
+
+
+/**
+ * Movie details, formatted for display.
+ */
+public struct FfiVideoInfo: Equatable, Hashable {
+    public var codec: String?
+    public var durationSecs: Double?
+    public var duration: String?
+    public var resolution: String?
+    public var width: UInt32?
+    public var height: UInt32?
+    public var frameRate: String?
+    public var audio: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(codec: String?, durationSecs: Double?, duration: String?, resolution: String?, width: UInt32?, height: UInt32?, frameRate: String?, audio: String?) {
+        self.codec = codec
+        self.durationSecs = durationSecs
+        self.duration = duration
+        self.resolution = resolution
+        self.width = width
+        self.height = height
+        self.frameRate = frameRate
+        self.audio = audio
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiVideoInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiVideoInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiVideoInfo {
+        return
+            try FfiVideoInfo(
+                codec: FfiConverterOptionString.read(from: &buf), 
+                durationSecs: FfiConverterOptionDouble.read(from: &buf), 
+                duration: FfiConverterOptionString.read(from: &buf), 
+                resolution: FfiConverterOptionString.read(from: &buf), 
+                width: FfiConverterOptionUInt32.read(from: &buf), 
+                height: FfiConverterOptionUInt32.read(from: &buf), 
+                frameRate: FfiConverterOptionString.read(from: &buf), 
+                audio: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiVideoInfo, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.codec, into: &buf)
+        FfiConverterOptionDouble.write(value.durationSecs, into: &buf)
+        FfiConverterOptionString.write(value.duration, into: &buf)
+        FfiConverterOptionString.write(value.resolution, into: &buf)
+        FfiConverterOptionUInt32.write(value.width, into: &buf)
+        FfiConverterOptionUInt32.write(value.height, into: &buf)
+        FfiConverterOptionString.write(value.frameRate, into: &buf)
+        FfiConverterOptionString.write(value.audio, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVideoInfo_lift(_ buf: RustBuffer) throws -> FfiVideoInfo {
+    return try FfiConverterTypeFfiVideoInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiVideoInfo_lower(_ value: FfiVideoInfo) -> RustBuffer {
+    return FfiConverterTypeFfiVideoInfo.lower(value)
 }
 
 
@@ -10132,6 +11107,124 @@ public func FfiConverterTypeFfiPathStyle_lower(_ value: FfiPathStyle) -> RustBuf
 
 
 /**
+ * What kind of item a preview is about.
+ */
+
+public enum FfiPreviewCategory: Equatable, Hashable {
+    
+    case image
+    case raw
+    case video
+    case audio
+    case text
+    case folder
+    case package
+    case other
+    case unknown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiPreviewCategory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPreviewCategory: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPreviewCategory
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPreviewCategory {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .image
+        
+        case 2: return .raw
+        
+        case 3: return .video
+        
+        case 4: return .audio
+        
+        case 5: return .text
+        
+        case 6: return .folder
+        
+        case 7: return .package
+        
+        case 8: return .other
+        
+        case 9: return .unknown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiPreviewCategory, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .image:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .raw:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .video:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .audio:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .text:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .folder:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .package:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .unknown:
+            writeInt(&buf, Int32(9))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewCategory_lift(_ buf: RustBuffer) throws -> FfiPreviewCategory {
+    return try FfiConverterTypeFfiPreviewCategory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPreviewCategory_lower(_ value: FfiPreviewCategory) -> RustBuffer {
+    return FfiConverterTypeFfiPreviewCategory.lower(value)
+}
+
+
+
+/**
  * Which keymap is active.
  */
 
@@ -11462,6 +12555,152 @@ public func FfiConverterTypeFfiToastStyle_lower(_ value: FfiToastStyle) -> RustB
 
 
 /**
+ * What kind of token a highlighted span is.
+ */
+
+public enum FfiTokenClass: Equatable, Hashable {
+    
+    case keyword
+    case string
+    case number
+    case comment
+    case function
+    case type
+    case constant
+    case punctuation
+    case tag
+    case attribute
+    case heading
+    case variable
+    case invalid
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTokenClass: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTokenClass: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTokenClass
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTokenClass {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .keyword
+        
+        case 2: return .string
+        
+        case 3: return .number
+        
+        case 4: return .comment
+        
+        case 5: return .function
+        
+        case 6: return .type
+        
+        case 7: return .constant
+        
+        case 8: return .punctuation
+        
+        case 9: return .tag
+        
+        case 10: return .attribute
+        
+        case 11: return .heading
+        
+        case 12: return .variable
+        
+        case 13: return .invalid
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTokenClass, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .keyword:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .string:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .number:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .comment:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .function:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .type:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .constant:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .punctuation:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .tag:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .attribute:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .heading:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .variable:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .invalid:
+            writeInt(&buf, Int32(13))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTokenClass_lift(_ buf: RustBuffer) throws -> FfiTokenClass {
+    return try FfiConverterTypeFfiTokenClass.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTokenClass_lower(_ value: FfiTokenClass) -> RustBuffer {
+    return FfiConverterTypeFfiTokenClass.lower(value)
+}
+
+
+
+/**
  * How a command was issued.
  */
 
@@ -11736,6 +12975,30 @@ fileprivate struct FfiConverterOptionUInt8: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt16: FfiConverterRustBuffer {
+    typealias SwiftType = UInt16?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt16.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt16.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
     typealias SwiftType = UInt32?
 
@@ -11808,6 +13071,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
+    typealias SwiftType = Int64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
     typealias SwiftType = Double?
 
@@ -11872,6 +13159,30 @@ fileprivate struct FfiConverterOptionTypeFfiTab: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiTab.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiFolderInfo: FfiConverterRustBuffer {
+    typealias SwiftType = FfiFolderInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiFolderInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiFolderInfo.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -12000,6 +13311,54 @@ fileprivate struct FfiConverterOptionTypeFfiOutcome: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiPhotoInfo: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPhotoInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPhotoInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPhotoInfo.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiPreview: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPreview?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPreview.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiScrollAnchor: FfiConverterRustBuffer {
     typealias SwiftType = FfiScrollAnchor?
 
@@ -12040,6 +13399,54 @@ fileprivate struct FfiConverterOptionTypeFfiTabExtension: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiTabExtension.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiTextPreview: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTextPreview?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiTextPreview.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiTextPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiVideoInfo: FfiConverterRustBuffer {
+    typealias SwiftType = FfiVideoInfo?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiVideoInfo.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiVideoInfo.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -12495,6 +13902,31 @@ fileprivate struct FfiConverterSequenceTypeFfiPaneState: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiPreviewTag: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPreviewTag]
+
+    public static func write(_ value: [FfiPreviewTag], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPreviewTag.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPreviewTag] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPreviewTag]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPreviewTag.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiRange: FfiConverterRustBuffer {
     typealias SwiftType = [FfiRange]
 
@@ -12570,6 +14002,31 @@ fileprivate struct FfiConverterSequenceTypeFfiShortcutRow: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiSpan: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiSpan]
+
+    public static func write(_ value: [FfiSpan], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiSpan.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiSpan] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiSpan]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiSpan.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiTabState: FfiConverterRustBuffer {
     typealias SwiftType = [FfiTabState]
 
@@ -12587,6 +14044,31 @@ fileprivate struct FfiConverterSequenceTypeFfiTabState: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiTabState.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTextLine: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTextLine]
+
+    public static func write(_ value: [FfiTextLine], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTextLine.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTextLine] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTextLine]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTextLine.read(from: &buf))
         }
         return seq
     }
@@ -13195,10 +14677,31 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffitabcycle_reset() != 12368) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_fstudio_ffi_checksum_method_fficanceltoken_cancel() != 36156) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_fficanceltoken_is_cancelled() != 48001) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffipreviewer_cached() != 20466) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffipreviewer_clear() != 30914) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffipreviewer_summarize() != 5203) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_fstudio_ffi_checksum_constructor_ffiengine_new() != 3887) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_constructor_ffitabcycle_new() != 7503) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_constructor_fficanceltoken_new() != 64757) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_constructor_ffipreviewer_new() != 61771) {
         return InitializationResult.apiChecksumMismatch
     }
 

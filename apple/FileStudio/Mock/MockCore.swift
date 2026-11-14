@@ -126,6 +126,7 @@ final class MockEngine: EngineAPI, @unchecked Sendable {
     func updateSettings(_ s: Settings) throws { settingsValue = s; emit(.settingsChanged) }
     func setting(_ key: String) throws -> String { throw CoreError(.notAvailable, "Mock: no JSON settings") }
     func setSetting(_ key: String, json: String) throws { throw CoreError(.notAvailable, "Mock: no JSON settings") }
+    func makePreviewer() -> PreviewerAPI { MockPreviewer() }
 
     // Workspace
     private func makeTab(_ path: String) -> MockTab {

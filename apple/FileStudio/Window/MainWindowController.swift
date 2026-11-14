@@ -27,6 +27,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
     private var mouseMonitor: Any?
     private var responderObservation: NSKeyValueObservation?
     private var handlers: [Int] = []
+    // Preview pane (M3, Preview/).
+    private var previewVC: PreviewController!
+    private var previewItem: NSSplitViewItem?
+    private var applyingPreview = false
+    private var previewWidthWrite: DispatchWorkItem?
     /// The pane the first responder was last seen in (to report focus moves).
     private var lastFocusPane: Int?
     private var lastActivePane: Int?
@@ -68,6 +73,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         WindowDebugSteps.install()
         SafetyDebugSteps.install()
         ListDropProbe.install()
+        PreviewDebugSteps.install()
         #endif
     }
 
@@ -108,12 +114,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         let item = NSSplitViewItem(viewController: content)
         item.minimumThickness = 460
         split.addSplitViewItem(item)
+        buildPreview()
         window?.contentViewController = split
         migrateSidebarWidth()
         applySidebar()
         NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification,
                                                object: split.splitView, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sidebarResized() }
+            MainActor.assumeIsolated { self?.sidebarResized(); self?.previewResized() }
         }
         panesView.onRatioChanged = { [weak self] r in
             guard let self else { return }
@@ -133,12 +140,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
             syncPanes()
         case .listingChanged(let t, _, _):
             panes.first { $0.tabID == t }?.listingChanged()
-            if t == windowModel.activeTabID { updateTitle(); toolbarController.refresh() }
+            if t == windowModel.activeTabID { updateTitle(); toolbarController.refresh(); followPreview(refresh: true) }
         case .selectionChanged(let t, _, _):
-            if t == windowModel.activeTabID { toolbarController.refresh() }
+            if t == windowModel.activeTabID { toolbarController.refresh(); followPreview() }
         case .volumesChanged:
             for p in panes { p.listingChanged() }
         case .settingsChanged:
+            previewVC.syncSettings()
+            applyPreview(animated: true)
             syncPanes()
         case .workspacesChanged:
             toolbarController.workspacesChanged()
@@ -174,6 +183,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
         updateTitle()
         toolbarController.refresh()
         sidebar.locationChanged()
+        followPreview()
     }
 
     // MARK: Sidebar width (kept per window, per workspace, by the core)
@@ -313,12 +323,101 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
             self.window?.makeFirstResponder(self.toolbarController.filterField)
             return true
         })
+        handlers.append(model.registerShellHandler(for: "toggleInspector") { [weak self] _, ctx in
+            guard let self, ctx.window == nil || ctx.window == self.coreWindowID else { return false }
+            self.setPreviewVisible(!self.previewVC.model.visible)
+            return true
+        })
         handlers.append(model.registerShellHandler(for: "toggleSidebar") { [weak self] _, ctx in
             guard let self, ctx.window == nil || ctx.window == self.coreWindowID else { return false }
             self.split.toggleSidebar(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { MainActor.assumeIsolated { self.sidebarResized() } }
             return true
         })
+    }
+
+    // MARK: Preview pane (M3)
+
+    private func buildPreview() {
+        previewVC = PreviewController(appModel: model)
+        let item = NSSplitViewItem(inspectorWithViewController: previewVC)
+        item.minimumThickness = 240
+        item.maximumThickness = 560
+        item.canCollapse = true
+        item.isCollapsed = !previewVC.model.visible
+        previewItem = item
+        split.addSplitViewItem(item)
+    }
+
+    /// Points the pane at the active tab's cursor item.
+    private func followPreview(refresh: Bool = false) {
+        previewVC.follow(windowModel.activeTabID.flatMap { model.tabModel($0) })
+        if refresh { previewVC.model.refresh(force: true) }
+    }
+
+    /// Makes the pane match `preview.visible` and `preview.width`.
+    private func applyPreview(animated: Bool) {
+        guard let item = previewItem else { return }
+        let on = previewVC.model.visible
+        applyingPreview = true
+        defer { applyingPreview = false }
+        if item.isCollapsed == on {
+            if animated && window?.isVisible == true { item.animator().isCollapsed = !on } else { item.isCollapsed = !on }
+        }
+        if on, window?.isVisible == true {
+            let total = split.splitView.bounds.width
+            let want = previewVC.storedWidth
+            if abs(item.viewController.view.frame.width - want) >= 1, total > want + 400 {
+                split.splitView.setPosition(total - want, ofDividerAt: 1)
+            }
+        }
+        followPreview()
+    }
+
+    /// The user dragged the preview divider or collapsed the pane: remember it.
+    private func previewResized() {
+        guard !applyingPreview, let item = previewItem, window?.isVisible == true else { return }
+        let on = previewVC.model.visible
+        if item.isCollapsed == on {
+            // Dragged shut (or open): the setting follows.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let now = !(self.previewItem?.isCollapsed ?? true)
+                if now != self.previewVC.model.visible { self.setPreviewVisible(now) }
+            }
+            return
+        }
+        let w = Int(item.viewController.view.frame.width.rounded())
+        guard w >= 220, w != Int(previewVC.storedWidth) else { return }
+        previewWidthWrite?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                try? self.model.engine.setSetting("preview.width", json: String(min(640, w)))
+            }
+        }
+        previewWidthWrite = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func setPreviewVisible(_ on: Bool) {
+        do { try Core.set(model.engine, "preview.visible", bool: on) } catch {
+            // MockCore has no stored settings: keep the state here.
+            previewVC.model.visible = on
+            applyPreview(animated: true)
+        }
+    }
+
+    /// Debug: the pane's view (for `previewsnap`).
+    var debugPreviewView: NSView { previewVC.view }
+    var debugPreviewModel: PreviewModel { previewVC.model }
+
+    /// Debug: the pane's state.
+    var debugPreview: [String: Any] {
+        var d = previewVC.model.debugLine
+        d["collapsed"] = previewItem?.isCollapsed ?? true
+        d["width"] = Int(previewItem?.viewController.view.frame.width ?? 0)
+        return d
     }
 
     private func paneFor(_ tab: TabID?) -> PaneViewController? {

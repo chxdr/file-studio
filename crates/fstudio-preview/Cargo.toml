@@ -1,6 +1,6 @@
 [package]
 name = "fstudio-preview"
-description = "Preview metadata (milestone 3)"
+description = "Preview metadata summaries: EXIF, video, text with syntax spans (milestone 3)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,17 @@ publish.workspace = true
 
 [dependencies]
 fstudio-model.workspace = true
+fstudio-fs.workspace = true
+# EXIF from JPEG, HEIC, PNG, WebP and TIFF-based raws (BSD-2-Clause, pure Rust).
+kamadak-exif = "0.6"
+# Syntax highlighting (MIT, pure Rust with fancy-regex). No themes: spans carry
+# a scope class and the shell picks the colours.
+syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+parking_lot.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

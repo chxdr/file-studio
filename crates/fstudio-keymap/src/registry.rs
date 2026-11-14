@@ -242,7 +242,7 @@ fn table() -> Vec<B> {
         c("view.show_hidden", "Show Hidden Files", View, "Show or hide files whose names start with a dot").s("⇧⌘.").v("z h"),
         c("view.refresh", "Refresh", View, "Reload the folder").s("⌘R"),
         c("view.toggle_sidebar", "Show or Hide Sidebar", View, "Show or hide the sidebar").global().s("⌃⌘S"),
-        c("view.toggle_inspector", "Show or Hide Inspector", View, "Show or hide the inspector").global().s("⌥⌘I"),
+        c("view.toggle_inspector", "Show or Hide Preview", View, "Show or hide the preview pane on the right: a picture and details of the selected item").global().s("⌥⌘P|⌥⌘I"),
         c("view.show_operations", "Show Operations", View, "Show the queue of file operations, with the reason for anything that failed").global(),
         c("transfer.resume", "Resume Transfer", View, "Resume an interrupted copy or move; on a disk in the sidebar, the ones to or from that disk").global().arg(ArgKind::Path),
         c("transfer.resume_all", "Resume All Transfers", View, "Resume every interrupted copy or move whose disks are connected").global(),

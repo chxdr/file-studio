@@ -40,6 +40,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
         static let terminal = NSToolbarItem.Identifier("terminal")
         static let info = NSToolbarItem.Identifier("getInfo")
         static let quickLook = NSToolbarItem.Identifier("quickLook")
+        static let preview = NSToolbarItem.Identifier("previewPane")
     }
 
     /// Simple command buttons: id → (label, symbol, command, tooltip).
@@ -54,6 +55,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
         ID.terminal: ("Terminal", "terminal", "terminal.open", "Open in Terminal"),
         ID.info: ("Get Info", "info.circle", "preview.get_info", "Get Info (⌘I)"),
         ID.quickLook: ("Quick Look", "eye.circle", "preview.quick_look", "Quick Look (Space)"),
+        ID.preview: ("Preview", "sidebar.right", "view.toggle_inspector", "Show or Hide Preview (⌥⌘P)"),
     ]
 
     init(model: AppModel, window: WindowModel) {
@@ -77,7 +79,7 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, ID.nav, ID.workspace, .flexibleSpace, ID.mode, ID.dual, ID.newFolder,
-         ID.trash, ID.share, ID.ops, ID.search]
+         ID.trash, ID.share, ID.ops, ID.preview, ID.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
