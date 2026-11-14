@@ -161,16 +161,20 @@ final class FilePanelJump {
         AXUIElementPerformAction(panel.window, kAXRaiseAction as CFString)
         let before = AX.element(axApp, kAXFocusedUIElementAttribute)
         let text = panelJumpText(folder: dir)
+        let target = KeyTarget(app: app, axApp: axApp, panel: panel)
         // Wait for the hotkey's modifiers to come up, so they don't mix into ⌘⇧G.
         waitForModifiersUp(tries: 40) { [weak self] in
+            guard let self else { return }
+            // Every keystroke goes to whatever is in front: check first.
+            if let why = target.refusal(field: nil, expect: nil) { return self.abort(why) }
             Keys.post(UInt16(kVK_ANSI_G), [.maskCommand, .maskShift])
-            self?.waitForGoToField(axApp, before: before, tries: 30) { field in
-                guard let self else { return }
+            self.waitForGoToField(axApp, before: before, tries: 30) { field in
                 guard let field else {
-                    self.busy = false
-                    return self.fail("\(app.localizedName ?? "The app")'s panel didn't open its Go to Folder field.")
+                    return self.abort("\(app.localizedName ?? "The app")'s panel didn't open its Go to Folder field.")
                 }
-                self.fill(field, with: text) {
+                self.fill(field, with: text, target: target) {
+                    // Read the value back right now, and only then press Return.
+                    if let why = target.refusal(field: field, expect: text) { return self.abort(why) }
                     Keys.post(UInt16(kVK_Return), [])
                     self.busy = false
                     if let b = self.button { b.flash() }
@@ -179,21 +183,29 @@ final class FilePanelJump {
         }
     }
 
+    private func abort(_ why: String) {
+        busy = false
+        fail(why)
+    }
+
     /// Puts `text` in the Go to Folder field: through Accessibility when the
-    /// field takes it, else by typing it.
-    private func fill(_ field: AXUIElement, with text: String, then done: @escaping @MainActor () -> Void) {
+    /// field takes it, else by typing it (each keystroke checked first).
+    private func fill(_ field: AXUIElement, with text: String, target: KeyTarget,
+                      then done: @escaping @MainActor () -> Void) {
         let ok = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFTypeRef) == .success
             && (AX.string(field, kAXValueAttribute) == text)
         if ok {
             print("PANELJUMP set by AX")
             after(0.12, done)
-        } else {
-            print("PANELJUMP typing")
-            Keys.post(UInt16(kVK_ANSI_A), [.maskCommand])
-            after(0.05) {
-                Keys.type(text)
-                after(0.2, done)
-            }
+            return
+        }
+        print("PANELJUMP typing")
+        if let why = target.refusal(field: field, expect: nil) { return abort(why) }
+        Keys.post(UInt16(kVK_ANSI_A), [.maskCommand])
+        after(0.05) { [weak self] in
+            if let why = target.refusal(field: field, expect: nil) { self?.abort(why); return }
+            Keys.type(text)
+            after(0.2, done)
         }
     }
 
@@ -254,6 +266,27 @@ final class FilePanelJump {
     }
 }
 
+/// The panel being driven, and the check that runs before each keystroke.
+@MainActor
+struct KeyTarget {
+    let app: NSRunningApplication
+    let axApp: AXUIElement
+    let panel: FoundPanel
+
+    /// Why the next keystroke must not be sent (the core decides), or `nil`.
+    /// `field`: the Go to Folder field once it is open; `expect`: the value
+    /// it must hold right now (before Return).
+    func refusal(field: AXUIElement?, expect: String?) -> String? {
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+        let open = AX.string(panel.element, kAXRoleAttribute) != nil
+        let focused = field.map { f in
+            AX.element(axApp, kAXFocusedUIElementAttribute).map { CFEqual($0, f) } ?? false
+        } ?? true
+        let value: Bool? = expect.map { e in field.flatMap { AX.string($0, kAXValueAttribute) } == e }
+        return panelKeyRefusal(appInFront: front, fieldFocused: focused, panelOpen: open, valueMatches: value)
+    }
+}
+
 // MARK: - Finding the panel
 
 /// A file panel found through Accessibility.
@@ -261,6 +294,8 @@ final class FilePanelJump {
 struct FoundPanel {
     /// The window to raise (the panel itself, or the window a sheet hangs off).
     let window: AXUIElement
+    /// The panel itself (the window, or the sheet).
+    let element: AXUIElement
     let kind: FfiPanelKind
     /// Its frame in Accessibility (top-left-origin) coordinates.
     let frame: CGRect
@@ -282,7 +317,7 @@ enum PanelFinder {
             for c in sheets + [w] {
                 if !deep, CFEqual(c, w), !isDialogish(c) { continue }
                 if let kind = classifyFilePanel(probe: probe(c)) {
-                    return FoundPanel(window: w, kind: kind, frame: AX.frame(c) ?? .zero)
+                    return FoundPanel(window: w, element: c, kind: kind, frame: AX.frame(c) ?? .zero)
                 }
             }
         }

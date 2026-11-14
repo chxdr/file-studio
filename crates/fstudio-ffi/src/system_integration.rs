@@ -163,6 +163,23 @@ pub fn global_hotkey_chord(keys: String) -> Option<crate::FfiKeyChord> {
     })
 }
 
+/// May the shell send the next keystroke into a panel? `None` means yes;
+/// otherwise why not. `value_matches` is `None` before typing.
+#[uniffi::export]
+pub fn panel_key_refusal(
+    app_in_front: bool,
+    field_focused: bool,
+    panel_open: bool,
+    value_matches: Option<bool>,
+) -> Option<String> {
+    core::panel_key_refusal(&core::PanelKeyCheck {
+        app_in_front,
+        field_focused,
+        panel_open,
+        value_matches,
+    })
+}
+
 /// The floating button's title for a folder.
 #[uniffi::export]
 pub fn panel_button_title(folder: String) -> String {

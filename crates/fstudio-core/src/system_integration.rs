@@ -468,6 +468,41 @@ pub fn global_hotkey(keys: &str) -> Option<fstudio_model::KeyChord> {
     (c.mods.cmd || c.mods.ctrl || c.mods.alt).then_some(c)
 }
 
+/// What the shell sees just before it sends a keystroke into another app's
+/// panel. Keystrokes go to whatever is in front, so each one is checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PanelKeyCheck {
+    /// The panel's app is still the frontmost app.
+    pub app_in_front: bool,
+    /// The app's focused element is still the Go to Folder field.
+    pub field_focused: bool,
+    /// The panel (window or sheet) still exists.
+    pub panel_open: bool,
+    /// Before Return: the field's value read back right now equals the path.
+    /// `None` before typing, when there is nothing to compare yet.
+    pub value_matches: Option<bool>,
+}
+
+/// May the shell send the next keystroke (typing, or Return)? `None` means
+/// yes; otherwise the reason to stop, for the status line. Return is never
+/// sent on a "no".
+pub fn panel_key_refusal(c: &PanelKeyCheck) -> Option<String> {
+    if !c.panel_open {
+        Some("The Open or Save panel closed, so nothing was typed into it.".into())
+    } else if !c.app_in_front {
+        Some("Another app came to the front, so the panel was left as it was.".into())
+    } else if !c.field_focused {
+        Some("The panel's Go to Folder field lost focus, so nothing more was typed.".into())
+    } else if c.value_matches == Some(false) {
+        Some(
+            "The Go to Folder field doesn't hold the folder's path, so Return wasn't pressed."
+                .into(),
+        )
+    } else {
+        None
+    }
+}
+
 /// The floating button's title for the active pane's folder.
 pub fn panel_button_title(folder: &str) -> String {
     let name = Path::new(folder)
@@ -706,6 +741,45 @@ mod tests {
         assert!(global_hotkey("⇧G").is_none());
         assert!(global_hotkey("g g").is_none());
         assert!(global_hotkey("").is_none());
+    }
+
+    #[test]
+    fn keys_only_while_the_panel_field_is_in_front() {
+        let ok = PanelKeyCheck {
+            app_in_front: true,
+            field_focused: true,
+            panel_open: true,
+            value_matches: None,
+        };
+        assert_eq!(panel_key_refusal(&ok), None);
+        let ret = PanelKeyCheck {
+            value_matches: Some(true),
+            ..ok
+        };
+        assert_eq!(panel_key_refusal(&ret), None);
+        // The user clicked another app, another field, closed the panel, or
+        // the value changed: refuse, with a reason.
+        for bad in [
+            PanelKeyCheck {
+                app_in_front: false,
+                ..ret
+            },
+            PanelKeyCheck {
+                field_focused: false,
+                ..ret
+            },
+            PanelKeyCheck {
+                panel_open: false,
+                ..ret
+            },
+            PanelKeyCheck {
+                value_matches: Some(false),
+                ..ret
+            },
+            PanelKeyCheck::default(),
+        ] {
+            assert!(panel_key_refusal(&bad).is_some(), "{bad:?}");
+        }
     }
 
     #[test]

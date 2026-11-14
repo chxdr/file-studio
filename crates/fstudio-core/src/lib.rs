@@ -96,9 +96,9 @@ pub use settings::{
 pub use shared::MIGRATIONS;
 pub use system_integration::{
     DEFAULT_VIEWER_EXPLAINED, FINDER_BUNDLE_ID, FolderOpensIn, IntegrationSettings, OpenItem,
-    OpenStep, PanelKind, PanelProbe, ScreenRect, ViewerState, ViewerStatus, classify_panel,
-    global_hotkey, missing_message, panel_button_origin, panel_button_title, panel_jump_text,
-    plan_system_open, viewer_status,
+    OpenStep, PanelKeyCheck, PanelKind, PanelProbe, ScreenRect, ViewerState, ViewerStatus,
+    classify_panel, global_hotkey, missing_message, panel_button_origin, panel_button_title,
+    panel_jump_text, panel_key_refusal, plan_system_open, viewer_status,
 };
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};
 pub use view::{SortBy, ViewState};

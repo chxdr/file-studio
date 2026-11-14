@@ -57,8 +57,17 @@ Branch `claude/elegant-hofstadter-de0709`. Tested on macOS 27.2.1 (26B131).
     old worktree builds.
 - **The keystrokes go to the app in front.**
   - The jump activates the panel's app first.
+  - Before ⌘⇧G, before ⌘A and typing, and right before Return, it checks
+    `panel_key_refusal` (core, unit-tested). The panel's app must still be
+    in front, the Go to Folder field still focused, the panel still open,
+    and, before Return, the field's value read back right then must equal
+    the path. Otherwise it stops with a message and never presses Return.
   - A panel that ignores ⌘⇧G or has no Go to Folder field gets a message
     and no typing.
+- **Open question:** twice, while a full `cargo test --workspace` ran at the
+  same time, the `sysreveal:` debug proof showed the new tab listed but
+  nothing selected. It was not reproduced in 8 later app runs, or in 18
+  repeated and parallel runs of the core tests.
 
 ## Verified automatically
 

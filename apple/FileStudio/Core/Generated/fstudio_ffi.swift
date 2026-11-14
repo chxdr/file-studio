@@ -12241,6 +12241,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -13233,6 +13257,21 @@ public func panelJumpText(folder: String) -> String  {
     )
 })
 }
+/**
+ * May the shell send the next keystroke into a panel? `None` means yes;
+ * otherwise why not. `value_matches` is `None` before typing.
+ */
+public func panelKeyRefusal(appInFront: Bool, fieldFocused: Bool, panelOpen: Bool, valueMatches: Bool?) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_panel_key_refusal(
+        FfiConverterBool.lower(appInFront),
+        FfiConverterBool.lower(fieldFocused),
+        FfiConverterBool.lower(panelOpen),
+        FfiConverterOptionBool.lower(valueMatches),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -13274,6 +13313,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_panel_jump_text() != 47500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_panel_key_refusal() != 20458) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_activate_tab() != 64778) {
