@@ -9,11 +9,16 @@
 //! `Entry` and its name, and so that unchanged entries are shared between versions.
 
 use crate::collation::{Collation, NaturalCollation, fold};
+use crate::marks::{self, Marks, folded_stem, is_sidecar_name};
 use crate::options::{Filter, SortKey, ViewOptions};
 use fstudio_model::{Entry, EntryKind};
 use rayon::prelude::*;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::sync::Arc;
+
+/// Folded stems whose `.xmp` sidecar is hidden (see [`marks::paired_stems`]).
+type Paired = HashSet<Box<str>>;
 
 /// Above this many entries, key building and sorting use all cores.
 pub const PARALLEL_THRESHOLD: usize = 20_000;
@@ -99,6 +104,12 @@ impl Sorter<'_> {
                 .cmp(&self.kind_rank(eb))
                 .then_with(|| ext_cmp(ea, eb))),
             SortKey::Extension => dir(ext_cmp(ea, eb)),
+            SortKey::Rating => dir(marks::rating_rank(item_marks(self.opts, a))
+                .cmp(&marks::rating_rank(item_marks(self.opts, b)))),
+            SortKey::Label => dir(marks::label_rank(item_marks(self.opts, a))
+                .cmp(&marks::label_rank(item_marks(self.opts, b)))),
+            SortKey::Flag => dir(marks::flag_rank(item_marks(self.opts, a))
+                .cmp(&marks::flag_rank(item_marks(self.opts, b)))),
         };
         primary
             .then_with(|| {
@@ -130,8 +141,64 @@ fn ext_cmp(a: &Entry, b: &Entry) -> Ordering {
     }
 }
 
-fn visible(item: &Item, opts: &ViewOptions, filter: &Filter) -> bool {
-    (opts.show_hidden || !item.entry.is_hidden()) && filter.matches(&item.fold)
+/// The sidecar marks that apply to an item. Folders never have any.
+fn item_marks(opts: &ViewOptions, item: &Item) -> Option<Marks> {
+    if item.entry.kind == EntryKind::Dir {
+        None
+    } else {
+        opts.marks.get_folded(&item.fold)
+    }
+}
+
+fn is_sidecar_item(item: &Item) -> bool {
+    item.entry.kind == EntryKind::File && is_sidecar_name(&item.fold)
+}
+
+fn visible(item: &Item, opts: &ViewOptions, filter: &Filter, paired: &Paired) -> bool {
+    (opts.show_hidden || !item.entry.is_hidden())
+        && filter.matches(&item.fold)
+        && !(opts.hide_sidecars
+            && !paired.is_empty()
+            && is_sidecar_item(item)
+            && paired.contains(folded_stem(&item.fold)))
+        && (opts.mark_filter == marks::MarkFilter::All
+            || item.entry.kind == EntryKind::Dir
+            || opts.mark_filter.passes(item_marks(opts, item)))
+}
+
+/// The paired sidecar stems of a folder, when the options hide them.
+fn compute_paired(by_name: &[Arc<Item>], opts: &ViewOptions) -> Paired {
+    if !opts.hide_sidecars {
+        return Paired::new();
+    }
+    marks::paired_stems(
+        by_name
+            .iter()
+            .map(|i| (&*i.fold, i.entry.kind == EntryKind::File)),
+    )
+}
+
+/// True when hiding sidecars needs the whole view recomputed: they are
+/// hidden and the folder has (or the change touches) a sidecar.
+fn pairing_matters(by_name: &[Arc<Item>], opts: &ViewOptions) -> bool {
+    opts.hide_sidecars && by_name.iter().any(|i| is_sidecar_item(i))
+}
+
+/// Every visible entry of `by_name`, sorted.
+fn full_view(
+    by_name: &[Arc<Item>],
+    opts: &ViewOptions,
+    filter: &Filter,
+    paired: &Paired,
+    s: &Sorter,
+) -> Vec<Arc<Item>> {
+    let mut view: Vec<Arc<Item>> = by_name
+        .iter()
+        .filter(|i| visible(i, opts, filter, paired))
+        .cloned()
+        .collect();
+    sort_items(&mut view, s);
+    view
 }
 
 fn sort_items(v: &mut [Arc<Item>], s: &Sorter) {
@@ -178,6 +245,8 @@ pub struct Listing {
     opts: Arc<ViewOptions>,
     filter: Arc<Filter>,
     coll: Arc<dyn Collation>,
+    /// Folded stems whose sidecar is hidden (empty unless sidecars are hidden).
+    paired: Arc<Paired>,
     /// Every entry, ordered by exact name bytes (for lookup).
     by_name: Arc<Vec<Arc<Item>>>,
     /// The visible entries in display order.
@@ -234,7 +303,7 @@ impl Listing {
     /// The row of the visible entry with exactly this name. O(log n).
     pub fn index_of(&self, name: &str) -> Option<usize> {
         let item = self.find(name)?;
-        if !visible(item, &self.opts, &self.filter) {
+        if !visible(item, &self.opts, &self.filter, &self.paired) {
             return None;
         }
         let s = Sorter {
@@ -262,6 +331,26 @@ impl Listing {
         self.view.get(i).map(|it| &*it.fold)
     }
 
+    /// The sidecar marks of row `i`, if its sidecar has been read.
+    pub fn marks_at(&self, i: usize) -> Option<Marks> {
+        self.view.get(i).and_then(|it| item_marks(&self.opts, it))
+    }
+    /// True when row `i`'s sidecar is hidden and its marks show on this row.
+    pub fn has_hidden_sidecar(&self, i: usize) -> bool {
+        self.view.get(i).is_some_and(|it| {
+            it.entry.kind != EntryKind::Dir
+                && !is_sidecar_item(it)
+                && self.paired.contains(folded_stem(&it.fold))
+        })
+    }
+    /// Every `.xmp` file of the folder, visible or not, by name order.
+    pub fn sidecar_entries(&self) -> impl Iterator<Item = &Entry> {
+        self.by_name
+            .iter()
+            .filter(|i| is_sidecar_item(i))
+            .map(|i| &i.entry)
+    }
+
     fn find(&self, name: &str) -> Option<&Arc<Item>> {
         self.by_name
             .binary_search_by(|x| x.entry.name.as_bytes().cmp(name.as_bytes()))
@@ -276,18 +365,14 @@ impl Listing {
             opts: &opts,
             coll: &*self.coll,
         };
-        let mut view: Vec<Arc<Item>> = self
-            .by_name
-            .iter()
-            .filter(|i| visible(i, &opts, &filter))
-            .cloned()
-            .collect();
-        sort_items(&mut view, &s);
+        let paired = compute_paired(&self.by_name, &opts);
+        let view = full_view(&self.by_name, &opts, &filter, &paired, &s);
         Listing {
             version: self.version + 1,
             opts: Arc::new(opts),
             filter: Arc::new(filter),
             coll: self.coll.clone(),
+            paired: Arc::new(paired),
             by_name: self.by_name.clone(),
             view: Arc::new(view),
         }
@@ -297,6 +382,15 @@ impl Listing {
     /// plus a pointer shift; the pointer arrays are copied once per call (not per change).
     /// For a very large batch (more than about 5% of the folder) a full rebuild is faster.
     pub fn apply(&self, changes: impl IntoIterator<Item = Change>) -> Listing {
+        let changes: Vec<Change> = changes.into_iter().collect();
+        let touches_sidecar = changes.iter().any(|c| match c {
+            Change::Upsert(e) => is_sidecar_name(&e.name),
+            Change::Remove(n) => is_sidecar_name(n),
+        });
+        if self.opts.hide_sidecars && touches_sidecar || pairing_matters(&self.by_name, &self.opts)
+        {
+            return self.apply_full(changes);
+        }
         let mut next = self.clone();
         next.version += 1;
         let by_name = Arc::make_mut(&mut next.by_name);
@@ -305,8 +399,9 @@ impl Listing {
             opts: &self.opts,
             coll: &*self.coll,
         };
+        let paired = &*self.paired;
         let remove_from_view = |view: &mut Vec<Arc<Item>>, old: &Arc<Item>| {
-            if visible(old, &self.opts, &self.filter)
+            if visible(old, &self.opts, &self.filter, paired)
                 && let Ok(pos) = view.binary_search_by(|x| s.cmp(x, old))
             {
                 view.remove(pos);
@@ -323,7 +418,7 @@ impl Listing {
                         }
                         Err(i) => by_name.insert(i, new.clone()),
                     }
-                    if visible(&new, &self.opts, &self.filter) {
+                    if visible(&new, &self.opts, &self.filter, paired) {
                         let pos = view
                             .binary_search_by(|x| s.cmp(x, &new))
                             .unwrap_or_else(|p| p);
@@ -342,6 +437,41 @@ impl Listing {
         }
         next
     }
+
+    /// `apply` for a folder whose sidecars are hidden: a change to one entry
+    /// can show or hide another (an image arriving hides its sidecar), so the
+    /// view is recomputed from all entries.
+    fn apply_full(&self, changes: Vec<Change>) -> Listing {
+        let mut next = self.clone();
+        next.version += 1;
+        let by_name = Arc::make_mut(&mut next.by_name);
+        for ch in changes {
+            match ch {
+                Change::Upsert(entry) => {
+                    let new = Arc::new(Item::new(entry, &*self.coll));
+                    match by_name.binary_search_by(|x| name_cmp(x, &new)) {
+                        Ok(i) => by_name[i] = new,
+                        Err(i) => by_name.insert(i, new),
+                    }
+                }
+                Change::Remove(name) => {
+                    if let Ok(i) =
+                        by_name.binary_search_by(|x| x.entry.name.as_bytes().cmp(name.as_bytes()))
+                    {
+                        by_name.remove(i);
+                    }
+                }
+            }
+        }
+        let s = Sorter {
+            opts: &self.opts,
+            coll: &*self.coll,
+        };
+        let paired = compute_paired(by_name, &self.opts);
+        next.view = Arc::new(full_view(by_name, &self.opts, &self.filter, &paired, &s));
+        next.paired = Arc::new(paired);
+        next
+    }
 }
 
 /// Builds a listing from chunks as they stream in, so rows can be shown before the folder is
@@ -355,6 +485,7 @@ pub struct ListingBuilder {
     opts: Arc<ViewOptions>,
     filter: Arc<Filter>,
     coll: Arc<dyn Collation>,
+    paired: Arc<Paired>,
     by_name: Vec<Arc<Item>>,
     view: Vec<Arc<Item>>,
     /// Entries pushed since the last flush, in arrival order.
@@ -374,6 +505,7 @@ impl ListingBuilder {
             filter: Arc::new(Filter::compile(&opts.filter)),
             opts: Arc::new(opts),
             coll,
+            paired: Arc::new(Paired::new()),
             by_name: Vec::new(),
             view: Vec::new(),
             pending: Vec::new(),
@@ -426,9 +558,19 @@ impl ListingBuilder {
                 }
             }
         }
+        let new_sidecar = self.opts.hide_sidecars && items.iter().any(|i| is_sidecar_item(i));
+        if new_sidecar || pairing_matters(&self.by_name, &self.opts) {
+            // Pairing can hide entries already shown: recompute the view.
+            self.by_name = merge(std::mem::take(&mut self.by_name), items, name_cmp);
+            let paired = compute_paired(&self.by_name, &self.opts);
+            self.view = full_view(&self.by_name, &self.opts, &self.filter, &paired, &s);
+            self.paired = Arc::new(paired);
+            return;
+        }
+        let none = Paired::new();
         let mut vis: Vec<Arc<Item>> = items
             .iter()
-            .filter(|i| visible(i, &self.opts, &self.filter))
+            .filter(|i| visible(i, &self.opts, &self.filter, &none))
             .cloned()
             .collect();
         sort_items(&mut vis, &s);
@@ -442,6 +584,7 @@ impl ListingBuilder {
             opts: self.opts.clone(),
             filter: self.filter.clone(),
             coll: self.coll.clone(),
+            paired: self.paired.clone(),
             by_name: Arc::new(self.by_name.clone()),
             view: Arc::new(self.view.clone()),
         }
@@ -465,6 +608,7 @@ impl ListingBuilder {
             opts: self.opts,
             filter: self.filter,
             coll: self.coll,
+            paired: self.paired,
             by_name: Arc::new(self.by_name),
             view: Arc::new(self.view),
         }

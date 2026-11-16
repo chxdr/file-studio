@@ -1,6 +1,7 @@
 //! How a listing is sorted and filtered.
 
 use crate::collation::fold;
+use crate::marks::{MarkFilter, MarkTable};
 
 /// What to sort by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,6 +18,12 @@ pub enum SortKey {
     Kind,
     /// The file extension, then name.
     Extension,
+    /// Star rating from the XMP sidecar: rejects, unrated, then 1–5 stars.
+    Rating,
+    /// Colour label from the XMP sidecar: Red … Purple, then none.
+    Label,
+    /// Pick/reject flag from the XMP sidecar: picks, unflagged, rejects.
+    Flag,
 }
 
 /// Everything that decides which rows are shown and in what order.
@@ -35,6 +42,13 @@ pub struct ViewOptions {
     pub filter: String,
     /// Treat packages (`.app`, …) as files for folders-first and Kind, as Finder does.
     pub packages_as_files: bool,
+    /// Culling marks read from the folder's XMP sidecars (empty until read).
+    pub marks: MarkTable,
+    /// The culling preset ("★ 3+", "Picks", …).
+    pub mark_filter: MarkFilter,
+    /// Hide an `.xmp` sidecar when its image is in the folder; the image row
+    /// shows the sidecar's marks instead.
+    pub hide_sidecars: bool,
 }
 
 impl Default for ViewOptions {
@@ -46,6 +60,9 @@ impl Default for ViewOptions {
             show_hidden: false,
             filter: String::new(),
             packages_as_files: true,
+            marks: MarkTable::default(),
+            mark_filter: MarkFilter::All,
+            hide_sidecars: true,
         }
     }
 }

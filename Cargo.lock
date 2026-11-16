@@ -661,6 +661,7 @@ name = "fstudio-view"
 version = "0.0.1"
 dependencies = [
  "fstudio-model",
+ "fstudio-xmp",
  "rayon",
  "unicode-normalization",
 ]
