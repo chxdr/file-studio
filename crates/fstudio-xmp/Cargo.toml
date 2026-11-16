@@ -1,0 +1,18 @@
+[package]
+name = "fstudio-xmp"
+description = "Read-only parser for the culling marks (rating, label, pick/reject) in XMP sidecars"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Streaming XML reader (MIT). The same version Import Studio writes with.
+quick-xml = "0.42"
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

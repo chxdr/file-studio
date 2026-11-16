@@ -666,6 +666,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fstudio-xmp"
+version = "0.0.1"
+dependencies = [
+ "quick-xml",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
