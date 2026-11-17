@@ -57,6 +57,9 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
     let list: FileTable
     /// The column view (made on first use).
     private(set) var columns: ColumnsPlaceholderView?
+    /// The icon view and the gallery (Grid/, made on first use).
+    private(set) var icons: IconGridView?
+    private(set) var gallery: GalleryView?
     private(set) var tab: TabModel?
     private var observer: ObserverToken?
     private var handlerIDs: [Int] = []
@@ -70,6 +73,27 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
 
     /// The table showing the tab's own folder.
     var activeFileTable: FileTable { mode == .columns ? (columns?.focusedTable ?? list) : list }
+
+    /// The view that takes keyboard focus in the current mode.
+    var focusView: NSView {
+        switch mode {
+        case .icons: icons?.grid.doc ?? table
+        case .gallery: gallery?.focusView ?? table
+        default: table
+        }
+    }
+
+    /// The icon view's or gallery's tiles, when one of them is shown.
+    private var activeGrid: TileGrid? {
+        switch mode {
+        case .icons: icons?.grid
+        case .gallery: gallery?.strip
+        default: nil
+        }
+    }
+
+    /// The rename field of the view shown.
+    private var activeRename: RenameController? { activeGrid?.rename ?? activeFileTable.rename }
 
     init(model: AppModel) {
         self.model = model
@@ -91,6 +115,7 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
         installHandlers()
         #if DEBUG
         ListDebug.install(model: model)
+        GridDebugSteps.install(model: model)
         #endif
     }
 
@@ -124,23 +149,46 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
     private func applyView() {
         guard let t = tab else { return }
         let v = t.api.view()
-        let wanted: ViewMode = v.mode == .columns ? .columns : .list
+        let wanted: ViewMode = v.mode
         if wanted != mode {
-            let hadFocus = list.isActive || (columns?.focusedTable?.isActive ?? false)
+            let hadFocus = list.isActive || (columns?.focusedTable?.isActive ?? false) || (activeGrid?.isActive ?? false)
+            let old = mode
             mode = wanted
-            if mode == .columns {
+            // Stop the view going away (its thumbnails, rename and timers).
+            switch old {
+            case .columns: columns?.detach()
+            case .icons: icons?.detach()
+            case .gallery: gallery?.detach()
+            case .list: break
+            }
+            switch mode {
+            case .columns:
                 let c = columns ?? ColumnsPlaceholderView(model: model)
                 columns = c
                 c.show(t)
                 scrollView.setContent(c)
-            } else {
-                columns?.detach()
+            case .icons:
+                let g = icons ?? IconGridView(model: model)
+                icons = g
+                scrollView.setContent(g)
+                g.show(t)
+            case .gallery:
+                let g = gallery ?? GalleryView(model: model)
+                gallery = g
+                scrollView.setContent(g)
+                g.show(t)
+            case .list:
                 scrollView.setContent(list.view)
                 list.show(.tab(t.api), owner: t.id)
             }
-            if hadFocus { scrollView.window?.makeFirstResponder(table) }
-        } else if mode == .columns {
-            columns?.show(t)
+            if hadFocus { scrollView.window?.makeFirstResponder(focusView) }
+        } else {
+            switch mode {
+            case .columns: columns?.show(t)
+            case .icons: icons?.show(t)
+            case .gallery: gallery?.show(t)
+            case .list: break
+            }
         }
         if mode == .list { applyColumns(v) }
     }
@@ -238,6 +286,11 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
     private func installHandlers() {
         handlerIDs.append(model.registerShellHandler(for: "beginRename") { [weak self] req, _ in
             guard let self, case .beginRename(let tabID, let name) = req, tabID == self.tab?.id else { return false }
+            if let g = self.activeGrid {
+                print("RENAME begin “\(name)” (grid)")
+                g.rename?.begin(name: name)
+                return true
+            }
             let ft = self.activeFileTable
             if ft.rename == nil { ft.rename = RenameController(model: self.model, table: ft) }
             print("RENAME begin “\(name)”")
@@ -246,7 +299,7 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
         })
         handlerIDs.append(model.registerShellHandler(for: "textField") { [weak self] req, _ in
             guard let self, case .textField(let cmd) = req, cmd.hasPrefix("rename."),
-                  let r = self.activeFileTable.rename, r.isActive else { return false }
+                  let r = self.activeRename, r.isActive else { return false }
             if cmd == "rename.cancel" { r.cancel() } else { r.commit() }
             return true
         })
@@ -259,10 +312,10 @@ final class ListPlaceholderView: NSObject, NSMenuDelegate {
 
     /// Names among `paths` that are iCloud placeholders (from the rows on screen).
     private func datalessNames(_ paths: [String]) -> [String] {
-        let ft = activeFileTable
+        let cache = activeGrid?.cache ?? activeFileTable.cache
         return paths.compactMap { p in
             let n = (p as NSString).lastPathComponent
-            return ft.cache.cachedRow(named: n)?.isDataless == true ? n : nil
+            return cache.cachedRow(named: n)?.isDataless == true ? n : nil
         }
     }
 

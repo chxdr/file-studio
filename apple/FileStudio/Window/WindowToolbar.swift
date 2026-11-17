@@ -112,11 +112,11 @@ final class WindowToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate, N
                                        target: self, action: #selector(setMode(_:)))
             g.label = "View"
             g.paletteLabel = "View Mode"
-            let tips = ["as List (⌘2)", "as Columns (⌘3)", "as Icons — coming in M3", "as Gallery — coming in M3"]
+            let tips = ["as List (⌘2)", "as Columns (⌘3)", "as Icons (⌘1)", "as Gallery (⌘4)"]
             for (i, s) in g.subitems.enumerated() {
                 s.toolTip = "View " + tips[i]
                 s.autovalidates = false
-                s.isEnabled = i < 2
+                s.isEnabled = true
             }
             g.autovalidates = false
             modeGroup = g

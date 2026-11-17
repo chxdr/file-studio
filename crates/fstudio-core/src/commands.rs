@@ -19,6 +19,7 @@ use crate::confirm::{After, PendingAction, PendingOp, snapshot};
 use crate::engine::Engine;
 use crate::error::{CoreError, Result};
 use crate::events::{CoreEvent, HintInfo};
+use crate::grid::GridDir;
 use crate::ids::{TabId, WindowId};
 use crate::outcome::{Outcome, ShellRequest};
 use crate::shared::Clipboard;
@@ -156,6 +157,9 @@ impl Engine {
     /// let the focused control handle the key (typing in a text field).
     pub fn handle_key(&self, chord: KeyChord, ctx: InputContext) -> Option<Outcome> {
         if let Some(o) = self.column_key(&chord, &ctx) {
+            return Some(o);
+        }
+        if let Some(o) = self.grid_key(&chord, &ctx) {
             return Some(o);
         }
         let kctx = self.key_context(&ctx);
@@ -1393,6 +1397,14 @@ impl Engine {
             "select.deselect_pattern" => {
                 Outcome::shell(ShellRequest::AskPattern { select: false }).with_tab(tid)
             }
+            // Icon view: ↑/↓ (and j/k) move a whole row (grid.rs).
+            "select.extend_up" | "select.extend_down" | "cursor.up" | "cursor.down"
+                if t.view().mode == ViewMode::Icons =>
+            {
+                let up = matches!(id, "select.extend_up" | "cursor.up");
+                let dir = if up { GridDir::Up } else { GridDir::Down };
+                self.grid_move(&t, dir, id.starts_with("select.") || vim_visual)
+            }
             "select.extend_up" => mv(CursorMove::Up, true),
             "select.extend_down" => mv(CursorMove::Down, true),
             "select.visual" | "select.visual_line" => {
@@ -1667,6 +1679,8 @@ impl Engine {
             "view.list" => self.set_sort(&t, |v| v.mode = ViewMode::List),
             "view.columns" => self.set_sort(&t, |v| v.mode = ViewMode::Columns),
             "view.gallery" => self.set_sort(&t, |v| v.mode = ViewMode::Gallery),
+            "view.icons_bigger" => self.step_icon_size(true)?,
+            "view.icons_smaller" => self.step_icon_size(false)?,
             "view.show_hidden" => self.set_sort(&t, |v| v.show_hidden = !v.show_hidden),
             "view.refresh" => {
                 t.refresh();

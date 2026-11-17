@@ -191,6 +191,8 @@ struct Inner {
     version: u64,
     scroll: Option<ScrollAnchor>,
     visible: (u32, u32),
+    /// Icon view: items per row, as last laid out by the shell (grid.rs).
+    grid_columns: u32,
     type_ahead: Option<TypeAhead>,
     /// Watcher changes that arrived while the folder was still being read.
     queued: Vec<Change>,
@@ -261,6 +263,7 @@ impl Tab {
                 version: 0,
                 scroll: state.scroll.clone(),
                 visible: (0, 40),
+                grid_columns: 1,
                 type_ahead: None,
                 queued: Vec::new(),
                 closed: false,
@@ -1310,6 +1313,17 @@ impl Tab {
     /// The rows on screen, as last reported.
     pub fn visible_range(&self) -> (u32, u32) {
         self.st.lock().visible
+    }
+
+    /// Icon view: how many items the shell fits in a row (at least 1). ↑/↓
+    /// move by this many (grid.rs).
+    pub fn set_grid_columns(&self, columns: u32) {
+        self.st.lock().grid_columns = columns.max(1);
+    }
+
+    /// Icon view: items per row, as last reported (1 before any layout).
+    pub fn grid_columns(&self) -> u32 {
+        self.st.lock().grid_columns
     }
 
     /// Records where the shell is scrolled to, for restore.

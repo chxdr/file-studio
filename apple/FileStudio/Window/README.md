@@ -12,7 +12,7 @@ engine (`activateTab`, `moveTab`, `focusPane`, `toggleDual`, `setLayout`).
   Frames autosave per core window. Keep `CoreWindowIdentifying`, `allPanes`,
   `activePane` (other folders use them).
 - `WindowToolbar.swift`: the NSToolbar (≤ 10 default controls, customisable):
-  back/forward, view mode (icons/gallery greyed until M3), dual pane (hold for
+  back/forward, view mode (list, columns, icons, gallery), dual pane (hold for
   layout: side by side/stacked, swap, equalise), new folder, Trash, share, the
   ops slot (`OpsPlaceholderView`, 44×28 pt), the filter field (`.filter`
   focus; `setFilter` on the focused tab).

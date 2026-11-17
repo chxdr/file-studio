@@ -240,6 +240,8 @@ fn table() -> Vec<B> {
         c("view.list", "as List", View, "Show items as a list").s("⌘2"),
         c("view.columns", "as Columns", View, "Show items as columns").s("⌘3"),
         c("view.gallery", "as Gallery", View, "Show items as a gallery").s("⌘4"),
+        c("view.icons_bigger", "Bigger Icons", View, "Make the thumbnails in icon view bigger").s("⇧⌘="),
+        c("view.icons_smaller", "Smaller Icons", View, "Make the thumbnails in icon view smaller").s("⇧⌘-"),
         c("view.show_hidden", "Show Hidden Files", View, "Show or hide files whose names start with a dot").s("⇧⌘.").v("z h"),
         c("view.refresh", "Refresh", View, "Reload the folder").s("⌘R"),
         c("view.toggle_sidebar", "Show or Hide Sidebar", View, "Show or hide the sidebar").global().s("⌃⌘S"),

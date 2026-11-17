@@ -171,7 +171,7 @@ final class PaneViewController: NSViewController {
 
     /// The view that takes keyboard focus for this pane.
     var focusView: NSView {
-        (shownMode == .columns ? columnsContent : nil)?.focusView ?? list.table
+        (shownMode == .columns ? columnsContent : nil)?.focusView ?? list.focusView
     }
 
     /// Is the first responder inside `v`?
