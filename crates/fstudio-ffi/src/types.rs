@@ -850,6 +850,13 @@ pub struct FfiRow {
     pub display_name: String,
     /// The folder the item is in, in a search tab; else empty.
     pub location_text: String,
+    // XMP culling additions
+    /// Marks from the item's sidecar; `None` without a readable sidecar.
+    pub marks: Option<FfiCullMarks>,
+    /// The item's sidecar is hidden and its marks show on this row.
+    pub has_hidden_sidecar: bool,
+    /// The marks in words, for VoiceOver and tooltips.
+    pub marks_text: String,
 }
 
 impl From<core::RowInfo> for FfiRow {
@@ -876,6 +883,118 @@ impl From<core::RowInfo> for FfiRow {
             ext_text: r.ext_text,
             display_name: r.display_name,
             location_text: r.location_text,
+            marks: r.marks.map(Into::into),
+            has_hidden_sidecar: r.has_hidden_sidecar,
+            marks_text: r.marks_text,
+        }
+    }
+}
+
+// ───────────────────────── XMP culling additions ─────────────────────────
+
+/// A culling preset ("★ 3+", "Picks", …).
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCullFilter {
+    All,
+    Rating3Plus,
+    Picks,
+    Rejects,
+    HideRejects,
+}
+
+impl From<core::CullFilter> for FfiCullFilter {
+    fn from(c: core::CullFilter) -> Self {
+        match c {
+            core::CullFilter::All => Self::All,
+            core::CullFilter::Rating3Plus => Self::Rating3Plus,
+            core::CullFilter::Picks => Self::Picks,
+            core::CullFilter::Rejects => Self::Rejects,
+            core::CullFilter::HideRejects => Self::HideRejects,
+        }
+    }
+}
+
+impl From<FfiCullFilter> for core::CullFilter {
+    fn from(c: FfiCullFilter) -> Self {
+        match c {
+            FfiCullFilter::All => Self::All,
+            FfiCullFilter::Rating3Plus => Self::Rating3Plus,
+            FfiCullFilter::Picks => Self::Picks,
+            FfiCullFilter::Rejects => Self::Rejects,
+            FfiCullFilter::HideRejects => Self::HideRejects,
+        }
+    }
+}
+
+/// A colour label.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCullLabel {
+    Red,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+}
+
+/// Pick, reject or neither.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCullFlag {
+    None,
+    Pick,
+    Reject,
+}
+
+/// The culling marks of one shot, read from its XMP sidecar.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiCullMarks {
+    /// 0 unrated, 1–5 stars (a reject keeps its stars).
+    pub rating: u8,
+    pub label: Option<FfiCullLabel>,
+    pub flag: FfiCullFlag,
+}
+
+impl From<core::CullMarks> for FfiCullMarks {
+    fn from(m: core::CullMarks) -> Self {
+        FfiCullMarks {
+            rating: m.rating,
+            label: m.label.map(|l| match l {
+                core::CullLabel::Red => FfiCullLabel::Red,
+                core::CullLabel::Yellow => FfiCullLabel::Yellow,
+                core::CullLabel::Green => FfiCullLabel::Green,
+                core::CullLabel::Blue => FfiCullLabel::Blue,
+                core::CullLabel::Purple => FfiCullLabel::Purple,
+            }),
+            flag: match m.flag {
+                core::CullFlag::None => FfiCullFlag::None,
+                core::CullFlag::Pick => FfiCullFlag::Pick,
+                core::CullFlag::Reject => FfiCullFlag::Reject,
+            },
+        }
+    }
+}
+
+impl FfiCullMarks {
+    /// Packed as one byte each: rating (0–5), label (0 none, 1 Red … 5
+    /// Purple), flag (0 none, 1 pick, 2 reject).
+    pub(crate) fn packed(m: Option<FfiCullMarks>) -> [u8; 3] {
+        match m {
+            None => [0xFF, 0, 0],
+            Some(m) => [
+                m.rating,
+                match m.label {
+                    None => 0,
+                    Some(FfiCullLabel::Red) => 1,
+                    Some(FfiCullLabel::Yellow) => 2,
+                    Some(FfiCullLabel::Green) => 3,
+                    Some(FfiCullLabel::Blue) => 4,
+                    Some(FfiCullLabel::Purple) => 5,
+                },
+                match m.flag {
+                    FfiCullFlag::None => 0,
+                    FfiCullFlag::Pick => 1,
+                    FfiCullFlag::Reject => 2,
+                },
+            ],
         }
     }
 }
@@ -951,6 +1070,10 @@ pub enum FfiSortBy {
     Created,
     Kind,
     Extension,
+    // XMP culling additions
+    Rating,
+    Label,
+    Flag,
 }
 
 impl From<core::SortBy> for FfiSortBy {
@@ -962,6 +1085,9 @@ impl From<core::SortBy> for FfiSortBy {
             core::SortBy::Created => FfiSortBy::Created,
             core::SortBy::Kind => FfiSortBy::Kind,
             core::SortBy::Extension => FfiSortBy::Extension,
+            core::SortBy::Rating => FfiSortBy::Rating,
+            core::SortBy::Label => FfiSortBy::Label,
+            core::SortBy::Flag => FfiSortBy::Flag,
         }
     }
 }
@@ -975,6 +1101,9 @@ impl From<FfiSortBy> for core::SortBy {
             FfiSortBy::Created => core::SortBy::Created,
             FfiSortBy::Kind => core::SortBy::Kind,
             FfiSortBy::Extension => core::SortBy::Extension,
+            FfiSortBy::Rating => core::SortBy::Rating,
+            FfiSortBy::Label => core::SortBy::Label,
+            FfiSortBy::Flag => core::SortBy::Flag,
         }
     }
 }
@@ -991,6 +1120,11 @@ pub struct FfiViewState {
     // ui-list additions
     /// The list view's columns, in order, with widths.
     pub columns: Vec<FfiColumnSpec>,
+    // XMP culling additions
+    /// The culling preset.
+    pub cull: FfiCullFilter,
+    /// Paired `.xmp` sidecars are hidden; their marks show on the image row.
+    pub hide_sidecars: bool,
 }
 
 impl From<core::ViewState> for FfiViewState {
@@ -1003,6 +1137,8 @@ impl From<core::ViewState> for FfiViewState {
             show_hidden: v.show_hidden,
             packages_as_files: v.packages_as_files,
             columns: v.columns.into_iter().map(Into::into).collect(),
+            cull: v.cull.into(),
+            hide_sidecars: v.hide_sidecars,
         }
     }
 }
@@ -1019,6 +1155,8 @@ impl From<FfiViewState> for core::ViewState {
             columns: core::sanitize_columns(
                 &v.columns.into_iter().map(Into::into).collect::<Vec<_>>(),
             ),
+            cull: v.cull.into(),
+            hide_sidecars: v.hide_sidecars,
         }
     }
 }
@@ -2221,6 +2359,10 @@ pub enum FfiColumnId {
     Created,
     Kind,
     Extension,
+    // XMP culling additions
+    Rating,
+    Label,
+    Flag,
 }
 
 impl From<core::ColumnId> for FfiColumnId {
@@ -2232,6 +2374,9 @@ impl From<core::ColumnId> for FfiColumnId {
             core::ColumnId::Created => FfiColumnId::Created,
             core::ColumnId::Kind => FfiColumnId::Kind,
             core::ColumnId::Extension => FfiColumnId::Extension,
+            core::ColumnId::Rating => FfiColumnId::Rating,
+            core::ColumnId::Label => FfiColumnId::Label,
+            core::ColumnId::Flag => FfiColumnId::Flag,
         }
     }
 }
@@ -2245,6 +2390,9 @@ impl From<FfiColumnId> for core::ColumnId {
             FfiColumnId::Created => core::ColumnId::Created,
             FfiColumnId::Kind => core::ColumnId::Kind,
             FfiColumnId::Extension => core::ColumnId::Extension,
+            FfiColumnId::Rating => core::ColumnId::Rating,
+            FfiColumnId::Label => core::ColumnId::Label,
+            FfiColumnId::Flag => core::ColumnId::Flag,
         }
     }
 }

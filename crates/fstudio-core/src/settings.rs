@@ -170,6 +170,10 @@ pub struct ViewSettings {
     pub density: RowDensity,
     /// The list view's default columns (a folder can remember its own).
     pub columns: Vec<crate::view_columns::ColumnSpec>,
+    /// Hide `.xmp` sidecars whose image is in the same folder, and show
+    /// their stars, label and pick/reject on the image row. Only folders
+    /// with such pairs (photo folders) are affected.
+    pub hide_sidecars: bool,
 }
 
 impl Default for ViewSettings {
@@ -185,6 +189,7 @@ impl Default for ViewSettings {
             hour24: true,
             density: RowDensity::Regular,
             columns: crate::view_columns::default_columns(),
+            hide_sidecars: true,
         }
     }
 }

@@ -199,6 +199,18 @@ struct Inner {
     keep_mode: bool,
     /// M3 search: the tab shows search results (see `tab_search.rs`).
     search: Option<search::SearchTab>,
+    /// Culling marks from the folder's XMP sidecars (see `sidecars.rs`),
+    /// empty until they are read.
+    marks: fstudio_view::MarkTable,
+    /// Counts sidecar reads started; only the latest one installs its marks.
+    marks_gen: u64,
+}
+
+impl Inner {
+    /// The `fstudio-view` options for the tab's view, filter and marks.
+    pub(crate) fn options(&self) -> fstudio_view::ViewOptions {
+        self.view.options(&self.filter, &self.marks)
+    }
 }
 
 /// One tab. Every method is quick and never blocks on disk, except where noted.
@@ -236,7 +248,9 @@ impl Tab {
             state.id
         };
         let location = PathBuf::from(&state.location);
-        let opts = state.view.options(&state.filter);
+        let opts = state
+            .view
+            .options(&state.filter, &fstudio_view::MarkTable::default());
         let tab = Arc::new_cyclic(|me| Tab {
             id,
             me: me.clone(),
@@ -266,6 +280,8 @@ impl Tab {
                 closed: false,
                 keep_mode: false,
                 search: None,
+                marks: fstudio_view::MarkTable::default(),
+                marks_gen: 0,
             }),
         });
         let pending = (!state.selected.is_empty() || state.cursor.is_some())
@@ -525,9 +541,12 @@ impl Tab {
                 if std::mem::take(&mut st.keep_mode) {
                     v.mode = st.view.mode;
                 }
+                // Like the filter text, a culling preset belongs to one visit.
+                v.cull = crate::sidecars::CullFilter::All;
                 st.view = v;
                 st.filter.clear();
                 st.scroll = None;
+                st.marks = fstudio_view::MarkTable::default();
             }
             st.generation += 1;
             st.location = dir.clone();
@@ -539,7 +558,7 @@ impl Tab {
                 st.pending_found.clear();
                 st.pending_gen = None;
             }
-            let opts = st.view.options(&st.filter);
+            let opts = st.options();
             if !keep_rows {
                 st.version += 1;
                 let mut l = listing::empty(&dir, opts.clone(), st.version);
@@ -695,7 +714,7 @@ impl Tab {
         {
             return false;
         }
-        let want = st.view.options(&st.filter);
+        let want = st.options();
         if *l.options() != want {
             l = l.with_options(want);
         }
@@ -771,7 +790,48 @@ impl Tab {
                 cursor: cursor.map(|c| c as u32),
             });
         }
+        if state == ListingState::Complete
+            && matches!(kind, ChangeKind::Sorted | ChangeKind::Patched)
+        {
+            self.refresh_marks(gen_);
+        }
         true
+    }
+
+    /// Reads the folder's sidecars on a background thread and re-sorts when
+    /// their marks changed. Cheap when nothing changed: unchanged sidecars
+    /// come from the cache without touching the disk.
+    fn refresh_marks(&self, gen_: u64) {
+        let (dir, entries, mgen) = {
+            let mut st = self.st.lock();
+            if st.generation != gen_ || st.closed {
+                return;
+            }
+            let entries: Vec<fstudio_model::Entry> =
+                st.listing.inner.sidecar_entries().cloned().collect();
+            if entries.is_empty() && st.marks.is_empty() {
+                return; // not a photo folder: nothing to do
+            }
+            st.marks_gen += 1;
+            (st.location.clone(), entries, st.marks_gen)
+        };
+        let tab = self.arc();
+        let _ = std::thread::Builder::new()
+            .name("fstudio-sidecars".into())
+            .spawn(move || {
+                let table = tab.shared.sidecars.table_for(&dir, &entries);
+                {
+                    let mut st = tab.st.lock();
+                    if st.generation != gen_ || st.marks_gen != mgen || st.closed {
+                        return;
+                    }
+                    if table.same_contents(&st.marks) {
+                        return;
+                    }
+                    st.marks = table;
+                }
+                tab.resort();
+            });
     }
 
     /// Watcher events for this tab's folder (called on the router thread).
@@ -919,7 +979,8 @@ impl Tab {
                 || st.view.ascending != v.ascending
                 || st.view.folders_first != v.folders_first
                 || st.view.mode != v.mode
-                || st.view.columns != v.columns;
+                || st.view.columns != v.columns
+                || st.view.hide_sidecars != v.hide_sidecars;
             st.view = v.clone();
             r.then(|| st.location.clone())
         };
@@ -950,11 +1011,7 @@ impl Tab {
             let mut st = self.st.lock();
             st.filter = text.to_string();
             st.view_generation += 1;
-            (
-                st.generation,
-                st.listing.clone(),
-                st.view.options(&st.filter),
-            )
+            (st.generation, st.listing.clone(), st.options())
         };
         let next = base.inner.with_options(opts);
         self.publish(
@@ -974,7 +1031,7 @@ impl Tab {
                 st.generation,
                 st.view_generation,
                 st.listing.clone(),
-                st.view.options(&st.filter),
+                st.options(),
             )
         };
         let tab = self.arc();
