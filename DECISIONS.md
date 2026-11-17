@@ -288,3 +288,8 @@ Built in parallel sessions and merged after review.
 - A paired `.xmp` is hidden only while its image is in the folder: on by default, under View › Hide XMP Sidecars and Settings › Views.
 - Rating, Label and Pick columns. Presets: ★ 3+ (rejects excluded), Picks, Rejects, Hide Rejects. A preset resets on each folder visit, like the filter text.
 - Sidebar tags: a click searches This Mac for the tag. The Spotlight query includes `kMDItemUserTags`, and results are still checked on disk.
+
+## F-030: Icon and Gallery views (2026-11-17)
+- Icon view is a tile grid. 2D cursor movement, column count and the thumbnail size (⇧⌘= / ⇧⌘-, the `grid` settings group) are decided in the core (`fstudio-core::grid`), and the shell only draws.
+- Gallery is a large picture with a filmstrip; ←/→ step through items. Thumbnails come from QuickLook, lazily and off the main thread. For RAW files whose QuickLook picture is too small, it falls back to ImageIO's embedded preview.
+- Both views show culling marks (F-029) and dim rejects. Rename works in the grid through the same rename controller as the list.
