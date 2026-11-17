@@ -222,6 +222,22 @@ final class SearchBarView: NSView, NSSearchFieldDelegate, NSTextFieldDelegate {
         field.currentEditor()?.selectedRange = NSRange(location: (field.stringValue as NSString).length, length: 0)
     }
 
+    /// Browses a Finder tag (a sidebar tag click): searches the whole Mac for
+    /// items with that tag, with the filter row open so the tag is visible.
+    func openTag(_ name: String) {
+        guard let t = tab else { return }
+        openTabs.insert(t.id)
+        var r = SearchRequest()
+        r.scope = .thisMac
+        r.tags = [name]
+        load(r)
+        filtersButton.state = .on
+        showFilters = true
+        filterRow.isHidden = false
+        run()
+        onHeightChange?(wantedHeight)
+    }
+
     /// Reads the status again (after a listing change).
     func refresh() {
         let st = api?.searchStatus()

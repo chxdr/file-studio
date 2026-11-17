@@ -96,7 +96,8 @@ fn glob_for_md(glob: &str) -> String {
 }
 
 /// The Spotlight query for `q`, or `None` when the index can't narrow it
-/// (no name and no content text, or a regular expression with no content).
+/// (no name, tags or content text, or a regular expression with nothing
+/// else).
 /// `c` and `d` make it case- and diacritic-insensitive, like F-017.
 pub fn spotlight_query(q: &SearchQuery) -> Option<String> {
     let mut parts = Vec::new();
@@ -110,6 +111,9 @@ pub fn spotlight_query(q: &SearchQuery) -> Option<String> {
             }
             NameMode::Regex => {}
         }
+    }
+    for t in q.tags.iter().filter(|t| !t.is_empty()) {
+        parts.push(format!("kMDItemUserTags == \"{}\"cd", escape_md(t)));
     }
     if let Some(c) = q.content.as_deref().filter(|c| !c.is_empty()) {
         parts.push(format!("kMDItemTextContent == \"*{}*\"cd", escape_md(c)));
@@ -207,6 +211,23 @@ mod tests {
         assert_eq!(
             spotlight_query(&q).unwrap(),
             r#"kMDItemTextContent == "*hello*"cd"#
+        );
+    }
+
+    #[test]
+    fn tag_queries() {
+        // A sidebar tag click: tags alone narrow the index.
+        let mut q = SearchQuery::this_mac();
+        q.tags = vec!["Red".into()];
+        assert_eq!(
+            spotlight_query(&q).unwrap(),
+            r#"kMDItemUserTags == "Red"cd"#
+        );
+        q.tags = vec!["Work \"A\"*".into(), String::new(), "Blue".into()];
+        q.name = "x".into();
+        assert_eq!(
+            spotlight_query(&q).unwrap(),
+            r#"kMDItemFSName == "*x*"cd && kMDItemUserTags == "Work \"A\"\*"cd && kMDItemUserTags == "Blue"cd"#
         );
     }
 

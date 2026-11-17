@@ -93,6 +93,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, CoreWind
 
     private func buildContent() {
         sidebar = SidebarViewController(model: model, window: windowModel)
+        sidebar.onBrowseTag = { [weak self] name in self?.activePane?.openTagSearch(name) }
         let sideItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         sideItem.minimumThickness = 160
         sideItem.maximumThickness = 320
