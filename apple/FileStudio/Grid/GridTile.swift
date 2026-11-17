@@ -183,7 +183,8 @@ final class GridTile: NSView {
             pictureAspect = nil
         }
         cloud.isHidden = !r.isDataless
-        summary = [r.shownName, r.isDataless ? "in iCloud" : nil, r.kindText, r.isSelected ? "selected" : nil]
+        summary = [r.shownName, r.isDataless ? "in iCloud" : nil, r.marksText.isEmpty ? nil : r.marksText, r.kindText,
+                   r.isSelected ? "selected" : nil]
             .compactMap { $0 }.joined(separator: ", ")
         layoutLayers()
     }

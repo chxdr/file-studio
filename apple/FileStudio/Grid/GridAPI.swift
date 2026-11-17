@@ -63,22 +63,21 @@ struct GridMarks: Equatable {
     var reject: Bool
     var pick: Bool
 
-    /// The marks of a row.
-    ///
-    /// TODO(culling-marks): return the row's marks once branch
-    /// `claude/laughing-shaw-98f473` ("Show Import Studio ratings, labels and
-    /// culls") is merged into main. It adds `Row.marks: CullMarks?`; the body
-    /// becomes:
-    ///   guard let m = r.marks else { return nil }
-    ///   return GridMarks(rating: Int(m.rating), label: m.label.map { Int($0.rawValue) },
-    ///                    reject: m.flag == .reject, pick: m.flag == .pick)
+    /// The marks of a row (from its XMP sidecar; the core reads it), or nil
+    /// when it has none.
     @MainActor
     static func of(_ r: Row) -> GridMarks? {
         #if DEBUG
         if debugFake { return fake(r.name) }
         #endif
-        return nil
+        guard let m = r.marks else { return nil }
+        let g = GridMarks(rating: Int(m.rating), label: m.label.map { Int($0.rawValue) },
+                          reject: m.flag == .reject, pick: m.flag == .pick)
+        return g.isEmpty ? nil : g
     }
+
+    /// No stars, no label, neither pick nor reject.
+    var isEmpty: Bool { rating == 0 && label == nil && !reject && !pick }
 
     #if DEBUG
     /// Debug step `gridmarks:fake`: made-up marks from the name, to check the drawing.

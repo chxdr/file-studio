@@ -13,7 +13,7 @@ row, ←/→ stepping through the gallery, the thumbnail size (`grid.icon_size`,
 package.
 
 - `GridAPI.swift` the contract (`GridEngineAPI`), `grid.*` settings, and
-  `GridMarks` (Import Studio culling marks; see the TODO there).
+  `GridMarks` (Import Studio culling marks from the row, read by the core from XMP sidecars).
 - `GridRust.swift` / `GridMock.swift` the engines' side.
 - `ThumbnailLoader.swift` QuickLook thumbnails off the main thread, in the core's
   order, a few at a time, with work that left the core's list cancelled; one
