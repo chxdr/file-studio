@@ -506,6 +506,9 @@ final class DemoListView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         case .ext:
             cell.kind = .text(rightAligned: false)
             cell.configure(text: r.extText, row: r, onAccent: onAccent)
+        case .rating, .label, .flag:
+            cell.kind = .text(rightAligned: false)
+            cell.configure(text: "", row: r, onAccent: onAccent)
         }
         return cell
     }

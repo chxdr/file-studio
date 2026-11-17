@@ -104,6 +104,9 @@ public struct PreviewInfo: Sendable, Equatable {
     public var text: PreviewText?
     public var folder: PreviewFolder?
     public var note: String?
+    // MARK: XMP culling additions
+    /// Stars, label and pick/reject from the item's XMP sidecar (read by the core).
+    public var marks: CullMarks?
 
     public init(path: String, name: String, category: PreviewCategory, size: UInt64, modifiedNs: Int64) {
         self.path = path; self.name = name; self.category = category; self.size = size; self.modifiedNs = modifiedNs

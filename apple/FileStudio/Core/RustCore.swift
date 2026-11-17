@@ -235,6 +235,18 @@ func unpackRows(_ data: Data) -> [Row] {
                 out[i].locationText = str()
             }
         }
+        // XMP culling additions: the third trailer (marks).
+        if at < b.count {
+            for i in 0..<n {
+                let rating = u8(), label = u8(), flag = u8(), hidden = u8()
+                if rating != 0xFF {
+                    out[i].marks = CullMarks(rating: rating, label: CullLabel(rawValue: label),
+                                             flag: CullFlag(rawValue: flag) ?? .none)
+                }
+                out[i].hasHiddenSidecar = hidden != 0
+                out[i].marksText = str()
+            }
+        }
         return out
     }
 }
@@ -256,6 +268,7 @@ extension Row {
                   isSelected: r.isSelected, isCursor: r.isCursor, isCutPending: r.isCutPending)
         createdNs = r.createdNs; createdText = r.createdText; extText = r.extText
         displayName = r.displayName; locationText = r.locationText
+        marks = r.marks.map(CullMarks.init); hasHiddenSidecar = r.hasHiddenSidecar; marksText = r.marksText
     }
 }
 
@@ -291,6 +304,9 @@ extension SortBy {
         case .created: .created
         case .kind: .kind
         case .ext: .extension
+        case .rating: .rating
+        case .label: .label
+        case .flag: .flag
         }
     }
     init(_ f: FfiSortBy) {
@@ -301,20 +317,65 @@ extension SortBy {
         case .created: self = .created
         case .kind: self = .kind
         case .extension: self = .ext
+        case .rating: self = .rating
+        case .label: self = .label
+        case .flag: self = .flag
         }
+    }
+}
+
+extension CullFilter {
+    var ffi: FfiCullFilter {
+        switch self {
+        case .all: .all
+        case .rating3Plus: .rating3Plus
+        case .picks: .picks
+        case .rejects: .rejects
+        case .hideRejects: .hideRejects
+        }
+    }
+    init(_ f: FfiCullFilter) {
+        switch f {
+        case .all: self = .all
+        case .rating3Plus: self = .rating3Plus
+        case .picks: self = .picks
+        case .rejects: self = .rejects
+        case .hideRejects: self = .hideRejects
+        }
+    }
+}
+
+extension CullMarks {
+    init(_ f: FfiCullMarks) {
+        let label: CullLabel? = switch f.label {
+        case .none: nil
+        case .red?: .red
+        case .yellow?: .yellow
+        case .green?: .green
+        case .blue?: .blue
+        case .purple?: .purple
+        }
+        let flag: CullFlag = switch f.flag {
+        case .none: .none
+        case .pick: .pick
+        case .reject: .reject
+        }
+        self.init(rating: f.rating, label: label, flag: flag)
     }
 }
 
 extension ViewState {
     var ffi: FfiViewState {
         FfiViewState(mode: mode.ffi, sort: sort.ffi, ascending: ascending, foldersFirst: foldersFirst,
-                     showHidden: showHidden, packagesAsFiles: packagesAsFiles, columns: columns.map(\.ffi))
+                     showHidden: showHidden, packagesAsFiles: packagesAsFiles, columns: columns.map(\.ffi),
+                     cull: cull.ffi, hideSidecars: hideSidecars)
     }
     init(_ f: FfiViewState) {
         self.init()
         mode = ViewMode(f.mode); sort = SortBy(f.sort); ascending = f.ascending; foldersFirst = f.foldersFirst
         showHidden = f.showHidden; packagesAsFiles = f.packagesAsFiles
         columns = f.columns.map(ColumnSpec.init)
+        cull = CullFilter(f.cull); hideSidecars = f.hideSidecars
     }
 }
 
@@ -717,7 +778,8 @@ extension Settings {
         view = View(mode: ViewMode(v.mode), sort: SortBy(v.sort), ascending: v.ascending,
                     foldersFirst: v.foldersFirst, showHidden: v.showHidden, packagesAsFiles: v.packagesAsFiles,
                     folderMemory: v.folderMemory, hour24: v.hour24,
-                    density: RowDensity(v.density), columns: v.columns.map(ColumnSpec.init))
+                    density: RowDensity(v.density), columns: v.columns.map(ColumnSpec.init),
+                    hideSidecars: v.hideSidecars)
         pathBar = PathBar(completionLimit: s.pathBar.completionLimit, completeHidden: s.pathBar.completeHidden,
                           frecencyExcluded: s.pathBar.frecencyExcluded, maxCrumbs: s.pathBar.maxCrumbs)
         let o = s.operations
@@ -744,7 +806,8 @@ extension Settings {
             view: FfiViewSettings(
                 mode: view.mode.ffi, sort: view.sort.ffi, ascending: view.ascending, foldersFirst: view.foldersFirst,
                 showHidden: view.showHidden, packagesAsFiles: view.packagesAsFiles, folderMemory: view.folderMemory,
-                hour24: view.hour24, density: view.density.ffi, columns: view.columns.map(\.ffi)),
+                hour24: view.hour24, density: view.density.ffi, columns: view.columns.map(\.ffi),
+                hideSidecars: view.hideSidecars),
             pathBar: FfiPathBarSettings(completionLimit: pathBar.completionLimit, completeHidden: pathBar.completeHidden,
                                         frecencyExcluded: pathBar.frecencyExcluded, maxCrumbs: pathBar.maxCrumbs),
             operations: FfiOperationsSettings(
@@ -1092,6 +1155,9 @@ extension ColumnSpec {
         case .created: .created
         case .kind: .kind
         case .extension: .ext
+        case .rating: .rating
+        case .label: .label
+        case .flag: .flag
         }
         self.init(id: id, width: f.width)
     }
@@ -1103,6 +1169,9 @@ extension ColumnSpec {
         case .created: .created
         case .kind: .kind
         case .ext: .extension
+        case .rating: .rating
+        case .label: .label
+        case .flag: .flag
         }
         return FfiColumnSpec(id: i, width: width)
     }
