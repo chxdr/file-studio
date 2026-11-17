@@ -51,6 +51,39 @@ fn wait_bytes(e: &Env, id: OpId, min: u64) {
     wait_bytes_at(e, id, min, "wait_bytes");
 }
 
+/// How long a paused copy must stay still before the test believes it has
+/// stopped: four times as long as one 4 MiB write takes at the speed the copy
+/// has managed so far (`bytes` in `took`), at least 300 ms and at most 5 s.
+/// A fixed window fails on a slow machine, where a single write that was
+/// already under way when pause() was called can outlast it.
+fn quiet_window(bytes: u64, took: Duration) -> Duration {
+    const WRITE: f64 = (4u64 << 20) as f64;
+    let rate = bytes as f64 / took.as_secs_f64().max(1e-3);
+    let write = Duration::from_secs_f64((WRITE / rate.max(1.0)).min(60.0));
+    (write * 4).clamp(Duration::from_millis(300), Duration::from_secs(5))
+}
+
+#[test]
+fn quiet_window_tracks_speed() {
+    // Fast disk: the floor.
+    assert_eq!(
+        quiet_window(1 << 30, Duration::from_secs(1)),
+        Duration::from_millis(300)
+    );
+    // The CI run that failed: about 10 MB/s, so one write takes ~0.4 s.
+    let w = quiet_window(8 << 20, Duration::from_millis(800));
+    assert!(
+        w > Duration::from_millis(1500) && w < Duration::from_millis(1700),
+        "{w:?}"
+    );
+    // Crawling, or no time measured at all: the ceiling, no panic.
+    assert_eq!(
+        quiet_window(1, Duration::from_secs(10)),
+        Duration::from_secs(5)
+    );
+    assert_eq!(quiet_window(0, Duration::ZERO), Duration::from_secs(5));
+}
+
 #[test]
 fn pause_resume_and_cancel() {
     // Printed only when the test fails: a timeline of the steps.
@@ -74,30 +107,34 @@ fn pause_resume_and_cancel() {
             .unwrap();
         let at = format!("pause loop, verify={verify}");
         step(&at);
+        let enqueued = Instant::now();
         wait_bytes_at(&e2, id, 8 << 20, &at);
+        let quiet = quiet_window(e2.q.status(id).unwrap().bytes_done, enqueued.elapsed());
+        step(&format!("{at}: quiet window {quiet:?}"));
         e2.q.pause(id).unwrap();
         let paused_at = Instant::now();
-        // A pause takes effect after the chunk in flight (up to 4 MiB, which
-        // can take seconds on a busy CI machine). Wait for the bytes to
-        // settle, then check nothing moves for 300 ms.
+        // A pause takes effect after the write in flight (up to 4 MiB). Wait
+        // for the bytes to settle, then check nothing moves for another
+        // window. Each window is sized from this copy's own speed, so a slow
+        // disk can't pass off one long write as a stop.
         let mut a = e2.q.status(id).unwrap();
         let (b, a_at, b_at) = loop {
             let a_at = paused_at.elapsed();
-            std::thread::sleep(Duration::from_millis(300));
+            std::thread::sleep(quiet);
             let b = e2.q.status(id).unwrap();
             if b.bytes_done == a.bytes_done {
                 break (b, a_at, paused_at.elapsed());
             }
             assert!(
-                paused_at.elapsed() < Duration::from_secs(10),
-                "{at}: bytes still moving 10 s after pause() ({} then {}): {b:#?}",
+                paused_at.elapsed() < Duration::from_secs(60),
+                "{at}: bytes still moving 60 s after pause() ({} then {}): {b:#?}",
                 a.bytes_done,
                 b.bytes_done
             );
             a = b;
         };
         assert_eq!(b.state, OpState::Paused, "{at}: {b:#?}");
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(quiet);
         let c = e2.q.status(id).unwrap();
         assert_eq!(
             b.bytes_done,
