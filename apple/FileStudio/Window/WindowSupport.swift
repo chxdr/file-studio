@@ -23,7 +23,7 @@ protocol PaneContent: AnyObject {
 
 extension ListPlaceholderView: PaneContent {
     var contentView: NSView { scrollView }
-    var focusView: NSView { table }
+    // `focusView` (the list, the focused column, the icon view or the gallery's filmstrip) is the list's own.
 }
 
 // MARK: - Window preferences

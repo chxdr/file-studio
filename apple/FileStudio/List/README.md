@@ -18,7 +18,7 @@ placeholder name because the window embeds it: `ListPlaceholderView(model:)`,
   states (Full Disk Access hint for EPERM) are `ListStateView`.
 - `FileCells.swift`: drawn cells and the row view (selection in the accent
   colour, emphasised only in the active pane; VoiceOver labels).
-- `ListPlaceholderView.swift`: columns, order, widths and sort from the core's
+- `ListPlaceholderView.swift`: also hosts the icon view and the gallery (Grid/) by view mode; columns, order, widths and sort from the core's
   `ViewState` (per-folder memory is the core's); header click = `sortByColumn`;
   header right-click = column chooser; handles `beginRename`,
   `textField(rename.*)` and Quick Look (asks before previewing dataless items,

@@ -42,6 +42,7 @@ mod error;
 mod events;
 mod favourites;
 mod feedback;
+mod grid;
 mod ids;
 mod listing;
 mod listing_handle;
@@ -84,6 +85,11 @@ pub use favourites::Favourite;
 pub fn display_name(path: &str) -> String {
     fstudio_fs::display_name(std::path::Path::new(path))
 }
+pub use grid::{
+    GALLERY_PIXEL_STEPS, GridDir, GridLayout, GridSettings, ICON_SIZE_RANGE, ICON_SIZES,
+    THUMB_PIXEL_STEPS, clamp_icon_size, gallery_order, gallery_pixels, grid_layout, grid_target,
+    next_icon_size, thumb_pixels, thumbnail_order, wants_thumbnail,
+};
 pub use ids::{PaneId, TabId, WindowId, WorkspaceId};
 pub use listing::{Listing, ListingState, RowInfo, RowKind};
 pub use listing_handle::ListingHandle;

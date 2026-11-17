@@ -1233,6 +1233,27 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func workspaces() throws  -> [FfiWorkspaceSummary]
     
     /**
+     * The gallery's big pictures to make, in order, around the cursor.
+     */
+    func galleryRequests(tab: UInt64, forward: Bool) throws  -> [UInt32]
+    
+    /**
+     * The shell laid out the icon view of `tab` with `columns` per row.
+     */
+    func setGridColumns(tab: UInt64, columns: UInt32) throws 
+    
+    /**
+     * The size slider: sets `grid.icon_size` (kept in range).
+     */
+    func setIconSize(size: UInt32) throws 
+    
+    /**
+     * Thumbnails to ask for, in order, for items `start..start+count` on
+     * screen. Reads no disk.
+     */
+    func thumbnailRequests(tab: UInt64, start: UInt32, count: UInt32, forward: Bool) throws  -> [UInt32]
+    
+    /**
      * Opens a batch-rename session for `paths` (in list order). Reads each
      * item's metadata and lists each folder once: blocks on disk like a
      * folder listing.
@@ -2589,6 +2610,62 @@ open func workspaces()throws  -> [FfiWorkspaceSummary]  {
         uniffiCallStatus in
     uniffi_fstudio_ffi_fn_method_ffiengine_workspaces(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The gallery's big pictures to make, in order, around the cursor.
+     */
+open func galleryRequests(tab: UInt64, forward: Bool)throws  -> [UInt32]  {
+    return try  FfiConverterSequenceUInt32.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_gallery_requests(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(tab),
+        FfiConverterBool.lower(forward),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The shell laid out the icon view of `tab` with `columns` per row.
+     */
+open func setGridColumns(tab: UInt64, columns: UInt32)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_set_grid_columns(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(tab),
+        FfiConverterUInt32.lower(columns),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The size slider: sets `grid.icon_size` (kept in range).
+     */
+open func setIconSize(size: UInt32)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_set_icon_size(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(size),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Thumbnails to ask for, in order, for items `start..start+count` on
+     * screen. Reads no disk.
+     */
+open func thumbnailRequests(tab: UInt64, start: UInt32, count: UInt32, forward: Bool)throws  -> [UInt32]  {
+    return try  FfiConverterSequenceUInt32.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_thumbnail_requests(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(tab),
+        FfiConverterUInt32.lower(start),
+        FfiConverterUInt32.lower(count),
+        FfiConverterBool.lower(forward),uniffiCallStatus
     )
 })
 }
@@ -6075,6 +6152,79 @@ public func FfiConverterTypeFfiGeneralSettings_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeFfiGeneralSettings_lower(_ value: FfiGeneralSettings) -> RustBuffer {
     return FfiConverterTypeFfiGeneralSettings.lower(value)
+}
+
+
+/**
+ * Where the tiles of the icon view go, in points.
+ */
+public struct FfiGridLayout: Equatable, Hashable {
+    public var columns: UInt32
+    public var cellWidth: Double
+    public var cellHeight: Double
+    public var imageSize: Double
+    public var labelHeight: Double
+    public var inset: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(columns: UInt32, cellWidth: Double, cellHeight: Double, imageSize: Double, labelHeight: Double, inset: Double) {
+        self.columns = columns
+        self.cellWidth = cellWidth
+        self.cellHeight = cellHeight
+        self.imageSize = imageSize
+        self.labelHeight = labelHeight
+        self.inset = inset
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiGridLayout: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiGridLayout: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiGridLayout {
+        return
+            try FfiGridLayout(
+                columns: FfiConverterUInt32.read(from: &buf), 
+                cellWidth: FfiConverterDouble.read(from: &buf), 
+                cellHeight: FfiConverterDouble.read(from: &buf), 
+                imageSize: FfiConverterDouble.read(from: &buf), 
+                labelHeight: FfiConverterDouble.read(from: &buf), 
+                inset: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiGridLayout, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.columns, into: &buf)
+        FfiConverterDouble.write(value.cellWidth, into: &buf)
+        FfiConverterDouble.write(value.cellHeight, into: &buf)
+        FfiConverterDouble.write(value.imageSize, into: &buf)
+        FfiConverterDouble.write(value.labelHeight, into: &buf)
+        FfiConverterDouble.write(value.inset, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiGridLayout_lift(_ buf: RustBuffer) throws -> FfiGridLayout {
+    return try FfiConverterTypeFfiGridLayout.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiGridLayout_lower(_ value: FfiGridLayout) -> RustBuffer {
+    return FfiConverterTypeFfiGridLayout.lower(value)
 }
 
 
@@ -19252,6 +19402,52 @@ public func displayName(path: String) -> String  {
 })
 }
 /**
+ * The pixel size (longer side) of the gallery's big picture for a view of `points`.
+ */
+public func gridGalleryPixels(points: Double, scale: Double) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_grid_gallery_pixels(
+        FfiConverterDouble.lower(points),
+        FfiConverterDouble.lower(scale),uniffiCallStatus
+    )
+})
+}
+/**
+ * The smallest and largest thumbnail size, in points (the slider's range).
+ */
+public func gridIconSizeRange() -> [UInt32]  {
+    return try!  FfiConverterSequenceUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_grid_icon_size_range(uniffiCallStatus
+    )
+})
+}
+/**
+ * Lays out the icon view for a content width and a thumbnail size.
+ */
+public func gridLayout(width: Double, iconSize: UInt32) -> FfiGridLayout  {
+    return try!  FfiConverterTypeFfiGridLayout_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_grid_layout(
+        FfiConverterDouble.lower(width),
+        FfiConverterUInt32.lower(iconSize),uniffiCallStatus
+    )
+})
+}
+/**
+ * The pixel size to ask QuickLook for, for a picture of `points` at `scale`.
+ */
+public func gridThumbPixels(points: Double, scale: Double) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_func_grid_thumb_pixels(
+        FfiConverterDouble.lower(points),
+        FfiConverterDouble.lower(scale),uniffiCallStatus
+    )
+})
+}
+/**
  * A new step of `kind` with its usual settings.
  */
 public func renameStepNew(kind: FfiRenameStepKind) -> FfiRenameStep  {
@@ -19384,6 +19580,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_display_name() != 52844) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_grid_gallery_pixels() != 48147) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_grid_icon_size_range() != 9750) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_grid_layout() != 57100) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_func_grid_thumb_pixels() != 56010) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_func_rename_step_new() != 22027) {
@@ -19741,6 +19949,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_workspaces() != 24606) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_gallery_requests() != 14898) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_set_grid_columns() != 44599) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_set_icon_size() != 12263) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_thumbnail_requests() != 682) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_batch_rename() != 8090) {

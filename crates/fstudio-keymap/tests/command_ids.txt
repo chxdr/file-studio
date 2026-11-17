@@ -66,6 +66,8 @@ view.icons
 view.list
 view.columns
 view.gallery
+view.icons_bigger
+view.icons_smaller
 view.show_hidden
 view.refresh
 view.hide_sidecars

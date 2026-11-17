@@ -9,6 +9,8 @@
 
 #![allow(missing_docs)]
 
+// ── icon and gallery view (M3) ──
+mod grid;
 mod preview;
 mod search;
 // ── batch rename (M3) ──
@@ -23,6 +25,7 @@ use std::sync::Arc;
 use fstudio_core as core;
 use fstudio_core::{Engine, Tab, TabId};
 
+pub use grid::*;
 pub use preview::*;
 pub use rename::*;
 pub use search::*;

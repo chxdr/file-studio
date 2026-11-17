@@ -39,6 +39,8 @@ pub struct Settings {
     pub preview: crate::preview::PreviewSettings,
     /// Default file viewer and the Open/Save panel jump (`integration.*`).
     pub integration: crate::system_integration::IntegrationSettings,
+    /// Icon view and gallery (`grid.*`, M3).
+    pub grid: crate::grid::GridSettings,
 }
 
 /// How much the interface animates, on top of the system's Reduce Motion.
@@ -314,6 +316,7 @@ impl Settings {
             "path_bar.frecency_excluded has an empty pattern",
         )?;
         self.preview.validate()?;
+        self.grid.validate()?;
         let o = &self.operations;
         check(
             (1..=16).contains(&o.file_workers),
