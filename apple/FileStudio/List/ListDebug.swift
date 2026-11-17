@@ -162,7 +162,8 @@ enum ListDebug {
             if let r = ft.row(i) {
                 print("LIST row \(i) \(r.isSelected ? "[x]" : "[ ]")\(r.isCursor ? ">" : " ") \(r.name) | \(r.sizeText) | "
                       + "\(r.modifiedText) | \(r.createdText) | \(r.kindText) | \(r.extText)"
-                      + "\(r.isDataless ? " (cloud)" : "")\(r.isSymlink ? " (link)" : "")\(r.isHidden ? " (hidden)" : "")")
+                      + "\(r.isDataless ? " (cloud)" : "")\(r.isSymlink ? " (link)" : "")\(r.isHidden ? " (hidden)" : "")"
+                      + (r.marksText.isEmpty ? "" : " | marks: \(r.marksText)\(r.hasHiddenSidecar ? " (sidecar hidden)" : "")"))
             }
         }
         if let c = l.columns, v.mode == .columns {

@@ -55,6 +55,7 @@ mod protect;
 mod rename;
 mod settings;
 mod shared;
+mod sidecars;
 mod sys;
 mod system_integration;
 mod tab;
@@ -108,6 +109,8 @@ pub use system_integration::{
 pub use tab::{CursorMove, ScrollAnchor, SelectionChange, SelectionInfo, Tab, TabState};
 // M3 search.
 pub use fstudio_search::{DateField, Kind as SearchKind, NameMode, SearchQuery};
+pub use fstudio_view::{Flag as CullFlag, Label as CullLabel, Marks as CullMarks};
+pub use sidecars::CullFilter;
 pub use tab::search::{LeafCollation, SearchRequest, SearchScope, SearchState, SearchStatus};
 pub use usage::{
     UsageChange, UsageMove, UsageNodeInfo, UsageObserver, UsageProgress, UsageRowInfo,

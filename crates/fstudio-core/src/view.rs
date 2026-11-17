@@ -23,6 +23,12 @@ pub enum SortBy {
     Kind,
     /// Extension, then name.
     Extension,
+    /// Star rating from the XMP sidecar (rejects lowest).
+    Rating,
+    /// Colour label from the XMP sidecar.
+    Label,
+    /// Pick or reject from the XMP sidecar.
+    Flag,
 }
 
 impl SortBy {
@@ -34,6 +40,9 @@ impl SortBy {
             SortBy::Created => SortKey::Created,
             SortBy::Kind => SortKey::Kind,
             SortBy::Extension => SortKey::Extension,
+            SortBy::Rating => SortKey::Rating,
+            SortBy::Label => SortKey::Label,
+            SortBy::Flag => SortKey::Flag,
         }
     }
 }
@@ -56,6 +65,11 @@ pub struct ViewState {
     pub packages_as_files: bool,
     /// The list view's columns, in order, with widths.
     pub columns: Vec<crate::view_columns::ColumnSpec>,
+    /// The culling preset ("★ 3+", "Picks", …). A new folder starts at All.
+    pub cull: crate::sidecars::CullFilter,
+    /// Hide an `.xmp` sidecar while its image is in the folder, showing the
+    /// marks on the image row instead.
+    pub hide_sidecars: bool,
 }
 
 impl Default for ViewState {
@@ -75,12 +89,18 @@ impl ViewState {
             show_hidden: v.show_hidden,
             packages_as_files: v.packages_as_files,
             columns: crate::view_columns::sanitize_columns(&v.columns),
+            cull: crate::sidecars::CullFilter::All,
+            hide_sidecars: v.hide_sidecars,
         }
     }
 
-    /// The `fstudio-view` options for this state plus a filter.
-    pub(crate) fn options(&self, filter: &str) -> ViewOptions {
+    /// The `fstudio-view` options for this state plus a filter and the
+    /// folder's sidecar marks.
+    pub(crate) fn options(&self, filter: &str, marks: &fstudio_view::MarkTable) -> ViewOptions {
         ViewOptions {
+            marks: marks.clone(),
+            mark_filter: self.cull.mark_filter(),
+            hide_sidecars: self.hide_sidecars,
             sort_key: self.sort.key(),
             ascending: self.ascending,
             folders_first: self.folders_first,

@@ -314,7 +314,7 @@ impl Tab {
             }
             st.selection = Selection::new();
             st.version += 1;
-            let opts = st.view.options(&st.filter);
+            let opts = st.options();
             st.listing = Arc::new(listing::empty(&root, opts, st.version));
             st.search = Some(SearchTab {
                 scope: req.scope,
@@ -527,7 +527,10 @@ impl Tab {
         handle: SearchHandle,
         rx: crossbeam_channel::Receiver<SearchEvent>,
     ) {
-        let opts = self.st.lock().view.options("");
+        let opts = {
+            let st = self.st.lock();
+            st.view.options("", &st.marks)
+        };
         let mut b = ListingBuilder::with_collation(opts, Arc::new(LeafCollation));
         let mut first = true;
         let mut last = Instant::now();

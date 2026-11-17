@@ -197,6 +197,13 @@ impl FfiTab {
     /// then a trailer (added later; older readers can stop before it):
     /// per row, in the same order: i64 created_ns,
     ///          2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
+    /// then the M3 search trailer, per row:
+    ///          2 × (u32 byte length, UTF-8 bytes): display_name, location_text
+    /// then the XMP culling trailer, per row:
+    ///          u8 rating (0–5, 0xFF: no marks), u8 label (0 none, 1 Red,
+    ///          2 Yellow, 3 Green, 4 Blue, 5 Purple), u8 flag (0 none, 1 pick,
+    ///          2 reject), u8 has_hidden_sidecar (0/1),
+    ///          (u32 byte length, UTF-8 bytes): marks_text
     /// ```
     pub fn rows_packed(&self, start: u32, count: u32) -> Vec<u8> {
         pack_rows(&self.inner.rows(start, count))
@@ -349,6 +356,13 @@ fn pack_rows(rows: &[core::RowInfo]) -> Vec<u8> {
             b.extend_from_slice(&(s.len() as u32).to_le_bytes());
             b.extend_from_slice(s.as_bytes());
         }
+    }
+    // XMP culling additions: the third trailer.
+    for r in rows {
+        b.extend_from_slice(&FfiCullMarks::packed(r.marks.map(Into::into)));
+        b.push(r.has_hidden_sidecar as u8);
+        b.extend_from_slice(&(r.marks_text.len() as u32).to_le_bytes());
+        b.extend_from_slice(r.marks_text.as_bytes());
     }
     b
 }
@@ -1083,6 +1097,9 @@ mod tests {
                     ext_text: String::new(),
                     display_name: String::new(),
                     location_text: String::new(),
+                    marks: None,
+                    has_hidden_sidecar: false,
+                    marks_text: String::new(),
                 }
             })
             .collect();
@@ -1103,6 +1120,25 @@ mod tests {
             };
             r.display_name = s();
             r.location_text = s();
+        }
+        // XMP culling trailer.
+        for r in &mut rows {
+            let m = take(4).to_vec();
+            r.marks = (m[0] != 0xFF).then(|| FfiCullMarks {
+                rating: m[0],
+                label: [
+                    None,
+                    Some(FfiCullLabel::Red),
+                    Some(FfiCullLabel::Yellow),
+                    Some(FfiCullLabel::Green),
+                    Some(FfiCullLabel::Blue),
+                    Some(FfiCullLabel::Purple),
+                ][m[1] as usize],
+                flag: [FfiCullFlag::None, FfiCullFlag::Pick, FfiCullFlag::Reject][m[2] as usize],
+            });
+            r.has_hidden_sidecar = m[3] != 0;
+            let len = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
+            r.marks_text = String::from_utf8(take(len).to_vec()).unwrap();
         }
         assert_eq!(at, b.len(), "nothing left over");
         rows

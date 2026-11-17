@@ -999,6 +999,13 @@ impl Engine {
             "sort.size" => check(view.sort == SortBy::Size),
             "sort.date_modified" => check(view.sort == SortBy::Modified),
             "sort.date_created" => check(view.sort == SortBy::Created),
+            "sort.rating" => check(view.sort == SortBy::Rating),
+            "sort.label" => check(view.sort == SortBy::Label),
+            "sort.flag" => check(view.sort == SortBy::Flag),
+            "view.hide_sidecars" => check(view.hide_sidecars),
+            id if id.starts_with("cull.") => {
+                check(crate::sidecars::CullFilter::from_command(id) == Some(view.cull))
+            }
             "sort.reverse" => check(!view.ascending),
             "sort.folders_first" => check(view.folders_first),
             _ => Some((true, false)),
@@ -1068,6 +1075,9 @@ impl Engine {
                     ("sort.size", "Size"),
                     ("sort.date_modified", "Date Modified"),
                     ("sort.date_created", "Date Created"),
+                    ("sort.rating", "Rating"),
+                    ("sort.label", "Label"),
+                    ("sort.flag", "Pick or Reject"),
                 ]
                 .into_iter()
                 .filter_map(|(id, t)| self.command_item(ctx, id, t.into(), None))

@@ -495,6 +495,7 @@ dependencies = [
  "fstudio-search",
  "fstudio-usage",
  "fstudio-view",
+ "fstudio-xmp",
  "libc",
  "parking_lot",
  "rayon",
@@ -661,8 +662,18 @@ name = "fstudio-view"
 version = "0.0.1"
 dependencies = [
  "fstudio-model",
+ "fstudio-xmp",
  "rayon",
  "unicode-normalization",
+]
+
+[[package]]
+name = "fstudio-xmp"
+version = "0.0.1"
+dependencies = [
+ "quick-xml",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]

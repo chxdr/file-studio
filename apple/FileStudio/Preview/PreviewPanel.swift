@@ -137,6 +137,11 @@ struct PreviewPanel: View {
                 opt("Language", t.language)
             }
         }
+        if let m = i.marks {
+            Section2("Culling") {
+                CullRows(marks: m)
+            }
+        }
         if !i.tags.isEmpty {
             Section2("Tags") {
                 FlowTags(tags: i.tags)
@@ -186,6 +191,58 @@ private struct InfoRow: View {
         }
         .font(.callout)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Stars, colour label and pick/reject from the XMP sidecar (display only).
+private struct CullRows: View {
+    let marks: CullMarks
+    private var labelName: String? {
+        switch marks.label {
+        case .red?: "Red"
+        case .yellow?: "Yellow"
+        case .green?: "Green"
+        case .blue?: "Blue"
+        case .purple?: "Purple"
+        case nil: nil
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Rating").foregroundStyle(.secondary).frame(width: 82, alignment: .trailing)
+                if marks.rating == 0 {
+                    Text("Unrated")
+                } else {
+                    Text(String(repeating: "★", count: Int(min(marks.rating, 5)))
+                         + String(repeating: "☆", count: 5 - Int(min(marks.rating, 5))))
+                        .foregroundStyle(.orange.opacity(marks.flag == .reject ? 0.5 : 1))
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Rating: \(marks.rating == 0 ? "unrated" : "\(marks.rating) stars")")
+            if let l = marks.label, let name = labelName {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Label").foregroundStyle(.secondary).frame(width: 82, alignment: .trailing)
+                    Circle().fill(Color(nsColor: CellStyle.color(l))).frame(width: 9, height: 9)
+                    Text(name)
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            if marks.flag != .none {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Flag").foregroundStyle(.secondary).frame(width: 82, alignment: .trailing)
+                    Image(systemName: marks.flag == .pick ? "flag.fill" : "xmark.circle.fill")
+                        .foregroundStyle(marks.flag == .pick ? .green : .red)
+                    Text(marks.flag == .pick ? "Picked" : "Rejected")
+                    Spacer(minLength: 0)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .font(.callout)
     }
 }
 

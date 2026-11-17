@@ -379,7 +379,34 @@ public struct Row: Equatable, Sendable, Identifiable {
     public var locationText = ""
     /// What the name cell shows.
     public var shownName: String { displayName.isEmpty ? name : displayName }
+    // MARK: XMP culling additions
+    /// Stars, label and pick/reject from the item's XMP sidecar (read by the
+    /// core); nil without a readable sidecar.
+    public var marks: CullMarks?
+    /// The item's `.xmp` sidecar is hidden and its marks show on this row.
+    public var hasHiddenSidecar = false
+    /// The marks in words, for VoiceOver and tooltips.
+    public var marksText = ""
 }
+
+/// A colour label from an XMP sidecar.
+public enum CullLabel: UInt8, Equatable, Sendable { case red = 1, yellow, green, blue, purple }
+/// Pick, reject or neither.
+public enum CullFlag: UInt8, Equatable, Sendable { case none = 0, pick, reject }
+/// Culling marks from an XMP sidecar. Display only: the core reads and
+/// decides everything.
+public struct CullMarks: Equatable, Sendable {
+    /// 0 unrated, 1–5 stars (a reject keeps its stars).
+    public var rating: UInt8
+    public var label: CullLabel?
+    public var flag: CullFlag
+    public init(rating: UInt8, label: CullLabel?, flag: CullFlag) {
+        self.rating = rating; self.label = label; self.flag = flag
+    }
+}
+
+/// The culling presets.
+public enum CullFilter: Equatable, Sendable, CaseIterable { case all, rating3Plus, picks, rejects, hideRejects }
 
 public enum ListingState: Equatable, Sendable { case loading, complete, error }
 
@@ -403,7 +430,11 @@ public struct ListingInfo: Equatable, Sendable {
 /// Why a listing changed.
 public enum ChangeKind: Equatable, Sendable { case partial, sorted, patched, resorted, error }
 
-public enum SortBy: Equatable, Hashable, Sendable, CaseIterable { case name, size, modified, created, kind, ext }
+public enum SortBy: Equatable, Hashable, Sendable, CaseIterable {
+    case name, size, modified, created, kind, ext
+    // MARK: XMP culling additions
+    case rating, label, flag
+}
 
 /// How a tab shows its folder.
 public struct ViewState: Equatable, Sendable {
@@ -417,6 +448,11 @@ public struct ViewState: Equatable, Sendable {
     // MARK: ui-list additions
     /// The list view's columns, in order, with widths (remembered per folder).
     public var columns: [ColumnSpec] = ColumnSpec.defaults
+    // MARK: XMP culling additions
+    /// The culling preset (a new folder starts at `.all`).
+    public var cull: CullFilter = .all
+    /// Paired `.xmp` sidecars are hidden; their marks show on the image row.
+    public var hideSidecars = true
 }
 
 /// The selection.
@@ -940,6 +976,9 @@ public struct Settings: Equatable, Sendable {
         // MARK: ui-list additions
         /// The list view's default columns.
         public var columns: [ColumnSpec] = ColumnSpec.defaults
+        // MARK: XMP culling additions
+        /// Hide `.xmp` sidecars whose image is in the same folder.
+        public var hideSidecars = true
     }
     public struct PathBar: Equatable, Sendable {
         public var completionLimit: UInt32 = 50
@@ -1231,6 +1270,8 @@ public protocol EngineAPI: AnyObject, Sendable {
 /// A list-view column (the core's `ColumnId`).
 public enum ColumnID: String, Equatable, Hashable, Sendable, CaseIterable {
     case name, size, modified, created, kind, ext
+    // MARK: XMP culling additions
+    case rating, label, flag
 
     /// The header title.
     public var title: String {
@@ -1241,6 +1282,9 @@ public enum ColumnID: String, Equatable, Hashable, Sendable, CaseIterable {
         case .created: "Date Created"
         case .kind: "Kind"
         case .ext: "Extension"
+        case .rating: "Rating"
+        case .label: "Label"
+        case .flag: "Pick"
         }
     }
     /// The width a newly shown column gets.
@@ -1251,6 +1295,9 @@ public enum ColumnID: String, Equatable, Hashable, Sendable, CaseIterable {
         case .modified, .created: 160
         case .kind: 130
         case .ext: 70
+        case .rating: 84
+        case .label: 64
+        case .flag: 56
         }
     }
     /// What clicking its header sorts by.
@@ -1262,6 +1309,9 @@ public enum ColumnID: String, Equatable, Hashable, Sendable, CaseIterable {
         case .created: .created
         case .kind: .kind
         case .ext: .ext
+        case .rating: .rating
+        case .label: .label
+        case .flag: .flag
         }
     }
 }

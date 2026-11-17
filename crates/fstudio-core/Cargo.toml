@@ -11,6 +11,7 @@ fstudio-model.workspace = true
 fstudio-db.workspace = true
 fstudio-fs.workspace = true
 fstudio-view.workspace = true
+fstudio-xmp = { path = "../fstudio-xmp" }
 fstudio-path.workspace = true
 fstudio-keymap.workspace = true
 fstudio-ops.workspace = true

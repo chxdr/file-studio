@@ -76,6 +76,8 @@ pub(crate) struct Shared {
     pub(crate) pasteboard: Mutex<Option<SystemPasteboard>>,
     pub(crate) volumes: RwLock<Vec<fstudio_fs::VolumeInfo>>,
     folder_views: RwLock<HashMap<String, ViewState>>,
+    /// Sidecar reads for culling marks, shared by every tab.
+    pub(crate) sidecars: crate::sidecars::SidecarCache,
     dirty: Mutex<Option<Sender<()>>>,
 }
 
@@ -117,6 +119,7 @@ impl Shared {
             pasteboard: Mutex::new(None),
             volumes: RwLock::new(volumes),
             folder_views: RwLock::new(folder_views),
+            sidecars: crate::sidecars::SidecarCache::default(),
             dirty: Mutex::new(None),
         }))
     }
