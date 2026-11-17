@@ -24,6 +24,7 @@ Project licence: **GPL-3.0-or-later**. Every dependency must be GPLv3-compatible
 | regex | 1 | search, rename | MIT OR Apache-2.0 |
 | kamadak-exif | 0.6 | preview, rename (EXIF) | BSD-2-Clause |
 | syntect (pure-Rust regex engine, `fancy-regex`) | 5 | preview (syntax highlighting) | MIT |
+| quick-xml | 0.42 | xmp (culling marks in sidecars, read-only) | MIT |
 
 Indirect additions in M3, all checked by `cargo deny`: `regex-automata`, `regex-syntax` (MIT/Apache-2.0), `aho-corasick` (Unlicense/MIT), `mutate_once` (BSD-2-Clause), `fancy-regex` (MIT), `bincode` 1 (MIT), `flate2` and `miniz_oxide` (MIT/Apache-2.0), `walkdir` and `same-file` (Unlicense/MIT).
 

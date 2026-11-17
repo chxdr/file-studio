@@ -281,3 +281,10 @@ Built in parallel sessions and merged after review.
   - The Open/Save panel jump is off by default. It needs Accessibility, uses ⌃⌥⌘G, and drives the panel's Go to Folder field. The core decides before every keystroke whether the panel's app and field are still in front, and Return is never pressed otherwise.
   - The app now has `Info-FileStudio.plist` (`public.folder` viewer, rank Alternate) and an entitlement for sending Apple Events to Finder.
 
+## F-029: Culling marks from XMP sidecars are read-only (2026-11-17)
+- File Studio reads Import Studio's culling marks from `<image stem>.xmp`: `xmp:Rating` (0–5, -1 = reject), `xmp:Label`, `istudio:Flag` and `istudio:Stars`. It never writes a sidecar; Import Studio owns writing them.
+- Reads happen off the listing path, after a folder is listed or when a watcher reports a change, and are cached by (path, mtime, size). Reads are capped at 4 MB. iCloud placeholder sidecars are never read (F-016). A sidecar that can't be parsed counts as no marks, not as an error.
+- Images and sidecars pair by stem, compared NFC and case-folded (F-017). Lightroom-style `IMG.ARW.xmp` names are not paired.
+- A paired `.xmp` is hidden only while its image is in the folder: on by default, under View › Hide XMP Sidecars and Settings › Views.
+- Rating, Label and Pick columns. Presets: ★ 3+ (rejects excluded), Picks, Rejects, Hide Rejects. A preset resets on each folder visit, like the filter text.
+- Sidebar tags: a click searches This Mac for the tag. The Spotlight query includes `kMDItemUserTags`, and results are still checked on disk.
