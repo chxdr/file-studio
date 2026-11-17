@@ -37,6 +37,7 @@ extension PreviewInfo {
         dataless = f.dataless
         tags = f.tags.map { PreviewTag(name: $0.name, color: Int($0.color)) }
         note = f.note
+        marks = f.marks.map(CullMarks.init)
         photo = f.photo.map { p in
             var o = PreviewPhoto()
             o.dateTaken = p.dateTaken; o.camera = p.camera; o.lens = p.lens

@@ -15,6 +15,7 @@
 //   foldermenu:<name>|<title>  right-click on <name> in the focused list › the item titled <title>
 //   tabmenu:<title>            right-click on the focused tab › the item titled <title>
 //   favrename:<text>|<ok|cancel>   types into the open Rename Favourite sheet and ends it
+//   tagclick:<name>            clicks the sidebar tag <name> (searches the Mac for it)
 
 #if DEBUG
 import AppKit
@@ -54,6 +55,9 @@ enum SidebarDebugSteps {
             let over = w.convertPoint(toScreen: NSPoint(x: content.bounds.midX + 150, y: content.bounds.midY))
             print("FAVDRAGOUT \(path) overSidebar(inside)=\(s.isOverSidebar(inside)) overSidebar(letGo)=\(s.isOverSidebar(over))")
             if !s.isOverSidebar(over) { s.dragOut(path, at: over) }
+        }
+        DebugAutomation.register("tagclick") { name, _ in
+            print("TAGCLICK \(name) \(sidebar?.debugClickTag(name) ?? false)")
         }
         DebugAutomation.register("favselect") { path, _ in
             print("FAVSELECT \(path) \(sidebar?.debugSelect(path: path) ?? false)")

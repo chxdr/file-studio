@@ -13,7 +13,7 @@
 // - Locations are the core's volumes with free space; removable ones get an
 //   eject button, which performs `drive.eject`; the core answers with
 //   `ShellRequest.eject`, carried out here with NSWorkspace (errors shown).
-// - Tags are Finder's tag names and colours (browsing by tag needs search, M3).
+// - Tags are Finder's tag names and colours; a click searches the Mac for the tag.
 // - Right-click menus come from `engine.contextMenu(.sidebarItem…)`.
 // - A click or arrow key goes to the folder in the focused tab; a middle-click
 //   opens it in a new tab (`nav.open_new_tab`).
@@ -73,6 +73,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var observer: ObserverToken?
     private var collapsed = Set<String>()
     private var syncingSelection = false
+    /// A tag row was clicked: the window shows everything with that tag.
+    var onBrowseTag: ((String) -> Void)?
     private var lastLocation: String?
     /// The drag type of a favourite being reordered or dragged out.
     static let favouriteType = NSPasteboard.PasteboardType("app.filestudio.sidebar-favourite")
@@ -228,9 +230,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func clicked() {
         guard outline.clickedRow >= 0, let n = outline.item(atRow: outline.clickedRow) as? SidebarNode else { return }
-        if case .tag = n.kind {
-            model.statusMessage = "Browsing by tag arrives with search (M3)."
+        if case .tag(let name, _) = n.kind {
             syncSelection()
+            onBrowseTag?(name)
             return
         }
         go(n)
@@ -520,6 +522,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return false
     }
 
+    /// Clicks the tag row named `name` (debug automation): the same path as a
+    /// mouse click. False when there is no such tag row.
+    func debugClickTag(_ name: String) -> Bool {
+        for i in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: i) as? SidebarNode, case .tag(let t, _) = n.kind, t == name {
+                onBrowseTag?(t)
+                return true
+            }
+        }
+        return false
+    }
+
     /// The menu a right-click on a row would show (debug automation fires items from it).
     func debugMenu(path: String) -> NSMenu? {
         for i in 0..<outline.numberOfRows {
@@ -637,7 +651,7 @@ final class SidebarCell: NSTableCellView {
             icon.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
             let colors = NSWorkspace.shared.fileLabelColors
             icon.contentTintColor = colors.indices.contains(c) ? colors[c] : .secondaryLabelColor
-            toolTip = "Browsing by tag arrives with search (M3)"
+            toolTip = "Show everything tagged \u{201C}\(n.title)\u{201D}"
         case .section:
             break
         }

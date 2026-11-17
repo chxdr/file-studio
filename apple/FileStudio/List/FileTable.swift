@@ -425,7 +425,7 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
         rv.paneActive = active
         if let r {
             rv.summary = [r.shownName, r.locationText.isEmpty ? nil : "in \(r.locationText)", r.isDataless ? "in iCloud" : nil, r.kindText, r.kind == .folder ? nil : r.sizeText,
-                          r.modifiedText, r.isSelected ? "selected" : nil].compactMap { $0 }.joined(separator: ", ")
+                          r.modifiedText, r.marksText.isEmpty ? nil : r.marksText, r.isSelected ? "selected" : nil].compactMap { $0 }.joined(separator: ", ")
         }
     }
 
@@ -476,6 +476,15 @@ final class FileTable: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSD
             case .ext:
                 cell.kind = .text(rightAligned: false)
                 cell.configure(text: r.extText, row: r, onAccent: onAccent)
+            case .rating:
+                cell.kind = .rating
+                cell.configure(text: "", row: r, onAccent: onAccent)
+            case .label:
+                cell.kind = .label
+                cell.configure(text: "", row: r, onAccent: onAccent)
+            case .flag:
+                cell.kind = .flag
+                cell.configure(text: "", row: r, onAccent: onAccent)
             }
         }
     }

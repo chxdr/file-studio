@@ -158,6 +158,9 @@ pub struct FfiPreview {
     pub folder: Option<FfiFolderInfo>,
     /// Why there is little to show.
     pub note: Option<String>,
+    // XMP culling additions
+    /// Stars, label and pick/reject from the item's XMP sidecar.
+    pub marks: Option<crate::types::FfiCullMarks>,
 }
 
 impl From<core::PreviewCategory> for FfiPreviewCategory {
@@ -271,6 +274,7 @@ impl From<&core::Preview> for FfiPreview {
                 unreadable: f.unreadable,
             }),
             note: p.note.clone(),
+            marks: None,
         }
     }
 }
@@ -299,16 +303,21 @@ impl FfiPreviewer {
     pub fn summarize(&self, path: String, cancel: Arc<FfiCancelToken>) -> Option<FfiPreview> {
         let settings = self.engine.inner.settings().preview;
         let p = self.service.summarize(&path, &settings, &cancel.inner)?;
-        Some(FfiPreview::from(&*p))
+        let mut out = FfiPreview::from(&*p);
+        out.marks = self.engine.inner.cull_marks(&path).map(Into::into);
+        Some(out)
     }
 
     /// The preview if it is already cached and the file is unchanged. Reads
     /// no content, so the main thread may call it.
     pub fn cached(&self, path: String) -> Option<FfiPreview> {
         let settings = self.engine.inner.settings().preview;
-        self.service
+        let mut out = self
+            .service
             .cached(&path, &settings)
-            .map(|p| FfiPreview::from(&*p))
+            .map(|p| FfiPreview::from(&*p))?;
+        out.marks = self.engine.inner.cull_marks_cached(&path).map(Into::into);
+        Some(out)
     }
 
     /// Forgets every cached preview.

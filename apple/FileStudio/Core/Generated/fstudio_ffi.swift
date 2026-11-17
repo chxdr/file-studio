@@ -3792,6 +3792,13 @@ public protocol FfiTabProtocol: AnyObject, Sendable {
      * then a trailer (added later; older readers can stop before it):
      * per row, in the same order: i64 created_ns,
      * 2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
+     * then the M3 search trailer, per row:
+     * 2 × (u32 byte length, UTF-8 bytes): display_name, location_text
+     * then the XMP culling trailer, per row:
+     * u8 rating (0–5, 0xFF: no marks), u8 label (0 none, 1 Red,
+     * 2 Yellow, 3 Green, 4 Blue, 5 Purple), u8 flag (0 none, 1 pick,
+     * 2 reject), u8 has_hidden_sidecar (0/1),
+     * (u32 byte length, UTF-8 bytes): marks_text
      * ```
      */
     func rowsPacked(start: UInt32, count: UInt32)  -> Data
@@ -4110,6 +4117,13 @@ open func rows(start: UInt32, count: UInt32) -> [FfiRow]  {
      * then a trailer (added later; older readers can stop before it):
      * per row, in the same order: i64 created_ns,
      * 2 × (u32 byte length, UTF-8 bytes): created_text, ext_text
+     * then the M3 search trailer, per row:
+     * 2 × (u32 byte length, UTF-8 bytes): display_name, location_text
+     * then the XMP culling trailer, per row:
+     * u8 rating (0–5, 0xFF: no marks), u8 label (0 none, 1 Red,
+     * 2 Yellow, 3 Green, 4 Blue, 5 Purple), u8 flag (0 none, 1 pick,
+     * 2 reject), u8 has_hidden_sidecar (0/1),
+     * (u32 byte length, UTF-8 bytes): marks_text
      * ```
      */
 open func rowsPacked(start: UInt32, count: UInt32) -> Data  {
@@ -5712,6 +5726,73 @@ public func FfiConverterTypeFfiCrumb_lift(_ buf: RustBuffer) throws -> FfiCrumb 
 #endif
 public func FfiConverterTypeFfiCrumb_lower(_ value: FfiCrumb) -> RustBuffer {
     return FfiConverterTypeFfiCrumb.lower(value)
+}
+
+
+/**
+ * The culling marks of one shot, read from its XMP sidecar.
+ */
+public struct FfiCullMarks: Equatable, Hashable {
+    /**
+     * 0 unrated, 1–5 stars (a reject keeps its stars).
+     */
+    public var rating: UInt8
+    public var label: FfiCullLabel?
+    public var flag: FfiCullFlag
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * 0 unrated, 1–5 stars (a reject keeps its stars).
+         */rating: UInt8, label: FfiCullLabel?, flag: FfiCullFlag) {
+        self.rating = rating
+        self.label = label
+        self.flag = flag
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiCullMarks: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCullMarks: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCullMarks {
+        return
+            try FfiCullMarks(
+                rating: FfiConverterUInt8.read(from: &buf), 
+                label: FfiConverterOptionTypeFfiCullLabel.read(from: &buf), 
+                flag: FfiConverterTypeFfiCullFlag.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCullMarks, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.rating, into: &buf)
+        FfiConverterOptionTypeFfiCullLabel.write(value.label, into: &buf)
+        FfiConverterTypeFfiCullFlag.write(value.flag, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullMarks_lift(_ buf: RustBuffer) throws -> FfiCullMarks {
+    return try FfiConverterTypeFfiCullMarks.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullMarks_lower(_ value: FfiCullMarks) -> RustBuffer {
+    return FfiConverterTypeFfiCullMarks.lower(value)
 }
 
 
@@ -7920,6 +8001,10 @@ public struct FfiPreview: Equatable, Hashable {
      * Why there is little to show.
      */
     public var note: String?
+    /**
+     * Stars, label and pick/reject from the item's XMP sidecar.
+     */
+    public var marks: FfiCullMarks?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -7932,7 +8017,10 @@ public struct FfiPreview: Equatable, Hashable {
          */dataless: Bool, tags: [FfiPreviewTag], photo: FfiPhotoInfo?, video: FfiVideoInfo?, text: FfiTextPreview?, folder: FfiFolderInfo?, 
         /**
          * Why there is little to show.
-         */note: String?) {
+         */note: String?, 
+        /**
+         * Stars, label and pick/reject from the item's XMP sidecar.
+         */marks: FfiCullMarks?) {
         self.path = path
         self.name = name
         self.category = category
@@ -7948,6 +8036,7 @@ public struct FfiPreview: Equatable, Hashable {
         self.text = text
         self.folder = folder
         self.note = note
+        self.marks = marks
     }
 
     
@@ -7980,7 +8069,8 @@ public struct FfiConverterTypeFfiPreview: FfiConverterRustBuffer {
                 video: FfiConverterOptionTypeFfiVideoInfo.read(from: &buf), 
                 text: FfiConverterOptionTypeFfiTextPreview.read(from: &buf), 
                 folder: FfiConverterOptionTypeFfiFolderInfo.read(from: &buf), 
-                note: FfiConverterOptionString.read(from: &buf)
+                note: FfiConverterOptionString.read(from: &buf), 
+                marks: FfiConverterOptionTypeFfiCullMarks.read(from: &buf)
         )
     }
 
@@ -8000,6 +8090,7 @@ public struct FfiConverterTypeFfiPreview: FfiConverterRustBuffer {
         FfiConverterOptionTypeFfiTextPreview.write(value.text, into: &buf)
         FfiConverterOptionTypeFfiFolderInfo.write(value.folder, into: &buf)
         FfiConverterOptionString.write(value.note, into: &buf)
+        FfiConverterOptionTypeFfiCullMarks.write(value.marks, into: &buf)
     }
 }
 
@@ -8643,6 +8734,18 @@ public struct FfiRow: Equatable, Hashable {
      * The folder the item is in, in a search tab; else empty.
      */
     public var locationText: String
+    /**
+     * Marks from the item's sidecar; `None` without a readable sidecar.
+     */
+    public var marks: FfiCullMarks?
+    /**
+     * The item's sidecar is hidden and its marks show on this row.
+     */
+    public var hasHiddenSidecar: Bool
+    /**
+     * The marks in words, for VoiceOver and tooltips.
+     */
+    public var marksText: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8664,7 +8767,16 @@ public struct FfiRow: Equatable, Hashable {
          */displayName: String, 
         /**
          * The folder the item is in, in a search tab; else empty.
-         */locationText: String) {
+         */locationText: String, 
+        /**
+         * Marks from the item's sidecar; `None` without a readable sidecar.
+         */marks: FfiCullMarks?, 
+        /**
+         * The item's sidecar is hidden and its marks show on this row.
+         */hasHiddenSidecar: Bool, 
+        /**
+         * The marks in words, for VoiceOver and tooltips.
+         */marksText: String) {
         self.index = index
         self.name = name
         self.kind = kind
@@ -8686,6 +8798,9 @@ public struct FfiRow: Equatable, Hashable {
         self.extText = extText
         self.displayName = displayName
         self.locationText = locationText
+        self.marks = marks
+        self.hasHiddenSidecar = hasHiddenSidecar
+        self.marksText = marksText
     }
 
     
@@ -8724,7 +8839,10 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
                 createdText: FfiConverterString.read(from: &buf), 
                 extText: FfiConverterString.read(from: &buf), 
                 displayName: FfiConverterString.read(from: &buf), 
-                locationText: FfiConverterString.read(from: &buf)
+                locationText: FfiConverterString.read(from: &buf), 
+                marks: FfiConverterOptionTypeFfiCullMarks.read(from: &buf), 
+                hasHiddenSidecar: FfiConverterBool.read(from: &buf), 
+                marksText: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -8750,6 +8868,9 @@ public struct FfiConverterTypeFfiRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.extText, into: &buf)
         FfiConverterString.write(value.displayName, into: &buf)
         FfiConverterString.write(value.locationText, into: &buf)
+        FfiConverterOptionTypeFfiCullMarks.write(value.marks, into: &buf)
+        FfiConverterBool.write(value.hasHiddenSidecar, into: &buf)
+        FfiConverterString.write(value.marksText, into: &buf)
     }
 }
 
@@ -10523,6 +10644,10 @@ public struct FfiViewSettings: Equatable, Hashable {
      * The list view's default columns.
      */
     public var columns: [FfiColumnSpec]
+    /**
+     * Hide `.xmp` sidecars whose image is in the same folder (default on).
+     */
+    public var hideSidecars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10532,7 +10657,10 @@ public struct FfiViewSettings: Equatable, Hashable {
          */folderMemory: Bool, hour24: Bool, density: FfiRowDensity, 
         /**
          * The list view's default columns.
-         */columns: [FfiColumnSpec]) {
+         */columns: [FfiColumnSpec], 
+        /**
+         * Hide `.xmp` sidecars whose image is in the same folder (default on).
+         */hideSidecars: Bool) {
         self.mode = mode
         self.sort = sort
         self.ascending = ascending
@@ -10543,6 +10671,7 @@ public struct FfiViewSettings: Equatable, Hashable {
         self.hour24 = hour24
         self.density = density
         self.columns = columns
+        self.hideSidecars = hideSidecars
     }
 
     
@@ -10570,7 +10699,8 @@ public struct FfiConverterTypeFfiViewSettings: FfiConverterRustBuffer {
                 folderMemory: FfiConverterBool.read(from: &buf), 
                 hour24: FfiConverterBool.read(from: &buf), 
                 density: FfiConverterTypeFfiRowDensity.read(from: &buf), 
-                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf)
+                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf), 
+                hideSidecars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -10585,6 +10715,7 @@ public struct FfiConverterTypeFfiViewSettings: FfiConverterRustBuffer {
         FfiConverterBool.write(value.hour24, into: &buf)
         FfiConverterTypeFfiRowDensity.write(value.density, into: &buf)
         FfiConverterSequenceTypeFfiColumnSpec.write(value.columns, into: &buf)
+        FfiConverterBool.write(value.hideSidecars, into: &buf)
     }
 }
 
@@ -10618,13 +10749,27 @@ public struct FfiViewState: Equatable, Hashable {
      * The list view's columns, in order, with widths.
      */
     public var columns: [FfiColumnSpec]
+    /**
+     * The culling preset.
+     */
+    public var cull: FfiCullFilter
+    /**
+     * Paired `.xmp` sidecars are hidden; their marks show on the image row.
+     */
+    public var hideSidecars: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(mode: FfiViewMode, sort: FfiSortBy, ascending: Bool, foldersFirst: Bool, showHidden: Bool, packagesAsFiles: Bool, 
         /**
          * The list view's columns, in order, with widths.
-         */columns: [FfiColumnSpec]) {
+         */columns: [FfiColumnSpec], 
+        /**
+         * The culling preset.
+         */cull: FfiCullFilter, 
+        /**
+         * Paired `.xmp` sidecars are hidden; their marks show on the image row.
+         */hideSidecars: Bool) {
         self.mode = mode
         self.sort = sort
         self.ascending = ascending
@@ -10632,6 +10777,8 @@ public struct FfiViewState: Equatable, Hashable {
         self.showHidden = showHidden
         self.packagesAsFiles = packagesAsFiles
         self.columns = columns
+        self.cull = cull
+        self.hideSidecars = hideSidecars
     }
 
     
@@ -10656,7 +10803,9 @@ public struct FfiConverterTypeFfiViewState: FfiConverterRustBuffer {
                 foldersFirst: FfiConverterBool.read(from: &buf), 
                 showHidden: FfiConverterBool.read(from: &buf), 
                 packagesAsFiles: FfiConverterBool.read(from: &buf), 
-                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf)
+                columns: FfiConverterSequenceTypeFfiColumnSpec.read(from: &buf), 
+                cull: FfiConverterTypeFfiCullFilter.read(from: &buf), 
+                hideSidecars: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -10668,6 +10817,8 @@ public struct FfiConverterTypeFfiViewState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.showHidden, into: &buf)
         FfiConverterBool.write(value.packagesAsFiles, into: &buf)
         FfiConverterSequenceTypeFfiColumnSpec.write(value.columns, into: &buf)
+        FfiConverterTypeFfiCullFilter.write(value.cull, into: &buf)
+        FfiConverterBool.write(value.hideSidecars, into: &buf)
     }
 }
 
@@ -11293,6 +11444,9 @@ public enum FfiColumnId: Equatable, Hashable {
     case created
     case kind
     case `extension`
+    case rating
+    case label
+    case flag
 
 
 
@@ -11326,6 +11480,12 @@ public struct FfiConverterTypeFfiColumnId: FfiConverterRustBuffer {
         
         case 6: return .`extension`
         
+        case 7: return .rating
+        
+        case 8: return .label
+        
+        case 9: return .flag
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -11356,6 +11516,18 @@ public struct FfiConverterTypeFfiColumnId: FfiConverterRustBuffer {
         
         case .`extension`:
             writeInt(&buf, Int32(6))
+        
+        
+        case .rating:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .label:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .flag:
+            writeInt(&buf, Int32(9))
         
         }
     }
@@ -11754,6 +11926,262 @@ public func FfiConverterTypeFfiCrumbKind_lift(_ buf: RustBuffer) throws -> FfiCr
 #endif
 public func FfiConverterTypeFfiCrumbKind_lower(_ value: FfiCrumbKind) -> RustBuffer {
     return FfiConverterTypeFfiCrumbKind.lower(value)
+}
+
+
+
+/**
+ * A culling preset ("★ 3+", "Picks", …).
+ */
+
+public enum FfiCullFilter: Equatable, Hashable {
+    
+    case all
+    case rating3Plus
+    case picks
+    case rejects
+    case hideRejects
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiCullFilter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCullFilter: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCullFilter
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCullFilter {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .all
+        
+        case 2: return .rating3Plus
+        
+        case 3: return .picks
+        
+        case 4: return .rejects
+        
+        case 5: return .hideRejects
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiCullFilter, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .all:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .rating3Plus:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .picks:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .rejects:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .hideRejects:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullFilter_lift(_ buf: RustBuffer) throws -> FfiCullFilter {
+    return try FfiConverterTypeFfiCullFilter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullFilter_lower(_ value: FfiCullFilter) -> RustBuffer {
+    return FfiConverterTypeFfiCullFilter.lower(value)
+}
+
+
+
+/**
+ * Pick, reject or neither.
+ */
+
+public enum FfiCullFlag: Equatable, Hashable {
+    
+    case none
+    case pick
+    case reject
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiCullFlag: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCullFlag: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCullFlag
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCullFlag {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .none
+        
+        case 2: return .pick
+        
+        case 3: return .reject
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiCullFlag, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .none:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .pick:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .reject:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullFlag_lift(_ buf: RustBuffer) throws -> FfiCullFlag {
+    return try FfiConverterTypeFfiCullFlag.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullFlag_lower(_ value: FfiCullFlag) -> RustBuffer {
+    return FfiConverterTypeFfiCullFlag.lower(value)
+}
+
+
+
+/**
+ * A colour label.
+ */
+
+public enum FfiCullLabel: Equatable, Hashable {
+    
+    case red
+    case yellow
+    case green
+    case blue
+    case purple
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiCullLabel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCullLabel: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCullLabel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCullLabel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .red
+        
+        case 2: return .yellow
+        
+        case 3: return .green
+        
+        case 4: return .blue
+        
+        case 5: return .purple
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiCullLabel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .red:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .yellow:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .green:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .blue:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .purple:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullLabel_lift(_ buf: RustBuffer) throws -> FfiCullLabel {
+    return try FfiConverterTypeFfiCullLabel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCullLabel_lower(_ value: FfiCullLabel) -> RustBuffer {
+    return FfiConverterTypeFfiCullLabel.lower(value)
 }
 
 
@@ -15994,6 +16422,9 @@ public enum FfiSortBy: Equatable, Hashable {
     case created
     case kind
     case `extension`
+    case rating
+    case label
+    case flag
 
 
 
@@ -16027,6 +16458,12 @@ public struct FfiConverterTypeFfiSortBy: FfiConverterRustBuffer {
         
         case 6: return .`extension`
         
+        case 7: return .rating
+        
+        case 8: return .label
+        
+        case 9: return .flag
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -16057,6 +16494,18 @@ public struct FfiConverterTypeFfiSortBy: FfiConverterRustBuffer {
         
         case .`extension`:
             writeInt(&buf, Int32(6))
+        
+        
+        case .rating:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .label:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .flag:
+            writeInt(&buf, Int32(9))
         
         }
     }
@@ -17566,6 +18015,30 @@ fileprivate struct FfiConverterOptionTypeFfiTab: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiCullMarks: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCullMarks?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiCullMarks.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiCullMarks.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiFolderInfo: FfiConverterRustBuffer {
     typealias SwiftType = FfiFolderInfo?
 
@@ -17942,6 +18415,30 @@ fileprivate struct FfiConverterOptionTypeFfiCommandArg: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiCommandArg.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiCullLabel: FfiConverterRustBuffer {
+    typealias SwiftType = FfiCullLabel?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiCullLabel.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiCullLabel.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -19574,7 +20071,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_fstudio_ffi_checksum_method_ffitab_rows() != 29485) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_fstudio_ffi_checksum_method_ffitab_rows_packed() != 44715) {
+    if (uniffi_fstudio_ffi_checksum_method_ffitab_rows_packed() != 39334) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffitab_scroll_anchor() != 914) {

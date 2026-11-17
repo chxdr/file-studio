@@ -1682,6 +1682,13 @@ impl Engine {
             "view.icons_bigger" => self.step_icon_size(true)?,
             "view.icons_smaller" => self.step_icon_size(false)?,
             "view.show_hidden" => self.set_sort(&t, |v| v.show_hidden = !v.show_hidden),
+            "view.hide_sidecars" => self.set_sort(&t, |v| v.hide_sidecars = !v.hide_sidecars),
+            id if id.starts_with("cull.") => {
+                let Some(c) = crate::sidecars::CullFilter::from_command(id) else {
+                    return Err(CoreError::NotAvailable(format!("no culling preset {id}")));
+                };
+                self.set_sort(&t, |v| v.cull = c)
+            }
             "view.refresh" => {
                 t.refresh();
                 done()
@@ -1691,6 +1698,15 @@ impl Engine {
             "sort.size" => self.set_sort(&t, |v| v.sort = SortBy::Size),
             "sort.date_modified" => self.set_sort(&t, |v| v.sort = SortBy::Modified),
             "sort.date_created" => self.set_sort(&t, |v| v.sort = SortBy::Created),
+            "sort.rating" => self.set_sort(&t, |v| {
+                // Best first, like a click on the Rating header.
+                if v.sort != SortBy::Rating {
+                    v.ascending = false;
+                }
+                v.sort = SortBy::Rating
+            }),
+            "sort.label" => self.set_sort(&t, |v| v.sort = SortBy::Label),
+            "sort.flag" => self.set_sort(&t, |v| v.sort = SortBy::Flag),
             "sort.reverse" => self.set_sort(&t, |v| v.ascending = !v.ascending),
             "sort.folders_first" => self.set_sort(&t, |v| v.folders_first = !v.folders_first),
 

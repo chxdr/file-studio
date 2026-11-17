@@ -126,6 +126,12 @@ struct SettingsViewsPane: View {
                 Toggle("Treat apps and packages as files when sorting", isOn: a.binding(\.view.packagesAsFiles))
                 Toggle("Show hidden files", isOn: a.binding(\.view.showHidden))
             }
+            Section("Photos") {
+                Toggle("Hide XMP sidecars next to their photos", isOn: a.binding(\.view.hideSidecars))
+                Text("A photo's row shows its stars, colour label and pick or reject from the sidecar. "
+                     + "File Studio only reads sidecars; it never changes them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Remembering") {
                 Picker("Per-folder view", selection: a.binding(\.view.folderMemory)) {
                     Text("Off — every folder uses these defaults").tag(false)

@@ -140,6 +140,11 @@ final class PaneViewController: NSViewController {
         searchBar.open(text: text)
     }
 
+    /// Shows every item with Finder tag `name` (a sidebar tag click).
+    func openTagSearch(_ name: String) {
+        searchBar.openTag(name)
+    }
+
     /// Puts the list or the column view in the content area, by view mode.
     private func syncContent() {
         guard let tm = state.tab else { return }

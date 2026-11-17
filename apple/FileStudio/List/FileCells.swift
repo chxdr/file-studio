@@ -13,6 +13,13 @@ enum CellKind: Equatable {
     case text(rightAligned: Bool)
     /// The column view's row: icon, name, a chevron for folders.
     case miller
+    // MARK: XMP culling additions
+    /// Five stars, filled up to the rating; a reject mark before them.
+    case rating
+    /// A colour-label dot.
+    case label
+    /// A pick flag or a reject mark.
+    case flag
 }
 
 /// Fonts and attributes, made once.
@@ -33,6 +40,22 @@ enum CellStyle {
         .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
     static let chevron: NSImage? = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+    // MARK: XMP culling additions
+    static let rejectMark: NSImage? = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Rejected")?
+        .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+    static let pickFlag: NSImage? = NSImage(systemSymbolName: "flag.fill", accessibilityDescription: "Picked")?
+        .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+    static let starFont = NSFont.systemFont(ofSize: 10)
+    /// The colour a label is drawn in.
+    static func color(_ l: CullLabel) -> NSColor {
+        switch l {
+        case .red: .systemRed
+        case .yellow: .systemYellow
+        case .green: .systemGreen
+        case .blue: .systemBlue
+        case .purple: .systemPurple
+        }
+    }
     static let aliasArrow: NSImage? = NSImage(systemSymbolName: "arrow.up.right", accessibilityDescription: "Symbolic link")?
         .withSymbolConfiguration(.init(pointSize: 6.5, weight: .black))
 
@@ -57,6 +80,9 @@ final class FileCellView: NSView {
     private var isSymlink = false
     private var isDimmed = false
     private var showsChevron = false
+    /// Culling marks from the row's XMP sidecar (drawn, never decided here).
+    private var marks: CullMarks?
+    private var marksText = ""
     /// Selected, and the pane is active: draw light text on the accent colour.
     private var onAccent = false
 
@@ -78,9 +104,11 @@ final class FileCellView: NSView {
         let dimmed = row.map { $0.isHidden || $0.isCutPending } ?? false
         let dataless = row?.isDataless ?? false
         let symlink = row?.isSymlink ?? false
+        let marks = row?.marks
         if text == self.text, icon === self.icon, dimmed == isDimmed, dataless == isDataless, symlink == isSymlink,
-           onAccent == self.onAccent, chevron == showsChevron, detail == self.detail { return }
+           onAccent == self.onAccent, chevron == showsChevron, detail == self.detail, marks == self.marks { return }
         self.text = text; self.icon = icon; isDimmed = dimmed; isDataless = dataless; isSymlink = symlink
+        self.marks = marks; marksText = row?.marksText ?? ""
         self.detail = detail
         self.onAccent = onAccent; showsChevron = chevron
         needsDisplay = true
@@ -129,6 +157,9 @@ final class FileCellView: NSView {
                 tinted(c, onAccent ? .alternateSelectedControlTextColor : .secondaryLabelColor).draw(in: r)
                 right = r.minX - 4
             }
+            if kind == .name, let m = marks {
+                right = drawCompactMarks(m, right: right, height: b.height)
+            }
             let color: NSColor = onAccent ? .alternateSelectedControlTextColor : .labelColor
             if !detail.isEmpty {
                 // M3 search: "name   ~/Documents/Work", the folder truncated from its front.
@@ -150,7 +181,87 @@ final class FileCellView: NSView {
             drawText(b.insetBy(dx: 3, dy: 0), font: CellStyle.secondaryFont,
                      color: color.withAlphaComponent(alpha * color.alphaComponent),
                      para: rightAligned ? CellStyle.right : CellStyle.tail)
+        case .rating:
+            guard let m = marks else { return }
+            var x: CGFloat = 4
+            if m.flag == .reject, let img = CellStyle.rejectMark {
+                x = drawSymbol(img, x: x, height: b.height, color: rejectColor) + 4
+            }
+            let filled = String(repeating: "★", count: Int(min(m.rating, 5)))
+            let empty = String(repeating: "☆", count: 5 - Int(min(m.rating, 5)))
+            let a = NSMutableAttributedString(string: filled, attributes: [
+                .font: CellStyle.starFont, .foregroundColor: starColor(dim: m.flag == .reject)])
+            a.append(NSAttributedString(string: empty, attributes: [
+                .font: CellStyle.starFont,
+                .foregroundColor: (onAccent ? NSColor.alternateSelectedControlTextColor : .tertiaryLabelColor)
+                    .withAlphaComponent(0.6)]))
+            let h = ceil(a.size().height)
+            a.draw(at: NSPoint(x: x, y: floor((b.height - h) / 2)))
+        case .label:
+            guard let l = marks?.label else { return }
+            drawDot(CellStyle.color(l), centre: NSPoint(x: 10, y: b.height / 2))
+        case .flag:
+            guard let m = marks else { return }
+            switch m.flag {
+            case .pick: if let img = CellStyle.pickFlag { _ = drawSymbol(img, x: 6, height: b.height, color: pickColor) }
+            case .reject: if let img = CellStyle.rejectMark { _ = drawSymbol(img, x: 6, height: b.height, color: rejectColor) }
+            case .none: break
+            }
         }
+    }
+
+    // MARK: XMP culling additions (drawing only)
+
+    private var rejectColor: NSColor { onAccent ? .alternateSelectedControlTextColor : .systemRed }
+    private var pickColor: NSColor { onAccent ? .alternateSelectedControlTextColor : .systemGreen }
+    private func starColor(dim: Bool) -> NSColor {
+        let c: NSColor = onAccent ? .alternateSelectedControlTextColor : .systemOrange
+        return dim ? c.withAlphaComponent(0.45) : c
+    }
+
+    /// Draws a symbol at `x`, centred vertically; returns its right edge.
+    private func drawSymbol(_ img: NSImage, x: CGFloat, height: CGFloat, color: NSColor) -> CGFloat {
+        let s = img.size
+        let r = NSRect(x: x, y: floor((height - s.height) / 2), width: s.width, height: s.height)
+        tinted(img, color).draw(in: r)
+        return r.maxX
+    }
+
+    private func drawDot(_ color: NSColor, centre: NSPoint) {
+        let r = NSRect(x: centre.x - 4, y: centre.y - 4, width: 8, height: 8)
+        color.setFill()
+        NSBezierPath(ovalIn: r).fill()
+        if onAccent {
+            NSColor.alternateSelectedControlTextColor.setStroke()
+            let p = NSBezierPath(ovalIn: r.insetBy(dx: 0.5, dy: 0.5)); p.lineWidth = 1; p.stroke()
+        }
+    }
+
+    /// The name cell's compact marks, right-aligned before `right`: filled
+    /// stars, a label dot and a reject mark. Returns the new right edge.
+    private func drawCompactMarks(_ m: CullMarks, right: CGFloat, height: CGFloat) -> CGFloat {
+        var right = right
+        if m.flag == .reject, let img = CellStyle.rejectMark {
+            let w = img.size.width
+            _ = drawSymbol(img, x: right - w - 2, height: height, color: rejectColor)
+            right -= w + 6
+        } else if m.flag == .pick, let img = CellStyle.pickFlag {
+            let w = img.size.width
+            _ = drawSymbol(img, x: right - w - 2, height: height, color: pickColor)
+            right -= w + 6
+        }
+        if let l = m.label {
+            drawDot(CellStyle.color(l), centre: NSPoint(x: right - 6, y: height / 2))
+            right -= 14
+        }
+        if m.rating > 0 {
+            let a = NSAttributedString(string: String(repeating: "★", count: Int(min(m.rating, 5))), attributes: [
+                .font: CellStyle.starFont, .foregroundColor: starColor(dim: m.flag == .reject)])
+            let s = a.size()
+            a.draw(at: NSPoint(x: right - ceil(s.width) - 2, y: floor((height - ceil(s.height)) / 2)))
+            right -= ceil(s.width) + 6
+        }
+        return right
     }
 
     private static let headTruncating: NSParagraphStyle = {
@@ -204,7 +315,12 @@ final class FileCellView: NSView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
     override func accessibilityValue() -> Any? {
-        let t = detail.isEmpty ? text : "\(text), in \(detail)"
+        switch kind {
+        case .rating, .label, .flag: return marksText
+        default: break
+        }
+        var t = detail.isEmpty ? text : "\(text), in \(detail)"
+        if !marksText.isEmpty, kind == .name { t += ", " + marksText }
         return isDataless ? t + ", in iCloud" : t
     }
 }

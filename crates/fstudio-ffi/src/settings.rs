@@ -98,6 +98,9 @@ pub struct FfiViewSettings {
     // ui-list additions
     /// The list view's default columns.
     pub columns: Vec<FfiColumnSpec>,
+    // XMP culling additions
+    /// Hide `.xmp` sidecars whose image is in the same folder (default on).
+    pub hide_sidecars: bool,
 }
 
 /// The address bar.
@@ -198,6 +201,7 @@ impl From<&core::Settings> for FfiSettings {
                     core::RowDensity::Comfortable => FfiRowDensity::Comfortable,
                 },
                 columns: v.columns.iter().map(|c| (*c).into()).collect(),
+                hide_sidecars: v.hide_sidecars,
             },
             path_bar: FfiPathBarSettings {
                 completion_limit: p.completion_limit,
@@ -278,6 +282,7 @@ pub(crate) fn apply(base: &mut core::Settings, f: FfiSettings) {
     };
     base.view.columns =
         core::sanitize_columns(&v.columns.into_iter().map(Into::into).collect::<Vec<_>>());
+    base.view.hide_sidecars = v.hide_sidecars;
     let p = f.path_bar;
     base.path_bar.completion_limit = p.completion_limit;
     base.path_bar.complete_hidden = p.complete_hidden;

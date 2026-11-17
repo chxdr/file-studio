@@ -19,17 +19,26 @@ pub enum ColumnId {
     Kind,
     /// The extension ("png").
     Extension,
+    /// Star rating from the XMP sidecar.
+    Rating,
+    /// Colour label from the XMP sidecar.
+    Label,
+    /// Pick or reject from the XMP sidecar.
+    Flag,
 }
 
 impl ColumnId {
     /// Every column, in the default order.
-    pub const ALL: [ColumnId; 6] = [
+    pub const ALL: [ColumnId; 9] = [
         ColumnId::Name,
         ColumnId::Size,
         ColumnId::Modified,
         ColumnId::Created,
         ColumnId::Kind,
         ColumnId::Extension,
+        ColumnId::Rating,
+        ColumnId::Label,
+        ColumnId::Flag,
     ];
 
     /// The header title.
@@ -41,6 +50,9 @@ impl ColumnId {
             ColumnId::Created => "Date Created",
             ColumnId::Kind => "Kind",
             ColumnId::Extension => "Extension",
+            ColumnId::Rating => "Rating",
+            ColumnId::Label => "Label",
+            ColumnId::Flag => "Pick",
         }
     }
 
@@ -52,6 +64,9 @@ impl ColumnId {
             ColumnId::Modified | ColumnId::Created => 160.0,
             ColumnId::Kind => 130.0,
             ColumnId::Extension => 70.0,
+            ColumnId::Rating => 84.0,
+            ColumnId::Label => 64.0,
+            ColumnId::Flag => 56.0,
         }
     }
 }
@@ -161,15 +176,19 @@ impl ColumnId {
             ColumnId::Created => SortBy::Created,
             ColumnId::Kind => SortBy::Kind,
             ColumnId::Extension => SortBy::Extension,
+            ColumnId::Rating => SortBy::Rating,
+            ColumnId::Label => SortBy::Label,
+            ColumnId::Flag => SortBy::Flag,
         }
     }
 
-    /// The direction a first click sorts in: largest and newest first for
-    /// sizes and dates, A to Z otherwise (Finder).
+    /// The direction a first click sorts in: largest, newest and best rated
+    /// first for sizes, dates and ratings; A to Z otherwise (Finder). Label
+    /// and Pick put labelled shots and picks first.
     pub fn first_click_ascending(self) -> bool {
         !matches!(
             self,
-            ColumnId::Size | ColumnId::Modified | ColumnId::Created
+            ColumnId::Size | ColumnId::Modified | ColumnId::Created | ColumnId::Rating
         )
     }
 }

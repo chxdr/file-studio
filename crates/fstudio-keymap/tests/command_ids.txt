@@ -70,6 +70,12 @@ view.icons_bigger
 view.icons_smaller
 view.show_hidden
 view.refresh
+view.hide_sidecars
+cull.all
+cull.three_stars
+cull.picks
+cull.rejects
+cull.hide_rejects
 view.toggle_sidebar
 view.toggle_inspector
 view.show_operations
@@ -80,6 +86,9 @@ sort.kind
 sort.size
 sort.date_modified
 sort.date_created
+sort.rating
+sort.label
+sort.flag
 sort.reverse
 sort.folders_first
 tab.new

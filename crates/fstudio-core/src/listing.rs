@@ -152,6 +152,14 @@ pub struct RowInfo {
     /// M3 search: the folder the item is in (`~/Documents/Work`), empty in a
     /// folder tab.
     pub location_text: String,
+    /// Culling marks from the item's XMP sidecar: `None` when there is no
+    /// sidecar, it hasn't been read yet, or it couldn't be parsed.
+    pub marks: Option<fstudio_view::Marks>,
+    /// The item's `.xmp` sidecar is hidden and its marks show on this row.
+    pub has_hidden_sidecar: bool,
+    /// The marks spelled out for VoiceOver and tooltips ("3 stars, Red
+    /// label, picked"); empty without marks.
+    pub marks_text: String,
 }
 
 /// Formatting inputs fixed for one `rows` call.
@@ -263,9 +271,39 @@ pub(crate) fn build_rows(
                 },
                 display_name: e.name.clone(),
                 location_text: String::new(),
+                marks: l.inner.marks_at(i),
+                has_hidden_sidecar: l.inner.has_hidden_sidecar(i),
+                marks_text: l
+                    .inner
+                    .marks_at(i)
+                    .map(|m| marks_text(&m))
+                    .unwrap_or_default(),
             }
         })
         .collect()
+}
+
+/// Marks in words: "3 stars, Red label, picked", "rejected", "unrated".
+pub fn marks_text(m: &fstudio_view::Marks) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match m.rating {
+        0 => {}
+        1 => parts.push("1 star".into()),
+        n => parts.push(format!("{n} stars")),
+    }
+    if let Some(l) = m.label {
+        parts.push(format!("{} label", l.as_str()));
+    }
+    match m.flag {
+        fstudio_view::Flag::Pick => parts.push("picked".into()),
+        fstudio_view::Flag::Reject => parts.push("rejected".into()),
+        fstudio_view::Flag::None => {}
+    }
+    if parts.is_empty() {
+        "unrated".into()
+    } else {
+        parts.join(", ")
+    }
 }
 
 pub(crate) fn empty(dir: &Path, opts: fstudio_view::ViewOptions, version: u64) -> Listing {
