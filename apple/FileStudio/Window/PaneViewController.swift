@@ -199,7 +199,7 @@ final class PaneViewController: NSViewController {
 @MainActor
 final class PaneRootView: NSView {
     var paneID: PaneID = 0
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 }
 
 /// 36 pt header: a location glyph, the address bar on top and the subtitle
@@ -244,7 +244,7 @@ final class PaneHeaderView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     /// Places the address bar: its text starts 12 pt inside its view, so the
     /// view starts 12 pt left of the subtitle to line the two up.

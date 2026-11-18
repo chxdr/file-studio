@@ -137,7 +137,7 @@ final class DemoWindowView: NSView {
     private var panes: [DemoPaneView] = []
     private var dividers: [NSBox] = []
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func apply(_ specs: [DemoPaneSpec]) {
@@ -193,7 +193,7 @@ final class DemoPaneView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     func apply(_ s: DemoPaneSpec) {
         guard s != spec else { return }
@@ -258,7 +258,7 @@ final class DemoAddressBar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     func apply(_ s: DemoBar) {
         state = s
@@ -375,7 +375,7 @@ final class DemoPopupView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     var hasRows: Bool { !(spec?.rows.isEmpty ?? true) }
@@ -433,7 +433,7 @@ final class DemoListView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func update(rows: [Row], active: Bool, columns: [(ColumnID, CGFloat)]) {

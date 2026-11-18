@@ -320,7 +320,7 @@ final class ColumnsPlaceholderView: NSView, FileTableDelegate {
 
 /// The columns' document view.
 final class ColumnStrip: NSView {
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 }
 
 /// The handle between two columns: drag to resize, double-click to fit.

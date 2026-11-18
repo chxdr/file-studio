@@ -126,7 +126,7 @@ final class CrumbStripView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func setCrumbs(_ c: [Crumb]) {

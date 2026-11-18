@@ -65,7 +65,7 @@ final class UsageTreemapView: NSView {
     /// and the layout is asked for once the resize ends.
     private var resizing = false
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

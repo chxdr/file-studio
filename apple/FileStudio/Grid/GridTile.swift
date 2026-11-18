@@ -137,7 +137,7 @@ final class GridTile: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     // Mouse input goes to the grid (TileGrid handles clicks and drags).
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

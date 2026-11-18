@@ -18,6 +18,9 @@
 //   reducemotion              reports the system's Reduce Motion setting
 //   sidebarsnap:<name>        draws the sidebar alone to <SnapshotDir>/<name>.png over the
 //                             window background (window snaps draw the sidebar material blank)
+//   offmainflip               asks every view in the key window for isFlipped from background
+//                             threads at once, as AppKit does while it lays out a drag's items
+//                             (a crash on 2026-11-18); prints OFFMAINFLIP <views> ok
 
 #if DEBUG
 import AppKit
@@ -30,6 +33,7 @@ enum WindowDebugSteps {
         guard !installed else { return }
         installed = true
         DebugAutomation.register("winlog") { _, m in log(m) }
+        DebugAutomation.register("offmainflip") { _, _ in offMainFlip() }
         DebugAutomation.register("sidebarmenu") { path, _ in
             for line in controller?.sidebar.describeMenu(path: path) ?? [] { print("SIDEBARMENU \(line)") }
         }
@@ -192,4 +196,32 @@ enum WindowDebugSteps {
         print("SETTINGS profile=\(m.settings.keyboard.profile) dualDefault=\(m.settings.general.dualPaneByDefault)")
     }
 }
+/// The views of a window, handed to background threads the way AppKit
+/// hands a drag's views to `dispatch_apply`. Only KVC reads of `flipped`
+/// happen there, which is what AppKit's drag code does.
+private final class ViewBag: @unchecked Sendable {
+    let views: [NSView]
+    init(_ views: [NSView]) { self.views = views }
+}
+
+extension WindowDebugSteps {
+    /// Reads every view's `isFlipped` from many threads at once, through
+    /// Objective-C as AppKit does. A view whose getter checks for the main
+    /// thread stops the app here instead of in the middle of a real drag.
+    static func offMainFlip() {
+        guard let root = NSApp.keyWindow?.contentView ?? NSApp.windows.first?.contentView else {
+            print("OFFMAINFLIP no window")
+            return
+        }
+        var all: [NSView] = []
+        func walk(_ v: NSView) { all.append(v); v.subviews.forEach(walk) }
+        walk(root)
+        let bag = ViewBag(all)
+        DispatchQueue.concurrentPerform(iterations: bag.views.count) { i in
+            _ = bag.views[i].value(forKey: "flipped")
+        }
+        print("OFFMAINFLIP \(all.count) ok")
+    }
+}
+
 #endif

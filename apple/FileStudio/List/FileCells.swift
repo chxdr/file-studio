@@ -86,7 +86,7 @@ final class FileCellView: NSView {
     /// Selected, and the pane is active: draw light text on the accent colour.
     private var onAccent = false
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
     override var wantsUpdateLayer: Bool { false }
 

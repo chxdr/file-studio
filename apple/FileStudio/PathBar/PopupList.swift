@@ -56,7 +56,7 @@ final class PopupListView: NSView {
     private var tracking: NSTrackingArea?
     private var axRows: [PopupRowElement] = []
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     var contentHeight: CGFloat { CGFloat(rows.count) * rowHeight + 8 }

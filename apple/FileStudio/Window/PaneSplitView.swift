@@ -32,7 +32,7 @@ final class PaneSplitView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     /// Replaces the panes (one or two views). New views fade in (0.14 s).
     func setPanes(_ views: [NSView]) {

@@ -239,7 +239,7 @@ final class PathBarView: NSView, NSTextFieldDelegate, CrumbStripDelegate {
         if panel.isVisible { placePanel() }
     }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()

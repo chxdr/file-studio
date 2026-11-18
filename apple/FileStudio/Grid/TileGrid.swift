@@ -24,7 +24,7 @@ final class TileDocView: NSView, CoreFocusReporting {
     weak var grid: TileGrid?
     var takesFocus = true
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { takesFocus }
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() { layer?.backgroundColor = NSColor.textBackgroundColor.cgColor }

@@ -186,7 +186,7 @@ final class SearchBarView: NSView, NSSearchFieldDelegate, NSTextFieldDelegate {
         isHidden = true
     }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     var wantedHeight: CGFloat {
         isHidden ? 0 : Self.rowHeight + (showFilters ? Self.filterRowHeight : 0)

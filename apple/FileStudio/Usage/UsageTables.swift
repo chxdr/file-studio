@@ -47,7 +47,7 @@ final class UsageBarView: NSView {
         s.draw(at: NSPoint(x: bounds.width - sz.width - 2, y: (bounds.height - sz.height) / 2))
     }
 
-    override var isFlipped: Bool { false }
+    override nonisolated var isFlipped: Bool { false }
 }
 
 /// The name cell: indent, disclosure triangle, icon, name and a status glyph.

@@ -41,7 +41,7 @@ final class GalleryPictureView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() { layer?.backgroundColor = NSColor.textBackgroundColor.cgColor }
 
@@ -391,7 +391,7 @@ final class MarksStrip: NSView {
         }
     }
     override var intrinsicContentSize: NSSize { NSSize(width: 160, height: marks == nil ? 0 : 16) }
-    override var isFlipped: Bool { true }
+    override nonisolated var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let m = marks else { return }
