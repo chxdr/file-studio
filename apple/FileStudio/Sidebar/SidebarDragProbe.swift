@@ -10,7 +10,9 @@
 //
 //   simdrag:<sidebar path>|row:<name in the focused list>[|legacy]
 //   simdrag:<sidebar path>|crumb:<folder path in the focused pane's address bar>[|legacy]
-//   simdrag:<sidebar path>|sidebar:<another sidebar row's path>[|legacy]
+//   simdrag:<sidebar path>|sidebar:<another sidebar row's path>[@top|@bottom][|legacy]
+//                             (@top/@bottom: let go over that row's top or bottom quarter;
+//                             default: its middle)
 //   simdrag:<sidebar path>|gap:<index in Favourites>
 //   moveanswer:<move|cancel>   answers the open "Move …?" confirmation (F-023)
 //   protect:<folder>[,<folder>…]   adds folders to operations.protected_folders (real core)
@@ -141,17 +143,25 @@ enum SidebarDragProbe {
             }
             strip.draggingEnded(info)
         } else if target.hasPrefix("sidebar:") || target.hasPrefix("gap:") {
-            let info = ProbeDraggingInfo(pasteboard: pb, source: sb.outline, location: .zero, window: w)
             var item: Any?
             var index = NSOutlineViewDropOnItemIndex
+            var loc = NSPoint.zero
             if target.hasPrefix("gap:") {
                 item = sb.outline.item(atRow: 0)   // the Favourites section
                 index = Int(target.dropFirst(4)) ?? 0
             } else {
-                let p = String(target.dropFirst(8))
-                item = (0..<sb.outline.numberOfRows).compactMap { sb.outline.item(atRow: $0) as? SidebarNode }.first { $0.path == p }
-                if item == nil { print("SIMDRAG no sidebar row \(p)"); return }
+                var p = String(target.dropFirst(8))
+                var where_ = "middle"
+                for h in ["@top", "@bottom"] where p.hasSuffix(h) { p.removeLast(h.count); where_ = String(h.dropFirst()) }
+                let node = (0..<sb.outline.numberOfRows).compactMap { sb.outline.item(atRow: $0) as? SidebarNode }.first { $0.path == p }
+                guard let node else { print("SIMDRAG no sidebar row \(p)"); return }
+                item = node
+                // A window point over that row (the outline is flipped).
+                let r = sb.outline.rect(ofRow: sb.outline.row(forItem: node))
+                let y = where_ == "top" ? r.minY + r.height / 4 : where_ == "bottom" ? r.maxY - r.height / 4 : r.midY
+                loc = sb.outline.convert(NSPoint(x: r.midX, y: y), to: nil)
             }
+            let info = ProbeDraggingInfo(pasteboard: pb, source: sb.outline, location: loc, window: w)
             let op = sb.outlineView(sb.outline, validateDrop: info, proposedItem: item, proposedChildIndex: index)
             print("SIMDRAG sidebar \(target) offered=\(describe(op))")
             if !op.isEmpty {

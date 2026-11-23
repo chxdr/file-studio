@@ -125,6 +125,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // carry only our private types (no file URL), so no drop target that
         // moves or copies files (the list, crumbs, Finder) ever accepts them.
         outline.registerForDraggedTypes([Self.favouriteType, Self.itemType, .fileURL])
+        // Rows part where a drop will land, as in Finder's sidebar.
+        outline.draggingDestinationFeedbackStyle = .gap
         outline.setDraggingSourceOperationMask([.move, .link], forLocal: true)
         outline.setDraggingSourceOperationMask([], forLocal: false)
         outline.setAccessibilityLabel("Sidebar")
@@ -430,7 +432,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var at = index
         if let n = item as? SidebarNode, n !== fav {
             guard case .favourite = n.kind, let i = fav.children.firstIndex(of: n) else { return [] }
-            at = i + 1
+            at = Self.gap(over: i, rowRect: ov.rect(ofRow: ov.row(forItem: n)),
+                          at: ov.convert(info.draggingLocation, from: nil))
         } else if item == nil || (item as? SidebarNode) !== fav {
             return []
         }
@@ -440,6 +443,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if pb.string(forType: Self.favouriteType) != nil { return .move }
         if pb.string(forType: Self.itemType) != nil { return .link }
         return folderURLs(pb).isEmpty ? [] : .link
+    }
+
+    /// The gap a drop over favourite `i` goes to: before it on the row's top
+    /// half, after it on the bottom half (Finder). The outline is flipped, so
+    /// the top half has the smaller y.
+    nonisolated static func gap(over i: Int, rowRect r: NSRect, at p: NSPoint) -> Int {
+        p.y < r.midY ? i : i + 1
     }
 
     func outlineView(_ ov: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
