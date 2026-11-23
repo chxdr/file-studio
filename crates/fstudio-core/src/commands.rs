@@ -118,7 +118,7 @@ pub enum Handling {
 }
 
 /// Commands that come in a later milestone (M3+).
-pub const LATER_COMMANDS: &[&str] = &["file.compress", "file.make_alias", "nav.connect_server"];
+pub const LATER_COMMANDS: &[&str] = &["file.compress", "file.make_alias"];
 
 const UNTITLED_FOLDER: &str = "untitled folder";
 const UNTITLED_FILE: &str = "untitled";
@@ -405,7 +405,10 @@ impl Engine {
             | "tags.edit"
             | "sidebar.rename"
             | "drive.eject"
-            | "drive.info" => Handling::Shell,
+            | "drive.info"
+            // Connect to Server…: the shell shows its sheet, which calls
+            // `Engine::connect_server`.
+            | "nav.connect_server" => Handling::Shell,
             _ if id.starts_with("addressbar.")
                 || id.starts_with("palette.")
                 || id.starts_with("rename.") =>
@@ -1155,6 +1158,11 @@ impl Engine {
                 );
             }
             "nav.quick_open" => return Ok(Outcome::shell(ShellRequest::ShowQuickOpen)),
+            "nav.connect_server" => {
+                let mut out = Outcome::shell(ShellRequest::ConnectToServer);
+                out.tab = inv.tab.or_else(|| self.active_tab().map(|t| t.id()));
+                return Ok(out);
+            }
             "view.toggle_sidebar" => return Ok(Outcome::shell(ShellRequest::ToggleSidebar)),
             "view.toggle_inspector" => return Ok(Outcome::shell(ShellRequest::ToggleInspector)),
             "view.show_operations" => return Ok(Outcome::shell(ShellRequest::ShowOperations)),

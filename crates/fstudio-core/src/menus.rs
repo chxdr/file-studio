@@ -825,7 +825,8 @@ impl Engine {
             MenuTarget::SidebarItem { path, .. } | MenuTarget::Crumb { path, .. } => (
                 self.volumes()
                     .iter()
-                    .any(|v| v.mount_path == *path && v.is_removable),
+                    // Network shares eject (unmount) like cards do.
+                    .any(|v| v.mount_path == *path && (v.is_removable || v.is_network)),
                 self.is_favourite(path),
             ),
             MenuTarget::Folder { path, .. } | MenuTarget::Package { path, .. } => {

@@ -162,6 +162,7 @@ extension ShellRequest {
         case .showOperations: self = .showOperations
         case .confirm(let tok, let t, let d, let y, let n): self = .confirm(token: tok, title: t, detail: d, yes: y, no: n)
         case .showPowerTour: self = .showPowerTour
+        case .connectToServer: self = .connectToServer
         case .toggleSidebar: self = .toggleSidebar
         case .toggleInspector: self = .toggleInspector
         case .eject(let p): self = .eject(path: p)
@@ -841,6 +842,7 @@ func coreEvent(_ e: FfiEvent) -> CoreEvent {
     case .hint(let h): .hint(Hint(h))
     case .settingsChanged: .settingsChanged
     case .favouritesChanged: .favouritesChanged
+    case .networkChanged: .networkChanged
     case .shell(let t, let r): .shell(tab: t, request: ShellRequest(r))
     case .workspacesChanged: .workspacesChanged
     }

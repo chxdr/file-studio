@@ -151,6 +151,10 @@ pub enum CoreEvent {
     SettingsChanged,
     /// The sidebar favourites changed; re-read [`crate::Engine::favourites`].
     FavouritesChanged,
+    /// The Network section changed (a nearby computer came or went, a
+    /// server was saved, a connection started or ended); re-read
+    /// [`crate::Engine::network_sidebar`] and [`crate::Engine::recent_servers`].
+    NetworkChanged,
     /// Something for the shell to do that wasn't the direct answer to a
     /// command: the toast for a finished operation, built from what really
     /// happened (all done, some failed, none done). Handle it as an
@@ -197,6 +201,7 @@ enum Key {
     Settings,
     Favourites,
     Workspaces,
+    Network,
 }
 
 fn key_of(e: &CoreEvent) -> Option<Key> {
@@ -210,6 +215,7 @@ fn key_of(e: &CoreEvent) -> Option<Key> {
         CoreEvent::SettingsChanged => Key::Settings,
         CoreEvent::FavouritesChanged => Key::Favourites,
         CoreEvent::WorkspacesChanged => Key::Workspaces,
+        CoreEvent::NetworkChanged => Key::Network,
         _ => return None,
     })
 }

@@ -202,6 +202,11 @@ pub enum ShellRequest {
     /// Tour): a short, skippable sequence of cards about the power-user
     /// tools, with keys read from the current bindings.
     ShowPowerTour,
+    /// Show the Connect to Server sheet (`nav.connect_server`, ⌘K): an
+    /// address field and the recent servers
+    /// ([`crate::Engine::recent_servers`]); its Connect button calls
+    /// [`crate::Engine::connect_server`] for the outcome's tab.
+    ConnectToServer,
     /// Show or hide the sidebar.
     ToggleSidebar,
     /// Show or hide the inspector.

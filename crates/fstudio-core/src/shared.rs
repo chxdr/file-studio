@@ -78,6 +78,8 @@ pub(crate) struct Shared {
     folder_views: RwLock<HashMap<String, ViewState>>,
     /// Sidecar reads for culling marks, shared by every tab.
     pub(crate) sidecars: crate::sidecars::SidecarCache,
+    /// Connect to Server: connections in progress and nearby computers.
+    pub(crate) network: crate::network::Network,
     dirty: Mutex<Option<Sender<()>>>,
 }
 
@@ -120,6 +122,7 @@ impl Shared {
             volumes: RwLock::new(volumes),
             folder_views: RwLock::new(folder_views),
             sidecars: crate::sidecars::SidecarCache::default(),
+            network: crate::network::Network::default(),
             dirty: Mutex::new(None),
         }))
     }

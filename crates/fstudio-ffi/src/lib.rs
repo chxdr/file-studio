@@ -11,6 +11,7 @@
 
 // ── icon and gallery view (M3) ──
 mod grid;
+mod network;
 mod preview;
 mod search;
 // ── batch rename (M3) ──

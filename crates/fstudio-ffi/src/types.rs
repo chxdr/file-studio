@@ -620,6 +620,8 @@ pub enum FfiShellRequest {
         no: String,
     },
     ShowPowerTour,
+    /// Show the Connect to Server sheet (⌘K).
+    ConnectToServer,
     ToggleSidebar,
     ToggleInspector,
     Eject {
@@ -740,6 +742,7 @@ impl From<core::ShellRequest> for FfiShellRequest {
                 no,
             },
             S::ShowPowerTour => Self::ShowPowerTour,
+            S::ConnectToServer => Self::ConnectToServer,
             S::ToggleSidebar => Self::ToggleSidebar,
             S::ToggleInspector => Self::ToggleInspector,
             S::Eject { path } => Self::Eject { path },
@@ -2289,6 +2292,8 @@ pub enum FfiEvent {
     },
     SettingsChanged,
     FavouritesChanged,
+    /// Re-read `network_sidebar()` and `recent_servers()`.
+    NetworkChanged,
     /// Handle `request` as an outcome's shell request, from the window
     /// holding `tab` (the toast of a finished operation).
     Shell {
@@ -2339,6 +2344,7 @@ impl From<core::CoreEvent> for FfiEvent {
             E::Hint { hint } => FfiEvent::Hint { hint: hint.into() },
             E::SettingsChanged => FfiEvent::SettingsChanged,
             E::FavouritesChanged => FfiEvent::FavouritesChanged,
+            E::NetworkChanged => FfiEvent::NetworkChanged,
             E::Shell { tab, request } => FfiEvent::Shell {
                 tab: tab.map(|t| t.0),
                 request: request.into(),

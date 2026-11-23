@@ -1254,6 +1254,37 @@ public protocol FfiEngineProtocol: AnyObject, Sendable {
     func thumbnailRequests(tab: UInt64, start: UInt32, count: UInt32, forward: Bool) throws  -> [UInt32]
     
     /**
+     * Stops connecting to `address`; false when nothing was in progress.
+     */
+    func cancelConnect(address: String) throws  -> Bool
+    
+    /**
+     * The canonical form of a typed address, or why it can't be used.
+     */
+    func checkServerAddress(address: String) throws  -> String
+    
+    func clearRecentServers() throws 
+    
+    /**
+     * Connects to a server address (`archbox/media`, `smb://archbox`) and
+     * opens the share in `tab` (or the focused tab) once mounted.
+     */
+    func connectServer(address: String, tab: UInt64?) throws  -> FfiOutcome
+    
+    func networkSidebar()  -> FfiNetworkSidebar
+    
+    func recentServers()  -> [FfiServer]
+    
+    func removeSavedServer(address: String) throws 
+    
+    func saveServer(address: String) throws 
+    
+    /**
+     * Starts Bonjour browsing for SMB computers (once).
+     */
+    func startNetworkBrowsing() 
+    
+    /**
      * Opens a batch-rename session for `paths` (in list order). Reads each
      * item's metadata and lists each folder once: blocks on disk like a
      * folder listing.
@@ -2668,6 +2699,102 @@ open func thumbnailRequests(tab: UInt64, start: UInt32, count: UInt32, forward: 
         FfiConverterBool.lower(forward),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Stops connecting to `address`; false when nothing was in progress.
+     */
+open func cancelConnect(address: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_cancel_connect(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The canonical form of a typed address, or why it can't be used.
+     */
+open func checkServerAddress(address: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_check_server_address(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+    
+open func clearRecentServers()throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_clear_recent_servers(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Connects to a server address (`archbox/media`, `smb://archbox`) and
+     * opens the share in `tab` (or the focused tab) once mounted.
+     */
+open func connectServer(address: String, tab: UInt64?)throws  -> FfiOutcome  {
+    return try  FfiConverterTypeFfiOutcome_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_connect_server(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),
+        FfiConverterOptionUInt64.lower(tab),uniffiCallStatus
+    )
+})
+}
+    
+open func networkSidebar() -> FfiNetworkSidebar  {
+    return try!  FfiConverterTypeFfiNetworkSidebar_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_network_sidebar(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func recentServers() -> [FfiServer]  {
+    return try!  FfiConverterSequenceTypeFfiServer.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_recent_servers(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func removeSavedServer(address: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_remove_saved_server(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+}
+}
+    
+open func saveServer(address: String)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_save_server(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Starts Bonjour browsing for SMB computers (once).
+     */
+open func startNetworkBrowsing()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_fstudio_ffi_fn_method_ffiengine_start_network_browsing(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -7168,6 +7295,77 @@ public func FfiConverterTypeFfiMods_lower(_ value: FfiMods) -> RustBuffer {
 
 
 /**
+ * Everything the sidebar's Network section shows.
+ */
+public struct FfiNetworkSidebar: Equatable, Hashable {
+    public var computers: [FfiServer]
+    public var saved: [FfiServer]
+    public var shares: [FfiVolume]
+    /**
+     * Why nearby computers can't be listed, for a hint.
+     */
+    public var browseProblem: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(computers: [FfiServer], saved: [FfiServer], shares: [FfiVolume], 
+        /**
+         * Why nearby computers can't be listed, for a hint.
+         */browseProblem: String?) {
+        self.computers = computers
+        self.saved = saved
+        self.shares = shares
+        self.browseProblem = browseProblem
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiNetworkSidebar: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNetworkSidebar: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNetworkSidebar {
+        return
+            try FfiNetworkSidebar(
+                computers: FfiConverterSequenceTypeFfiServer.read(from: &buf), 
+                saved: FfiConverterSequenceTypeFfiServer.read(from: &buf), 
+                shares: FfiConverterSequenceTypeFfiVolume.read(from: &buf), 
+                browseProblem: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiNetworkSidebar, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiServer.write(value.computers, into: &buf)
+        FfiConverterSequenceTypeFfiServer.write(value.saved, into: &buf)
+        FfiConverterSequenceTypeFfiVolume.write(value.shares, into: &buf)
+        FfiConverterOptionString.write(value.browseProblem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNetworkSidebar_lift(_ buf: RustBuffer) throws -> FfiNetworkSidebar {
+    return try FfiConverterTypeFfiNetworkSidebar.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNetworkSidebar_lower(_ value: FfiNetworkSidebar) -> RustBuffer {
+    return FfiConverterTypeFfiNetworkSidebar.lower(value)
+}
+
+
+/**
  * A finished operation's summary.
  */
 public struct FfiOpReport: Equatable, Hashable {
@@ -9320,6 +9518,103 @@ public func FfiConverterTypeFfiSelection_lift(_ buf: RustBuffer) throws -> FfiSe
 #endif
 public func FfiConverterTypeFfiSelection_lower(_ value: FfiSelection) -> RustBuffer {
     return FfiConverterTypeFfiSelection.lower(value)
+}
+
+
+/**
+ * A server or share address.
+ */
+public struct FfiServer: Equatable, Hashable {
+    /**
+     * The canonical address (`smb://archbox/media`), never with a password.
+     */
+    public var url: String
+    public var name: String
+    public var kind: FfiServerKind
+    /**
+     * A connection is in progress.
+     */
+    public var connecting: Bool
+    /**
+     * Where the share is mounted, when it is.
+     */
+    public var mountedAt: String?
+    /**
+     * Also a saved server.
+     */
+    public var saved: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The canonical address (`smb://archbox/media`), never with a password.
+         */url: String, name: String, kind: FfiServerKind, 
+        /**
+         * A connection is in progress.
+         */connecting: Bool, 
+        /**
+         * Where the share is mounted, when it is.
+         */mountedAt: String?, 
+        /**
+         * Also a saved server.
+         */saved: Bool) {
+        self.url = url
+        self.name = name
+        self.kind = kind
+        self.connecting = connecting
+        self.mountedAt = mountedAt
+        self.saved = saved
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiServer: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiServer: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiServer {
+        return
+            try FfiServer(
+                url: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypeFfiServerKind.read(from: &buf), 
+                connecting: FfiConverterBool.read(from: &buf), 
+                mountedAt: FfiConverterOptionString.read(from: &buf), 
+                saved: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiServer, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypeFfiServerKind.write(value.kind, into: &buf)
+        FfiConverterBool.write(value.connecting, into: &buf)
+        FfiConverterOptionString.write(value.mountedAt, into: &buf)
+        FfiConverterBool.write(value.saved, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServer_lift(_ buf: RustBuffer) throws -> FfiServer {
+    return try FfiConverterTypeFfiServer.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServer_lower(_ value: FfiServer) -> RustBuffer {
+    return FfiConverterTypeFfiServer.lower(value)
 }
 
 
@@ -12784,6 +13079,10 @@ public enum FfiEvent: Equatable, Hashable {
     case settingsChanged
     case favouritesChanged
     /**
+     * Re-read `network_sidebar()` and `recent_servers()`.
+     */
+    case networkChanged
+    /**
      * Handle `request` as an outcome's shell request, from the window
      * holding `tab` (the toast of a finished operation).
      */
@@ -12847,10 +13146,12 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
         
         case 12: return .favouritesChanged
         
-        case 13: return .shell(tab: try FfiConverterOptionUInt64.read(from: &buf), request: try FfiConverterTypeFfiShellRequest.read(from: &buf)
+        case 13: return .networkChanged
+        
+        case 14: return .shell(tab: try FfiConverterOptionUInt64.read(from: &buf), request: try FfiConverterTypeFfiShellRequest.read(from: &buf)
         )
         
-        case 14: return .workspacesChanged
+        case 15: return .workspacesChanged
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12925,14 +13226,18 @@ public struct FfiConverterTypeFfiEvent: FfiConverterRustBuffer {
             writeInt(&buf, Int32(12))
         
         
-        case let .shell(tab,request):
+        case .networkChanged:
             writeInt(&buf, Int32(13))
+        
+        
+        case let .shell(tab,request):
+            writeInt(&buf, Int32(14))
             FfiConverterOptionUInt64.write(tab, into: &buf)
             FfiConverterTypeFfiShellRequest.write(request, into: &buf)
             
         
         case .workspacesChanged:
-            writeInt(&buf, Int32(14))
+            writeInt(&buf, Int32(15))
         
         }
     }
@@ -15839,6 +16144,82 @@ public func FfiConverterTypeFfiSelectionChange_lower(_ value: FfiSelectionChange
 
 
 /**
+ * Where a server in the Network section comes from.
+ */
+
+public enum FfiServerKind: Equatable, Hashable {
+    
+    case nearby
+    case saved
+    case recent
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiServerKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiServerKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiServerKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiServerKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .nearby
+        
+        case 2: return .saved
+        
+        case 3: return .recent
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiServerKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .nearby:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .saved:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .recent:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServerKind_lift(_ buf: RustBuffer) throws -> FfiServerKind {
+    return try FfiConverterTypeFfiServerKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiServerKind_lower(_ value: FfiServerKind) -> RustBuffer {
+    return FfiConverterTypeFfiServerKind.lower(value)
+}
+
+
+
+/**
  * Something only the shell can do. See `fstudio_core::ShellRequest`.
  */
 
@@ -15903,6 +16284,10 @@ public enum FfiShellRequest: Equatable, Hashable {
     case confirm(token: UInt64, title: String, detail: String, yes: String, no: String
     )
     case showPowerTour
+    /**
+     * Show the Connect to Server sheet (⌘K).
+     */
+    case connectToServer
     case toggleSidebar
     case toggleInspector
     case eject(path: String
@@ -16046,38 +16431,40 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
         
         case 32: return .showPowerTour
         
-        case 33: return .toggleSidebar
+        case 33: return .connectToServer
         
-        case 34: return .toggleInspector
+        case 34: return .toggleSidebar
         
-        case 35: return .eject(path: try FfiConverterString.read(from: &buf)
+        case 35: return .toggleInspector
+        
+        case 36: return .eject(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 36: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
+        case 37: return .showDriveInfo(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 37: return .showDiskUsage(path: try FfiConverterString.read(from: &buf)
+        case 38: return .showDiskUsage(path: try FfiConverterString.read(from: &buf)
         )
         
-        case 38: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
+        case 39: return .askFavouriteName(path: try FfiConverterString.read(from: &buf), name: try FfiConverterString.read(from: &buf)
         )
         
-        case 39: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
+        case 40: return .editTags(paths: try FfiConverterSequenceString.read(from: &buf)
         )
         
-        case 40: return .jumpFilePanel(dir: try FfiConverterString.read(from: &buf)
+        case 41: return .jumpFilePanel(dir: try FfiConverterString.read(from: &buf)
         )
         
-        case 41: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 42: return .openWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 42: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
+        case 43: return .closeWindow(window: try FfiConverterUInt64.read(from: &buf)
         )
         
-        case 43: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
+        case 44: return .resumePrompt(op: try FfiConverterInt64.read(from: &buf), question: try FfiConverterString.read(from: &buf), detail: try FfiConverterString.read(from: &buf), discardQuestion: try FfiConverterString.read(from: &buf), discardDetail: try FfiConverterString.read(from: &buf)
         )
         
-        case 44: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
+        case 45: return .sourceMissing(op: try FfiConverterInt64.read(from: &buf), text: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -16257,57 +16644,61 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             writeInt(&buf, Int32(32))
         
         
-        case .toggleSidebar:
+        case .connectToServer:
             writeInt(&buf, Int32(33))
         
         
-        case .toggleInspector:
+        case .toggleSidebar:
             writeInt(&buf, Int32(34))
         
         
-        case let .eject(path):
+        case .toggleInspector:
             writeInt(&buf, Int32(35))
-            FfiConverterString.write(path, into: &buf)
-            
         
-        case let .showDriveInfo(path):
+        
+        case let .eject(path):
             writeInt(&buf, Int32(36))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .showDiskUsage(path):
+        case let .showDriveInfo(path):
             writeInt(&buf, Int32(37))
             FfiConverterString.write(path, into: &buf)
             
         
-        case let .askFavouriteName(path,name):
+        case let .showDiskUsage(path):
             writeInt(&buf, Int32(38))
+            FfiConverterString.write(path, into: &buf)
+            
+        
+        case let .askFavouriteName(path,name):
+            writeInt(&buf, Int32(39))
             FfiConverterString.write(path, into: &buf)
             FfiConverterString.write(name, into: &buf)
             
         
         case let .editTags(paths):
-            writeInt(&buf, Int32(39))
+            writeInt(&buf, Int32(40))
             FfiConverterSequenceString.write(paths, into: &buf)
             
         
         case let .jumpFilePanel(dir):
-            writeInt(&buf, Int32(40))
+            writeInt(&buf, Int32(41))
             FfiConverterString.write(dir, into: &buf)
             
         
         case let .openWindow(window):
-            writeInt(&buf, Int32(41))
-            FfiConverterUInt64.write(window, into: &buf)
-            
-        
-        case let .closeWindow(window):
             writeInt(&buf, Int32(42))
             FfiConverterUInt64.write(window, into: &buf)
             
         
-        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+        case let .closeWindow(window):
             writeInt(&buf, Int32(43))
+            FfiConverterUInt64.write(window, into: &buf)
+            
+        
+        case let .resumePrompt(op,question,detail,discardQuestion,discardDetail):
+            writeInt(&buf, Int32(44))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(question, into: &buf)
             FfiConverterString.write(detail, into: &buf)
@@ -16316,7 +16707,7 @@ public struct FfiConverterTypeFfiShellRequest: FfiConverterRustBuffer {
             
         
         case let .sourceMissing(op,text):
-            writeInt(&buf, Int32(44))
+            writeInt(&buf, Int32(45))
             FfiConverterInt64.write(op, into: &buf)
             FfiConverterString.write(text, into: &buf)
             
@@ -19069,6 +19460,31 @@ fileprivate struct FfiConverterSequenceTypeFfiRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiServer: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiServer]
+
+    public static func write(_ value: [FfiServer], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiServer.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiServer] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiServer]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiServer.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiShortcutRow: FfiConverterRustBuffer {
     typealias SwiftType = [FfiShortcutRow]
 
@@ -19961,6 +20377,33 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_thumbnail_requests() != 682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_cancel_connect() != 2871) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_check_server_address() != 52301) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_clear_recent_servers() != 20490) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_connect_server() != 25217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_network_sidebar() != 56813) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_recent_servers() != 33880) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_remove_saved_server() != 11400) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_save_server() != 65239) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_fstudio_ffi_checksum_method_ffiengine_start_network_browsing() != 597) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_fstudio_ffi_checksum_method_ffiengine_batch_rename() != 8090) {

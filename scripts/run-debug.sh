@@ -4,6 +4,13 @@
 #   scripts/run-debug.sh "wait:1;key:cmd+l;type:~/Documents;key:return;wait:0.5;snap:docs;log;quit"
 #   scripts/run-debug.sh --mock "go:/Mock/Huge 100k;bench:rows;snap:huge;quit"
 #
+# Connect to Server (⌘K) and the sidebar's Network section (steps in
+# apple/FileStudio/Network/NetworkDebugSteps.swift):
+#   scripts/run-debug.sh "wait:1;key:cmd+k;wait:0.3;nettype:archbox/media;netlog;snap:connect-sheet;netcancel;quit"
+#   scripts/run-debug.sh "wait:1;netsave:smb://archbox/media;wait:2;netlog;snap:network-sidebar;netmenu:smb://archbox/media|Remove from Sidebar;netlog;quit"
+#   With a real Samba share (mounts it; the system may ask for the password):
+#   scripts/run-debug.sh --data ~/tmp/fs-net "wait:1;key:cmd+k;nettype:smb://archbox/media;netconnect;wait:8;netlog;log;quit"
+#
 # Options (before the script):
 #   --mock          run against MockCore (no Rust)
 #   --data <dir>    the core's data folder (default: a fresh temporary one,

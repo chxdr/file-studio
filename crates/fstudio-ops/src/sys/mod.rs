@@ -213,11 +213,19 @@ pub fn set_nocache(f: &File) {
 }
 
 /// Durable flush. Plain fsync on macOS doesn't flush the drive's cache;
-/// `F_FULLFSYNC` does. Falls back to `fsync` where unsupported (exFAT, SMB).
+/// `F_FULLFSYNC` does. Falls back to plain `fsync(2)` where `F_FULLFSYNC`
+/// is refused (some SMB servers, devices).
+///
+/// Not `File::sync_all` for the fallback: on macOS that *is* `F_FULLFSYNC`,
+/// so it fails the same way and the fallback would never help.
 pub fn full_sync(f: &File) -> io::Result<()> {
     // SAFETY: fcntl on a valid descriptor with no pointer arguments.
     let r = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_FULLFSYNC) };
-    if r == 0 { Ok(()) } else { f.sync_all() }
+    if r == 0 {
+        return Ok(());
+    }
+    // SAFETY: fsync on a valid descriptor we own.
+    check(unsafe { libc::fsync(f.as_raw_fd()) })
 }
 
 /// Drops this file's pages from the unified buffer cache, so the next
@@ -302,6 +310,32 @@ pub fn volume_uuid(path: &Path) -> Option<[u8; 16]> {
     }
     let uuid: [u8; 16] = buf[4..20].try_into().ok()?;
     (uuid != [0u8; 16]).then_some(uuid)
+}
+
+/// For a path on a network volume (`MNT_LOCAL` clear): the filesystem type
+/// and what the volume was mounted from (`smbfs`, `//milky@archbox/media`).
+/// `None` on local volumes and when `statfs` fails. Never waits on the
+/// server beyond the one `statfs`.
+pub fn network_source(path: &Path) -> Option<(String, String)> {
+    let p = cstr(path).ok()?;
+    // SAFETY: `statfs` is plain old data, so all-zero is a valid value.
+    let mut sfs: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: valid NUL-terminated path; `sfs` is writable for its size.
+    if unsafe { libc::statfs(p.as_ptr(), &mut sfs) } != 0 {
+        return None;
+    }
+    if sfs.f_flags & libc::MNT_LOCAL as u32 != 0 {
+        return None;
+    }
+    let text = |b: &[c_char]| {
+        let bytes: Vec<u8> = b
+            .iter()
+            .take_while(|c| **c != 0)
+            .map(|c| *c as u8)
+            .collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    Some((text(&sfs.f_fstypename), text(&sfs.f_mntfromname)))
 }
 
 /// fsyncs a directory so a rename inside it is durable.
@@ -422,6 +456,50 @@ mod tests {
             rename_excl(&a, &d.path().join("c")).unwrap(),
             RenameMode::Exclusive
         );
+    }
+
+    /// A descriptor that refuses `F_FULLFSYNC` but takes `fsync` (a device)
+    /// still syncs: the fallback must not be `File::sync_all`, which is
+    /// `F_FULLFSYNC` again on macOS.
+    #[test]
+    fn full_sync_falls_back_to_plain_fsync() {
+        let f = File::options().write(true).open("/dev/null").unwrap();
+        // SAFETY: fcntl on a valid descriptor with no pointer arguments.
+        let refused = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_FULLFSYNC) } != 0;
+        assert!(
+            refused,
+            "the test needs a descriptor that refuses F_FULLFSYNC"
+        );
+        assert!(f.sync_all().is_err(), "sync_all is F_FULLFSYNC on macOS");
+        full_sync(&f).unwrap();
+    }
+
+    /// The fallbacks on a real SMB share: set `FSTUDIO_SMB_DIR` to a
+    /// writable, empty folder on a mounted share and run with `--ignored`.
+    /// Rename still never replaces (exclusively, or by check-then-rename),
+    /// the flush works, and nothing is left behind.
+    #[test]
+    #[ignore = "needs a mounted SMB share (FSTUDIO_SMB_DIR)"]
+    fn smb_share_fallbacks_hold() {
+        let base = std::path::PathBuf::from(std::env::var("FSTUDIO_SMB_DIR").unwrap());
+        let d = tempfile::tempdir_in(&base).unwrap();
+        let a = d.path().join("a");
+        let b = d.path().join("b");
+        std::fs::write(&a, b"new").unwrap();
+        std::fs::write(&b, b"old").unwrap();
+        assert_eq!(
+            rename_excl(&a, &b).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&b).unwrap(), b"old");
+        // Differs only by case: the server decides whether that is the same name.
+        let mode = rename_excl(&a, &d.path().join("c")).unwrap();
+        eprintln!("rename mode on this share: {mode:?}");
+        full_sync(&File::open(d.path().join("c")).unwrap()).unwrap();
+        let _ = sync_dir(d.path());
+        eprintln!("volume uuid: {:?}", volume_uuid(d.path()));
+        eprintln!("network source: {:?}", network_source(d.path()));
+        assert!(network_source(d.path()).is_some());
     }
 
     #[test]

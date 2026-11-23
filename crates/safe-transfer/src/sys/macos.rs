@@ -441,17 +441,30 @@ fn info_from(s: &libc::statfs) -> VolumeInfo {
     // What `statfs` says; purgeable space is only asked for when a job
     // needs it (`VolumeIdentity::purgeable_free`): the query can be slow.
     let free = s.f_bavail * bsize;
+    let device = c_chars(&s.f_mntfromname);
+    let network = s.f_flags & libc::MNT_LOCAL as u32 == 0;
     VolumeInfo {
-        uuid: volume_uuid(&mount),
+        uuid: volume_uuid(&mount).or_else(|| network_id(network, &fs_type, &device)),
         fs_type,
         name,
         capacity: s.f_blocks * bsize,
         free,
         block_size: bsize,
         read_only: s.f_flags & libc::MNT_RDONLY as u32 != 0,
-        device: c_chars(&s.f_mntfromname),
+        device,
         mount,
     }
+}
+
+/// A stand-in UUID for a network volume, which has none of its own: what it
+/// was mounted from (`net:smbfs://milky@archbox/media`, lower case). It is
+/// the same each time the share is mounted from the same address, so a job
+/// writing to a share that was unmounted and mounted again (even at
+/// `/Volumes/media-1`) finds it again. The account is part of it: one share
+/// mounted as two users is two volumes. `None` for local volumes.
+pub(crate) fn network_id(network: bool, fs_type: &str, mounted_from: &str) -> Option<String> {
+    (network && !mounted_from.is_empty())
+        .then(|| format!("net:{fs_type}:{}", mounted_from.to_lowercase()))
 }
 
 /// The volume that holds `path` (`statfs` + its UUID).
@@ -511,6 +524,20 @@ pub fn mounted_volumes() -> io::Result<Vec<VolumeInfo>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A network share keeps one identity across remounts; local volumes
+    /// never get a stand-in; the account counts.
+    #[test]
+    fn network_volumes_get_a_stable_stand_in_uuid() {
+        let a = network_id(true, "smbfs", "//milky@ArchBox/media");
+        assert_eq!(a, network_id(true, "smbfs", "//milky@archbox/MEDIA"));
+        assert_ne!(a, network_id(true, "smbfs", "//guest@archbox/media"));
+        assert_eq!(network_id(false, "apfs", "/dev/disk3s1"), None);
+        assert_eq!(network_id(true, "smbfs", ""), None);
+        // The startup disk keeps its real UUID.
+        let v = volume_info(Path::new("/")).unwrap();
+        assert!(!v.uuid.unwrap().starts_with("net:"));
+    }
 
     #[test]
     fn rename_never_replaces() {
