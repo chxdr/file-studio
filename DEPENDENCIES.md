@@ -17,7 +17,8 @@ Project licence: **GPL-3.0-or-later**. Every dependency must be GPLv3-compatible
 | rayon | 1 | fs, view | MIT OR Apache-2.0 |
 | unicode-normalization | 0.1 | view, path | MIT OR Apache-2.0 |
 | plist | 1 | fs (Finder tags) | MIT |
-| core-foundation / -sys | 0.10 / 0.8 | fs (FSEvents) | MIT OR Apache-2.0 |
+| core-foundation / -sys | 0.10 / 0.8 | fs (FSEvents); net uses -sys (NetFS, Bonjour) | MIT OR Apache-2.0 |
+| block2 | 0.6 | net (NetFS completion block; already in the tree via objc2) | MIT |
 | nucleo-matcher | 0.3 | path (fuzzy completion) | MPL-2.0 |
 | xxhash-rust (xxh3) | 0.8 | ops (verify) | BSL-1.0 |
 | objc2 / objc2-foundation / objc2-encode | 0.6 / 0.3 / 4.1 | ops (Trash) | MIT |

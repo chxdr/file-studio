@@ -20,7 +20,7 @@ Shells only render, turn input into neutral `KeyChord`s and intents, and make OS
 **Why:** session restore, saved workspaces and the other shells all come from one implementation.
 
 ## F-003: Crate layout with the `fstudio-` prefix (accepted)
-The crates are `model`, `fs`, `path`, `view`, `ops`, `rename`, `search`, `preview`, `db`, `keymap`, `core`, `ffi`, `cli` and `bench`. The dependency graph is acyclic: `model` ← `fs`/`path`/`view`/`keymap`/`db` ← `ops` ← `core` ← `ffi`/`cli`. `rename`, `search` and `preview` are stubs until M3. See `docs/PROPOSAL.md` §2.
+The crates are `model`, `fs`, `path`, `view`, `ops`, `rename`, `search`, `preview`, `db`, `keymap`, `net` (F-031), `core`, `ffi`, `cli` and `bench`. The dependency graph is acyclic: `model` ← `fs`/`path`/`view`/`keymap`/`db` ← `ops` ← `core` ← `ffi`/`cli`. `rename`, `search` and `preview` are stubs until M3. See `docs/PROPOSAL.md` §2.
 **Why:** the prefix avoids shadowing Rust's `core` (Import Studio's D-004). `view` and `model` keep the pure logic testable without I/O.
 
 ## F-004: FFI is UniFFI (proc-macro mode), linked as a static library (accepted)
@@ -293,3 +293,14 @@ Built in parallel sessions and merged after review.
 - Icon view is a tile grid. 2D cursor movement, column count and the thumbnail size (⇧⌘= / ⇧⌘-, the `grid` settings group) are decided in the core (`fstudio-core::grid`), and the shell only draws.
 - Gallery is a large picture with a filmstrip; ←/→ step through items. Thumbnails come from QuickLook, lazily and off the main thread. For RAW files whose QuickLook picture is too small, it falls back to ImageIO's embedded preview.
 - Both views show culling marks (F-029) and dim rejects. Rename works in the grid through the same rename controller as the list.
+
+## F-031: Connect to Server, the small SMB version (2026-11-24)
+- **macOS does the mounting.** `fstudio-net` mounts with `NetFSMountURLAsync`, which uses soft mounts (NetFS's default). The sign-in window, share picker and Keychain are macOS's own. File Studio never sees or stores a password, and drops any password typed into an address.
+- **Addresses** are parsed in Rust into one canonical `smb://` URL. `host/share`, `//host/share`, `\\host\share` and `cifs://` are accepted too. Other schemes are refused until M5. ⌘K (`nav.connect_server`) opens a sheet; typing `smb://…` in the address bar mounts the share and opens it.
+- **Saved servers** (sidebar) and **recent servers** (⌘K sheet, the last 10) are kept in the core's key-value table. Only the URL and name are stored.
+- **Nearby computers** come from Bonjour `_smb._tcp`. The app declares `NSBonjourServices` and a local-network usage string. If access is refused, an "Allow Local Network Access…" row appears.
+- **A network volume is identified by what it was mounted from** (`f_mntfromname`). Its `st_dev` is new at every mount, and SMB shares have no volume UUID. The ops journal's partial key and Safe Transfer's stand-in volume id both use this, so a remounted share counts as the same volume.
+  - Known difference: ops ignores the account, but Safe Transfer counts it. A share remounted as another user is therefore a different volume to Safe Transfer, and a job waits for the original account. This is safe; making the two agree is a follow-up.
+- **Flush:** when `F_FULLFSYNC` is refused, it falls back to plain `fsync(2)`. It never falls back to `File::sync_all`, which is `F_FULLFSYNC` again on macOS. Exclusive rename on SMB keeps the check-then-rename fallback, whose race now includes other machines writing to the share.
+- **Exception to F-022:** the right-click menu on server rows (Connect, Save to / Remove from Sidebar, Copy Address) is built in Swift. A core menu target for server addresses is a follow-up.
+- `fstudio-net` sits below `ops` and `core` (amends F-003).
