@@ -1,0 +1,20 @@
+[package]
+name = "fstudio-net"
+description = "Connect to Server (SMB): address rules, NetFS mounting, Bonjour discovery and network-volume identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc.workspace = true
+# Objective-C blocks for NetFSMountURLAsync's completion handler (MIT).
+# The same block2 that objc2 already brings in.
+block2 = "0.6"
+core-foundation-sys = "0.8"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

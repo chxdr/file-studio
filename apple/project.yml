@@ -58,12 +58,17 @@ targets:
         CODE_SIGN_ENTITLEMENTS: FileStudio.entitlements
         INFOPLIST_KEY_NSRemovableVolumesUsageDescription: "File Studio browses cards and external drives."
         INFOPLIST_KEY_NSNetworkVolumesUsageDescription: "File Studio browses network shares."
+        # Connect to Server: nearby SMB computers come from Bonjour
+        # (`_smb._tcp`, listed in Info-FileStudio.plist's NSBonjourServices).
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "File Studio lists the computers with shared folders on your network, so you can connect to them."
         # Rust core (F-004, Import Studio's D-024): read the UniFFI module map
         # and link the static library straight from where
         # scripts/build-core-apple.sh writes them (the RustCore target runs
         # first), so headers are never stale.
         SWIFT_INCLUDE_PATHS: "$(SRCROOT)/../target/uniffi-headers"
-        OTHER_LDFLAGS: "$(inherited) $(SRCROOT)/../target/aarch64-apple-darwin/release/libfstudio_ffi.a"
+        # NetFS: the core mounts SMB shares with NetFSMountURLAsync
+        # (fstudio-net); a static library doesn't carry its frameworks.
+        OTHER_LDFLAGS: "$(inherited) $(SRCROOT)/../target/aarch64-apple-darwin/release/libfstudio_ffi.a -framework NetFS"
       # Debug builds are a separate app: their own bundle id (so their
       # UserDefaults, window frames and setup state never reach the release
       # app's `app.filestudio.mac` domain) and their own name, which also

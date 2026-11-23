@@ -411,9 +411,13 @@ impl Tab {
                 message: Some(format!("“{}” doesn’t exist", to_s(&path))),
                 ..out
             }),
-            Location::Remote(url) => Err(CoreError::NotAvailable(format!(
-                "remote locations are not supported yet: {url}"
-            ))),
+            // `smb://host/share`: mount it, then come back here (F-031).
+            // Other schemes are refused with a clear message.
+            Location::Remote(url) => {
+                self.shared
+                    .network
+                    .connect(&self.shared, &url, self.me.clone(), Some(self.id))
+            }
         }
     }
 

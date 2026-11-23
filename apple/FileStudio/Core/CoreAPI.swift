@@ -235,6 +235,8 @@ public enum ShellRequest: Equatable, Sendable {
     case confirm(token: UInt64, title: String, detail: String, yes: String, no: String)
     /// Show the power tour (`app.power_tour`, Help › File Studio Power Tour).
     case showPowerTour
+    /// Show the Connect to Server sheet (⌘K); Connect calls `connectServer`.
+    case connectToServer
     case toggleSidebar
     case toggleInspector
     case eject(path: String)
@@ -292,6 +294,7 @@ public enum ShellRequest: Equatable, Sendable {
         case .confirm: "confirm"
         case .moved: "moved"
         case .showPowerTour: "showPowerTour"
+        case .connectToServer: "connectToServer"
         case .toggleSidebar: "toggleSidebar"
         case .toggleInspector: "toggleInspector"
         case .eject: "eject"
@@ -1042,6 +1045,8 @@ public enum CoreEvent: Equatable, Sendable {
     case settingsChanged
     /// Re-read `favourites()`.
     case favouritesChanged
+    /// The Network section changed; re-read `networkSection()` and `recentServers()`.
+    case networkChanged
     /// Handle `request` as if an outcome from the window holding `tab` had
     /// asked for it (the toast of a finished operation, built by the core
     /// from what really happened).

@@ -13,6 +13,11 @@
 // - Locations are the core's volumes with free space; removable ones get an
 //   eject button, which performs `drive.eject`; the core answers with
 //   `ShellRequest.eject`, carried out here with NSWorkspace (errors shown).
+// - Network (Connect to Server, SMB): nearby SMB computers (Bonjour), saved
+//   servers, and the mounted shares with eject buttons, from the core's
+//   `networkSection()`. A click on a server connects (the system asks for a
+//   password if needed) and opens the share; a click on a share goes there.
+//   Network shares are listed here, not under Locations.
 // - Tags are Finder's tag names and colours; a click searches the Mac for the tag.
 // - Right-click menus come from `engine.contextMenu(.sidebarItem…)`.
 // - A click or arrow key goes to the folder in the focused tab; a middle-click
@@ -29,6 +34,10 @@ final class SidebarNode: NSObject {
         case favourite(Favourite)
         case recent(String)
         case volume(Volume)
+        /// A nearby or saved server (Network section).
+        case server(NetworkServer)
+        /// Why nearby computers can't be listed; a click opens the setting.
+        case notice(String)
         case tag(name: String, color: Int)
     }
     let id: String
@@ -47,6 +56,8 @@ final class SidebarNode: NSObject {
         case .favourite(let f): f.name
         case .recent(let p): coreDisplayName(p)
         case .volume(let v): v.name
+        case .server(let s): s.name
+        case .notice: "Allow Local Network Access…"
         case .tag(let n, _): n
         }
     }
@@ -57,6 +68,8 @@ final class SidebarNode: NSObject {
         case .favourite(let f): f.path
         case .recent(let p): p
         case .volume(let v): v.mountPath
+        // A server row is an address, not a folder (its share, once mounted,
+        // is its own row).
         default: nil
         }
     }
@@ -99,6 +112,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         SidebarServices.install(model)
         #if DEBUG
         SidebarDebugSteps.install()
+        NetworkDebugSteps.install()
         SidebarDragProbe.install()
         #endif
     }
@@ -156,9 +170,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             filterField.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
         ])
         view = root
+        // Nearby SMB computers (macOS may ask for local network access once).
+        model.network?.startNetworkBrowsing()
         observer = model.observe { [weak self] e in
             switch e {
-            case .favouritesChanged, .volumesChanged: self?.reload()
+            case .favouritesChanged, .volumesChanged, .networkChanged: self?.reload()
             default: break
             }
         }
@@ -180,13 +196,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             .filter { !favPaths.contains($0) && $0 != model.engine.home() }
             .prefix(6)
             .map { SidebarNode("rec:" + $0, .recent($0)) }.filter(keep)
-        let vols = model.volumes.map { SidebarNode("vol:" + $0.mountPath, .volume($0)) }.filter(keep)
+        let vols = model.volumes.filter { !$0.isNetwork }.map { SidebarNode("vol:" + $0.mountPath, .volume($0)) }.filter(keep)
+        let net = model.network?.networkSection() ?? NetworkSection()
+        var netRows: [SidebarNode] = net.computers.map { SidebarNode("net:" + $0.url, .server($0)) }
+        netRows += net.saved.map { SidebarNode("srv:" + $0.url, .server($0)) }
+        netRows += net.shares.map { SidebarNode("vol:" + $0.mountPath, .volume($0)) }
+        netRows = netRows.filter(keep)
+        if let why = net.browseProblem, q.isEmpty { netRows.append(SidebarNode("net:notice", .notice(why))) }
         let tags = Self.finderTags().map { SidebarNode("tag:" + $0.name, .tag(name: $0.name, color: $0.color)) }.filter(keep)
         var r: [SidebarNode] = []
         // Favourites always shows (it is the drop target for new ones).
         r.append(SidebarNode("sec:fav", .section("Favourites"), children: favs))
         if !recents.isEmpty { r.append(SidebarNode("sec:rec", .section("Recent Folders"), children: Array(recents))) }
         if !vols.isEmpty { r.append(SidebarNode("sec:vol", .section("Locations"), children: vols)) }
+        if !netRows.isEmpty { r.append(SidebarNode("sec:net", .section("Network"), children: netRows)) }
         if !tags.isEmpty { r.append(SidebarNode("sec:tag", .section("Tags"), children: tags)) }
         roots = r
         outline.reloadData()
@@ -238,11 +261,33 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         go(n)
     }
 
+    /// Connects to a server row's address and opens the share in the
+    /// focused tab once it is mounted (at once when it already is).
+    func connect(_ s: NetworkServer) {
+        guard let net = model.network else { return }
+        do {
+            model.handle(try net.connectServer(s.url, tab: focusedTab?.id), in: windowModel.id)
+        } catch {
+            model.statusMessage = error.localizedDescription
+        }
+        syncSelection()
+    }
+
+    /// Opens System Settings › Privacy & Security › Local Network.
+    private func openLocalNetworkSettings() {
+        syncSelection()
+        if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork") {
+            NSWorkspace.shared.open(u)
+        }
+    }
+
     private func go(_ n: SidebarNode) {
         if case .favourite(let f) = n.kind, f.missing {
             offerRemoveMissing(f)
             return
         }
+        if case .server(let s) = n.kind { connect(s); return }
+        if case .notice = n.kind { openLocalNetworkSettings(); return }
         guard let path = n.path, let t = focusedTab else { return }
         do {
             model.handle(try t.api.go(path), in: windowModel.id)
@@ -301,10 +346,63 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .recent(let p):
             guard let t = windowModel.activeTabID else { return nil }
             target = .folder(tab: t, path: p)
+        case .server(let s): return serverMenu(s)
         default: return nil
         }
         guard let items = try? model.engine.contextMenu(target, context: MenuContext()) else { return nil }
         return ContextMenuBuilder.menu(items, model: model)
+    }
+
+    /// A server row's menu: Connect, and Save to / Remove from Sidebar.
+    /// (Not from `contextMenu`: server addresses aren't paths. Follow-up:
+    /// give the core a `MenuTarget` for them, F-022.)
+    private func serverMenu(_ s: NetworkServer) -> NSMenu {
+        let m = NSMenu()
+        m.addItem(ClosureMenuItem("Connect") { [weak self] in self?.connect(s) })
+        if s.saved {
+            m.addItem(ClosureMenuItem("Remove from Sidebar") { [weak self] in
+                guard let self else { return }
+                do { try self.model.network?.removeSavedServer(s.url) } catch {
+                    self.model.statusMessage = error.localizedDescription
+                }
+                self.reload()
+            })
+        } else {
+            m.addItem(ClosureMenuItem("Save to Sidebar") { [weak self] in
+                guard let self else { return }
+                do { try self.model.network?.saveServer(s.url) } catch {
+                    self.model.statusMessage = error.localizedDescription
+                }
+                self.reload()
+            })
+        }
+        m.addItem(.separator())
+        m.addItem(ClosureMenuItem("Copy Address") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(s.url, forType: .string)
+        })
+        return m
+    }
+
+    /// Clicks the server row with that address (debug automation), as a mouse click would.
+    func debugClickServer(_ url: String) -> Bool {
+        for i in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: i) as? SidebarNode, case .server(let s) = n.kind, s.url == url {
+                connect(s)
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The menu a right-click on a server row would show (debug automation).
+    func debugServerMenu(_ url: String) -> NSMenu? {
+        for i in 0..<outline.numberOfRows {
+            if let n = outline.item(atRow: i) as? SidebarNode, case .server(let s) = n.kind, s.url == url {
+                return serverMenu(s)
+            }
+        }
+        return nil
     }
 
     /// The core's menu for a row, as text (debug automation).
@@ -556,6 +654,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 s += " — \(PaneText.bytes(v.freeBytes)) free" + (v.isRemovable ? " [eject]" : "")
             }
             if case .recent(let p) = n.kind { s += " (\(p))" }
+            if case .server(let v) = n.kind {
+                s += " <\(v.url)> [\(v.kind)]" + (v.connecting ? " connecting" : "")
+                    + (v.mountedAt.map { " mounted at \($0)" } ?? "")
+            }
+            if case .notice(let why) = n.kind { s += " — \(why)" }
             return s
         }
     }
@@ -647,6 +750,19 @@ final class SidebarCell: NSTableCellView {
                 ejectPath = v.mountPath
                 eject.setAccessibilityLabel("Eject \(n.title)")
             }
+        case .server(let s):
+            icon.image = NSImage(systemSymbolName: s.kind == .nearby ? "desktopcomputer" : "server.rack",
+                                 accessibilityDescription: nil)
+            if s.connecting {
+                detail.stringValue = "Connecting…"
+                detail.isHidden = false
+            }
+            toolTip = s.mountedAt.map { "\(s.url) — connected at \($0)" } ?? "Connect to \(s.url)"
+        case .notice(let why):
+            icon.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)
+            icon.contentTintColor = .secondaryLabelColor
+            name.textColor = .secondaryLabelColor
+            toolTip = why
         case .tag(_, let c):
             icon.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)
             let colors = NSWorkspace.shared.fileLabelColors
@@ -750,6 +866,7 @@ final class SidebarServices {
             eject(path, model: model)
             return true
         }
+        ConnectServerSheet.install(model)
         model.registerShellHandler(for: "askFavouriteName") { req, ctx in
             guard case .askFavouriteName(let path, let name) = req else { return false }
             askName(path: path, name: name, model: model, on: hostWindow(ctx.window))

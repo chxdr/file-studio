@@ -48,6 +48,7 @@ mod listing;
 mod listing_handle;
 pub mod menus;
 mod miller;
+mod network;
 mod outcome;
 mod preview;
 mod probe;
@@ -77,6 +78,7 @@ pub use events::{
     COALESCE_WINDOW, ChangeKind, CoreEvent, EventSink, HintInfo, NullEventSink, VolumeSummary,
 };
 pub use favourites::Favourite;
+pub use network::{NetworkSidebar, RECENT_SERVERS_MAX, ServerEntry, ServerKind};
 
 /// The name to show for a path everywhere (the volume's name for a volume
 /// root, "Macintosh HD" for `/`, else the item's name as stored). One rule

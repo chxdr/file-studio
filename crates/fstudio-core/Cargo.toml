@@ -18,6 +18,8 @@ fstudio-ops.workspace = true
 fstudio-preview.workspace = true
 fstudio-search.workspace = true
 fstudio-usage.workspace = true
+# Connect to Server (SMB): NetFS mounting and Bonjour.
+fstudio-net = { path = "../fstudio-net" }
 # ── batch rename (M3) ──
 fstudio-rename.workspace = true
 rayon.workspace = true

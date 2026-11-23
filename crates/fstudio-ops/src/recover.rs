@@ -138,16 +138,32 @@ fn recover_item(kind: OpKind, it: &mut ItemRow) -> io::Result<()> {
 /// Which volume the folder `p` is in, if it can be reached: a key derived
 /// from the volume's UUID, which stays the same when a card is pulled out and
 /// put back. `st_dev` doesn't: macOS gives a re-attached card a new number
-/// and hands the old one to the next volume that mounts. Only volumes with no
-/// UUID (some network shares) fall back to `st_dev`.
+/// and hands the old one to the next volume that mounts.
+///
+/// Network shares (SMB) have no UUID; their key comes from the share they
+/// were mounted from (`//archbox/media`, see [`fstudio_net::mount_key`]),
+/// which is the same after the share is unmounted and mounted again. Only
+/// volumes with neither fall back to `st_dev`.
 pub(crate) fn folder_dev(p: &std::path::Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
     let d = p.parent()?;
     let m = meta::lstat(d).ok().filter(|m| m.is_dir())?;
-    Some(match sys::volume_uuid(d) {
-        Some(uuid) => volume_key(&uuid),
-        None => m.dev(),
-    })
+    if let Some(uuid) = sys::volume_uuid(d) {
+        return Some(volume_key(&uuid));
+    }
+    Some(
+        match sys::network_source(d).and_then(|(fs, from)| fstudio_net::mount_key(&fs, &from)) {
+            Some(share) => network_key(&share),
+            None => m.dev(),
+        },
+    )
+}
+
+/// A network share's key (from [`fstudio_net::mount_key`]) as the `u64` the
+/// journal stores; top bit set like [`volume_key`], and hashed with a prefix
+/// so it can't equal a UUID's key.
+fn network_key(share: &str) -> u64 {
+    xxhash_rust::xxh3::xxh3_64(format!("net:{share}").as_bytes()) | (1 << 63)
 }
 
 /// A volume UUID as the `u64` the journal stores in `partial_dev`. The top
@@ -285,6 +301,30 @@ mod tests {
         // The temp folder is on the startup disk, which has a UUID.
         assert!(a & (1 << 63) != 0, "keyed by the volume UUID, not st_dev");
         assert!(folder_dev(&d.path().join("missing/z")).is_none());
+    }
+
+    /// One SMB share mounted twice (different `st_dev` each time, maybe a
+    /// different account or case) has one key; another share doesn't.
+    #[test]
+    fn a_network_share_keeps_its_key_across_remounts() {
+        let a = fstudio_net::mount_key("smbfs", "//milky@archbox/media").unwrap();
+        let b = fstudio_net::mount_key("smbfs", "//GUEST:@ArchBox/Media").unwrap();
+        let c = fstudio_net::mount_key("smbfs", "//archbox/photos").unwrap();
+        assert_eq!(network_key(&a), network_key(&b));
+        assert_ne!(network_key(&a), network_key(&c));
+        assert!(network_key(&a) >= 1 << 63);
+    }
+
+    /// On a real share (set `FSTUDIO_SMB_DIR` to a writable folder on a
+    /// mounted SMB share): the key is the share's, not `st_dev`.
+    #[test]
+    #[ignore = "needs a mounted SMB share (FSTUDIO_SMB_DIR)"]
+    fn a_real_share_is_keyed_by_its_source() {
+        let dir = std::path::PathBuf::from(std::env::var("FSTUDIO_SMB_DIR").unwrap());
+        let (fs, from) = sys::network_source(&dir).expect("a network volume");
+        assert_eq!(fs, "smbfs");
+        let want = network_key(&fstudio_net::mount_key(&fs, &from).unwrap());
+        assert_eq!(folder_dev(&dir.join("x.fstudio-partial")), Some(want));
     }
 
     #[test]

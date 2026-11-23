@@ -3,6 +3,10 @@
 <!-- Keys Xcode can't generate; merged with GENERATE_INFOPLIST_FILE's output. -->
 <plist version="1.0">
 <dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_smb._tcp</string>
+	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

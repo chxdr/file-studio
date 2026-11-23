@@ -24,6 +24,8 @@ crossbeam-channel.workspace = true
 parking_lot.workspace = true
 unicode-normalization.workspace = true
 xxhash-rust.workspace = true
+# Network-volume identity that survives a remount (SMB has no volume UUID).
+fstudio-net = { path = "../fstudio-net" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
