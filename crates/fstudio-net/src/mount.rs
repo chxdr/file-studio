@@ -35,6 +35,13 @@ pub enum MountError {
     Other(i32),
 }
 
+/// BSD's "authentication error", which NetFS reports for a wrong password.
+/// Linux's libc doesn't define it; there NetFS never reports anything.
+#[cfg(target_os = "macos")]
+const EAUTH: i32 = libc::EAUTH;
+#[cfg(not(target_os = "macos"))]
+const EAUTH: i32 = 80;
+
 impl MountError {
     /// The error for a NetFS status, or `None` for success. `EEXIST` (the
     /// share is already mounted) counts as success.
@@ -42,7 +49,7 @@ impl MountError {
         Some(match status {
             0 | libc::EEXIST => return None,
             -128 | libc::ECANCELED => MountError::Cancelled,
-            libc::EAUTH | libc::EPERM | libc::EACCES | -5045 | -5046 | -5999 => MountError::SignIn,
+            EAUTH | libc::EPERM | libc::EACCES | -5045 | -5046 | -5999 => MountError::SignIn,
             libc::ENOENT => MountError::NoSuchShare,
             -5998 | -6003 => MountError::NoShares,
             libc::EHOSTUNREACH
@@ -138,10 +145,7 @@ mod tests {
         assert_eq!(MountError::from_status(0), None);
         assert_eq!(MountError::from_status(libc::EEXIST), None);
         assert_eq!(MountError::from_status(-128), Some(MountError::Cancelled));
-        assert_eq!(
-            MountError::from_status(libc::EAUTH),
-            Some(MountError::SignIn)
-        );
+        assert_eq!(MountError::from_status(EAUTH), Some(MountError::SignIn));
         assert_eq!(
             MountError::from_status(libc::EHOSTDOWN),
             Some(MountError::Unreachable)

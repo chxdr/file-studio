@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 libc.workspace = true
+
+# NetFS and CoreFoundation exist only on macOS; the Linux core build uses
+# `src/sys_other.rs` instead.
+[target.'cfg(target_os = "macos")'.dependencies]
 # Objective-C blocks for NetFSMountURLAsync's completion handler (MIT).
 # The same block2 that objc2 already brings in.
 block2 = "0.6"

@@ -23,6 +23,13 @@ pub mod address;
 pub mod browse;
 pub mod identity;
 pub mod mount;
+#[cfg(target_os = "macos")]
+mod sys;
+/// Elsewhere (the Linux core build) there is no NetFS, dns_sd or BSD mount
+/// table: mounting and browsing report "not supported" and no network
+/// volumes are listed. Address rules and mount keys still work.
+#[cfg(not(target_os = "macos"))]
+#[path = "sys_other.rs"]
 mod sys;
 
 pub use address::{AddressError, ServerAddress, parse_server};
