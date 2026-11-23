@@ -175,9 +175,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let q = filterField.stringValue.trimmingCharacters(in: .whitespaces)
         func keep(_ n: SidebarNode) -> Bool { q.isEmpty || n.title.localizedStandardContains(q) }
         let favs = model.favourites.map { SidebarNode("fav:" + $0.path, .favourite($0)) }.filter(keep)
-        let favPaths = Set(model.favourites.map(\.path))
+        // A folder that already has its own row (a favourite, Home, a drive's
+        // top) isn't repeated under Recent Folders, which would also take the
+        // highlight from that row (Recent Folders comes first).
+        let ownRows = Set(model.favourites.map(\.path)).union(model.volumes.map(\.mountPath))
         let recents = model.engine.frecent("", limit: 12).map(\.path)
-            .filter { !favPaths.contains($0) && $0 != model.engine.home() }
+            .filter { !ownRows.contains($0) && $0 != model.engine.home() }
             .prefix(6)
             .map { SidebarNode("rec:" + $0, .recent($0)) }.filter(keep)
         let vols = model.volumes.map { SidebarNode("vol:" + $0.mountPath, .volume($0)) }.filter(keep)
