@@ -109,7 +109,7 @@ enum SidebarDragProbe {
             item.setString(parts[0], forType: SidebarViewController.favouriteType)
             item.setString(URL(fileURLWithPath: parts[0]).absoluteString, forType: .fileURL)
             pb.writeObjects([item])
-        } else if let writer = sb.outlineView(sb.outline, pasteboardWriterForItem: node) {
+        } else if let writer = sb.dragWriter(for: node) {
             pb.writeObjects([writer])
         }
         defer { pb.releaseGlobally() }

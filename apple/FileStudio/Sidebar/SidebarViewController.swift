@@ -101,7 +101,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// files call this and refuse such drags, whatever else the pasteboard
     /// holds.
     static func isSidebarDrag(_ info: NSDraggingInfo) -> Bool {
-        info.draggingSource is SidebarOutlineView
+        info.draggingSource is SidebarOutlineView || info.draggingSource is SidebarDragSource
             || info.draggingPasteboard.availableType(from: privateTypes) != nil
     }
 
@@ -141,8 +141,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.registerForDraggedTypes([Self.favouriteType, Self.itemType, .fileURL])
         // Rows part where a drop will land, as in Finder's sidebar.
         outline.draggingDestinationFeedbackStyle = .gap
-        outline.setDraggingSourceOperationMask([.move, .link], forLocal: true)
-        outline.setDraggingSourceOperationMask([], forLocal: false)
+        outline.dragWriter = { [weak self] row in
+            guard let self, let item = self.outline.item(atRow: row) else { return nil }
+            return self.dragWriter(for: item)
+        }
+        outline.onDragEnded = { [weak self] s, p, op in self?.dragEnded(s, at: p, operation: op) }
         outline.setAccessibilityLabel("Sidebar")
         outline.menuProvider = { [weak self] row in self?.menu(row: row) }
         outline.onMiddleClick = { [weak self] row in self?.openInNewTab(row: row) }
@@ -476,7 +479,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     // MARK: Drag and drop: reorder favourites, drop folders to add them
 
-    func outlineView(_ ov: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+    /// What a drag of `item` carries (the outline starts the drag itself, see
+    /// `SidebarOutlineView.mouseDown`). `nil` for rows that can't be dragged.
+    func dragWriter(for item: Any) -> NSPasteboardWriting? {
         guard let n = item as? SidebarNode, let path = n.path else { return nil }
         // Only our own types, never a file URL (F-023): dropping a sidebar row
         // on a folder, a crumb, a pane or Finder must not move or copy it.
@@ -493,8 +498,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// A favourite dragged out of the sidebar and let go anywhere that didn't
     /// take it is unpinned, with the poof (Finder's sidebar).
-    func outlineView(_ ov: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
-                     operation: NSDragOperation) {
+    private func dragEnded(_ session: NSDraggingSession, at screenPoint: NSPoint, operation: NSDragOperation) {
         guard operation == [], let path = session.draggingPasteboard.string(forType: Self.favouriteType),
               !isOverSidebar(screenPoint) else { return }
         dragOut(path, at: screenPoint)
@@ -526,16 +530,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                      proposedChildIndex index: Int) -> NSDragOperation {
         guard let fav = favSection, filterField.stringValue.isEmpty else { return [] }
         let pb = info.draggingPasteboard
-        // Retarget a drop onto a favourite, or onto the section, to a gap.
-        var at = index
-        if let n = item as? SidebarNode, n !== fav {
-            guard case .favourite = n.kind, let i = fav.children.firstIndex(of: n) else { return [] }
-            at = Self.gap(over: i, rowRect: ov.rect(ofRow: ov.row(forItem: n)),
-                          at: ov.convert(info.draggingLocation, from: nil))
-        } else if item == nil || (item as? SidebarNode) !== fav {
-            return []
-        }
-        if at < 0 { at = fav.children.count }
+        // The gap comes from where the pointer is, not from AppKit's proposal:
+        // a source-list outline often proposes no item at all while a row of
+        // its own is dragged over its siblings, and a drop it can't place is
+        // dropped on the floor.
+        let headerRow = ov.row(forItem: fav)
+        let rows = fav.children.map { ov.rect(ofRow: ov.row(forItem: $0)) }
+        guard headerRow >= 0, let at = Self.gap(pointerY: ov.convert(info.draggingLocation, from: nil).y,
+                                               header: ov.rect(ofRow: headerRow), rows: rows)
+        else { return [] }
         ov.setDropItem(fav, dropChildIndex: at)
         lastDropIndex = at
         if pb.string(forType: Self.favouriteType) != nil { return .move }
@@ -543,11 +546,28 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return folderURLs(pb).isEmpty ? [] : .link
     }
 
-    /// The gap a drop over favourite `i` goes to: before it on the row's top
-    /// half, after it on the bottom half (Finder). The outline is flipped, so
-    /// the top half has the smaller y.
-    nonisolated static func gap(over i: Int, rowRect r: NSRect, at p: NSPoint) -> Int {
-        p.y < r.midY ? i : i + 1
+    /// The gap in Favourites a drop at height `y` goes to (outline
+    /// coordinates, flipped), or `nil` when `y` is outside Favourites.
+    /// - Over a favourite: before it on its top half, after it on the bottom
+    ///   half (Finder).
+    /// - Over the section header: the top.
+    /// - In a space between rows (the gap the outline opens while dragging,
+    ///   where AppKit proposes no item): before the next row below it.
+    /// - Up to a row's height below the last favourite: the end.
+    /// A row of height 0 (the dragged favourite, hidden while it moves) never
+    /// contains the pointer.
+    nonisolated static func gap(pointerY y: CGFloat, header: NSRect, rows: [NSRect]) -> Int? {
+        if y >= header.minY && y < header.maxY { return 0 }
+        for (i, r) in rows.enumerated() where r.height > 0 && y >= r.minY && y < r.maxY {
+            return y < r.midY ? i : i + 1
+        }
+        if let next = rows.indices.first(where: { rows[$0].height > 0 && rows[$0].minY > y }), y >= header.maxY {
+            return next
+        }
+        let bottom = rows.last(where: { $0.height > 0 }) ?? header
+        let rowHeight = rows.first(where: { $0.height > 0 })?.height ?? header.height
+        if y >= bottom.maxY && y < bottom.maxY + rowHeight { return rows.count }
+        return nil
     }
 
     func outlineView(_ ov: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
@@ -849,20 +869,93 @@ final class SidebarOutlineView: NSOutlineView {
         super.keyDown(with: event)
     }
 
-    /// Outside the sidebar a dragged favourite shows the poof cursor, and a
-    /// let-go doesn't slide back.
-    override func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
-        super.draggingSession(session, movedTo: screenPoint)
-        guard isFavouriteDrag?(session.draggingPasteboard) == true, let sv = enclosingScrollView?.superview,
-              let w = window else { return }
-        let outside = !w.convertToScreen(sv.convert(sv.bounds, to: nil)).contains(screenPoint)
-        session.animatesToStartingPositionsOnCancelOrFail = !outside
-        (outside ? NSCursor.disappearingItem : NSCursor.arrow).set()
+    /// The pasteboard item a drag of `row` carries; `nil` when the row can't
+    /// be dragged (a section header).
+    var dragWriter: ((Int) -> NSPasteboardWriting?)?
+    /// A drag started here ended at a screen point with an operation.
+    var onDragEnded: ((NSDraggingSession, NSPoint, NSDragOperation) -> Void)?
+    /// The drag session's source; kept while a drag runs.
+    private var dragSource: SidebarDragSource?
+
+    /// A press on a draggable row becomes our own drag once the pointer moves
+    /// more than 4 points, as in the list. NSOutlineView's built-in drags never
+    /// delivered a drop back to the sidebar itself (the drop always ended as
+    /// "exited", operation none), so favourites couldn't be reordered. A press
+    /// that ends without moving goes to NSOutlineView as a normal click.
+    override func mouseDown(with event: NSEvent) {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        let mods = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        guard event.clickCount == 1, mods.isEmpty, row >= 0, let w = window, let writer = dragWriter?(row) else {
+            super.mouseDown(with: event)
+            return
+        }
+        while let next = w.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp {
+                w.postEvent(next, atStart: true)
+                super.mouseDown(with: event)
+                return
+            }
+            let d = hypot(next.locationInWindow.x - event.locationInWindow.x,
+                          next.locationInWindow.y - event.locationInWindow.y)
+            if d > 4 {
+                startDrag(row: row, writer: writer, event: event)
+                return
+            }
+        }
+    }
+
+    private func startDrag(row: Int, writer: NSPasteboardWriting, event: NSEvent) {
+        let item = NSDraggingItem(pasteboardWriter: writer)
+        let r = rect(ofRow: row)
+        var image: NSImage?
+        if let rep = bitmapImageRepForCachingDisplay(in: r) {
+            cacheDisplay(in: r, to: rep)
+            image = NSImage(size: r.size)
+            image?.addRepresentation(rep)
+        }
+        item.setDraggingFrame(r, contents: image)
+        let src = SidebarDragSource(outline: self)
+        dragSource = src
+        beginDraggingSession(with: [item], event: event, source: src)
+    }
+
+    /// Called by the source when its session ends.
+    fileprivate func dragEnded(_ session: NSDraggingSession, at p: NSPoint, operation: NSDragOperation) {
+        dragSource = nil
+        onDragEnded?(session, p, operation)
     }
 
     override func otherMouseDown(with event: NSEvent) {
         let row = self.row(at: convert(event.locationInWindow, from: nil))
         if event.buttonNumber == 2, row >= 0 { onMiddleClick?(row) } else { super.otherMouseDown(with: event) }
+    }
+}
+
+/// The source of a drag that starts in the sidebar (F-023): inside the app
+/// a row can be moved (a favourite reordered) or linked (pinned); outside it
+/// nothing, so Finder and other apps never act on a sidebar drag. Outside the
+/// sidebar a dragged favourite shows the poof cursor, and a let-go doesn't
+/// slide back.
+@MainActor
+final class SidebarDragSource: NSObject, NSDraggingSource {
+    private weak var outline: SidebarOutlineView?
+
+    init(outline: SidebarOutlineView) { self.outline = outline }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? [.move, .link] : []
+    }
+
+    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        guard let o = outline, o.isFavouriteDrag?(session.draggingPasteboard) == true,
+              let sv = o.enclosingScrollView?.superview, let w = o.window else { return }
+        let outside = !w.convertToScreen(sv.convert(sv.bounds, to: nil)).contains(screenPoint)
+        session.animatesToStartingPositionsOnCancelOrFail = !outside
+        (outside ? NSCursor.disappearingItem : NSCursor.arrow).set()
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        outline?.dragEnded(session, at: screenPoint, operation: operation)
     }
 }
 
